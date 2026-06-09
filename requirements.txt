@@ -1,0 +1,9 @@
+fastapi==0.136.3
+uvicorn==0.48.0
+requests==2.32.4
+python-dateutil==2.9.0.post0
+numpy==2.3.0
+scipy==1.15.3
+starlette==1.2.1
+pydantic==2.13.4
+anyio==4.13.0
