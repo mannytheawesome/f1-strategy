@@ -20,9 +20,8 @@ from engine.fp_analysis import analyse_fp
 from engine.quali_analysis import analyse_quali
 from engine.tyre_inventory import compute_inventory
 from engine.predictor import (
-    detect_sc_periods, sc_probability_remaining, build_weighted_deg_rates,
-    estimate_race_pace, find_undercut_opportunities, predict_finishing_positions,
-    to_dict as forecast_to_dict,
+    detect_sc, sc_probability, build_deg_curves, build_pace_model,
+    simulate_race, forecast_to_dict, curves_to_dict,
 )
 
 
@@ -438,14 +437,8 @@ def race_strategies(session_key: int = None, lap: int = None):
 @app.get("/api/predict")
 def predict(session_key: int = None, lap: int = None):
     """
-    Predictive model endpoint.
-    Returns:
-      - SC periods detected so far
-      - SC probability for remaining race
-      - Per-driver race pace estimates
-      - Undercut opportunities
-      - Predicted finishing positions
-      - Weighted deg rates from FP sessions
+    Full race prediction: lap-by-lap simulation, optimal strategy per driver,
+    undercut analysis, SC detection, predicted finishing positions.
     """
     try:
         if session_key is None:
@@ -455,57 +448,42 @@ def predict(session_key: int = None, lap: int = None):
             session = get_session(session_key)
 
         meeting_key = session.get("meeting_key")
+        circuit     = session.get("circuit_short_name", "")
 
-        # Get all sessions in this meeting
-        all_sessions_raw = _get("sessions", meeting_key=meeting_key)
-        all_sessions_raw = sorted(all_sessions_raw, key=lambda s: s.get("date_start", ""))
-
-        # Identify FP sessions in this meeting
-        fp_sessions = [
-            s for s in all_sessions_raw
-            if s.get("session_type", "").lower() == "practice"
-        ]
+        # FP sessions in this meeting (for weighted deg curves)
+        all_sessions_raw = sorted(
+            _get("sessions", meeting_key=meeting_key),
+            key=lambda s: s.get("date_start", "")
+        )
+        fp_sessions = [s for s in all_sessions_raw
+                       if s.get("session_type", "").lower() == "practice"]
         fp_names = ["FP1", "FP2", "FP3"]
 
-        # Build weighted deg rates from FP sessions
         fp_data = []
-        for i, fp_session in enumerate(fp_sessions[:3]):
-            sk = fp_session["session_key"]
+        for i, fp_s in enumerate(fp_sessions[:3]):
             try:
-                fp_laps = get_laps(sk, HIST_TTL)
-                fp_stints = get_stints(sk, HIST_TTL)
-                name = fp_names[i] if i < len(fp_names) else f"FP{i+1}"
-                fp_data.append((name, fp_laps, fp_stints))
+                fp_data.append((
+                    fp_names[i],
+                    get_laps(fp_s["session_key"], HIST_TTL),
+                    get_stints(fp_s["session_key"], HIST_TTL),
+                ))
             except Exception:
                 pass
 
-        weighted_deg = build_weighted_deg_rates(fp_data)
-
-        # Race data
-        all_laps = get_laps(session_key, HIST_TTL)
+        curves     = build_deg_curves(fp_data)
+        all_laps   = get_laps(session_key, HIST_TTL)
         stints_raw = get_stints(session_key, HIST_TTL)
         drivers_raw = get_drivers(session_key, HIST_TTL)
 
         total_laps = max((l["lap_number"] for l in all_laps), default=0)
-        max_lap = lap or total_laps
-
-        # Filter laps up to requested lap
+        max_lap    = lap or total_laps
         laps_to_now = [l for l in all_laps if l["lap_number"] <= max_lap]
 
-        # SC detection
-        sc_events = detect_sc_periods(laps_to_now)
+        sc_events  = detect_sc(laps_to_now)
+        sc_prob    = sc_probability(sc_events, max_lap, total_laps, circuit)
+        pace_model = build_pace_model(laps_to_now, sc_events, drivers_raw, curves, stints_raw)
 
-        # Get circuit for SC probability adjustment
-        circuit_key = session.get("circuit_short_name", "")
-
-        sc_prob = sc_probability_remaining(
-            sc_events, max_lap, total_laps, circuit_key
-        )
-
-        # Race pace per driver
-        race_paces = estimate_race_pace(laps_to_now, sc_events, drivers_raw)
-
-        # Current state for gap/interval/compound data
+        # Current driver state
         state = build_state(session_key, include_locations=False,
                             session=session, max_lap=max_lap)
         drivers_sorted = sorted(
@@ -515,56 +493,41 @@ def predict(session_key: int = None, lap: int = None):
         serialised = [
             {
                 "driver_number": d.driver_number,
-                "acronym": d.acronym,
-                "position": d.position,
-                "compound": d.current_stint.compound if d.current_stint else None,
-                "tyre_age": d.tyre_age,
+                "acronym":       d.acronym,
+                "position":      d.position,
+                "compound":      d.current_stint.compound if d.current_stint else "MEDIUM",
+                "tyre_age":      d.tyre_age or 0,
                 "gap_to_leader": d.gap_to_leader,
-                "interval": d.interval,
-                "retired": d.retired,
+                "interval":      d.interval,
+                "retired":       d.retired,
             }
-            for d in drivers_sorted if not d.retired
+            for d in drivers_sorted
         ]
 
-        # Undercut opportunities
-        undercuts = find_undercut_opportunities(serialised, weighted_deg)
-
-        # Finishing position predictions
-        forecasts = predict_finishing_positions(
-            serialised, weighted_deg, race_paces,
-            max_lap, total_laps, sc_events
+        forecasts = simulate_race(
+            serialised, max_lap, total_laps, curves, pace_model, sc_events
         )
 
         return {
             "session_key": session_key,
-            "lap": max_lap,
-            "total_laps": total_laps,
+            "lap":         max_lap,
+            "total_laps":  total_laps,
+            "circuit":     circuit,
             "sc_events": [
-                {"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.event_type}
+                {"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.type}
                 for e in sc_events
             ],
             "sc_probability_remaining": sc_prob,
-            "circuit": circuit_key,
-            "weighted_deg_rates": {
-                c: {
-                    "deg_rate": round(d.deg_rate, 4),
-                    "baseline": round(d.baseline, 3),
-                    "confidence": d.confidence,
-                    "sessions_used": d.sessions_used,
-                    "data_points": d.data_points,
-                }
-                for c, d in weighted_deg.items()
-            },
-            "race_paces": {
-                str(num): {
-                    "acronym": p.acronym,
-                    "pace_median": round(p.pace_median, 3),
-                    "pace_std": round(p.pace_std, 3),
+            "deg_curves": curves_to_dict(curves),
+            "pace_model": {
+                str(n): {
+                    "acronym":      p.acronym,
+                    "pace_delta":   round(p.pace_delta, 3),
+                    "pace_std":     round(p.pace_std, 3),
                     "laps_counted": p.laps_counted,
                 }
-                for num, p in race_paces.items()
+                for n, p in pace_model.items()
             },
-            "undercut_opportunities": undercuts,
             "forecasts": [forecast_to_dict(f) for f in forecasts],
         }
     except Exception as e:
