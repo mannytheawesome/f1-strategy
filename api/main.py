@@ -470,7 +470,6 @@ def predict(session_key: int = None, lap: int = None):
             except Exception:
                 pass
 
-        curves     = build_deg_curves(fp_data)
         all_laps   = get_laps(session_key, HIST_TTL)
         stints_raw = get_stints(session_key, HIST_TTL)
         drivers_raw = get_drivers(session_key, HIST_TTL)
@@ -478,6 +477,13 @@ def predict(session_key: int = None, lap: int = None):
         total_laps = max((l["lap_number"] for l in all_laps), default=0)
         max_lap    = lap or total_laps
         laps_to_now = [l for l in all_laps if l["lap_number"] <= max_lap]
+
+        # Race laps (so far) carry the highest weight — actual race deg is the
+        # ground truth; FP sessions only provide the prior
+        if _session_mode(session) in ("RACE", "SPRINT") and len(laps_to_now) > 60:
+            fp_data.append(("RACE", laps_to_now, stints_raw))
+
+        curves = build_deg_curves(fp_data)
 
         sc_events  = detect_sc(laps_to_now)
         sc_prob    = sc_probability(sc_events, max_lap, total_laps, circuit)
@@ -500,6 +506,7 @@ def predict(session_key: int = None, lap: int = None):
                 "gap_to_leader": d.gap_to_leader,
                 "interval":      d.interval,
                 "retired":       d.retired,
+                "compounds_used": list({s.compound for s in d.stints}),
             }
             for d in drivers_sorted
         ]

@@ -22,11 +22,14 @@ import statistics
 # ── Constants ────────────────────────────────────────────────────────────────
 
 PIT_LOSS        = 22.0   # seconds lost per pit stop (pit lane time loss)
+STOP_RISK       = 6.0    # extra penalty per stop: traffic, out-lap, execution risk
 SC_LAP_MULT     = 1.35   # median lap time > 35% above session median → SC
 MIN_STINT       = 8      # minimum viable stint length
 SOFT_SPLASH_MAX = 15     # Soft allowed as final compound only if ≤ this many laps
 
-FP_WEIGHTS = {"FP1": 0.3, "FP2": 1.0, "FP3": 0.9}
+# RACE data dominates when available — fuel burn-off and track evolution make
+# FP deg rates 2-3x higher than what actually materialises in the race
+FP_WEIGHTS = {"FP1": 0.3, "FP2": 1.0, "FP3": 0.9, "RACE": 3.0}
 
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
@@ -210,19 +213,24 @@ def build_deg_curves(
     # Sanity-check baselines: Soft must be fastest, Hard must be slowest.
     # FP Soft data is often contaminated by track evolution / cool-down laps,
     # making its regression baseline unreliable. If the ordering is wrong,
-    # anchor all baselines to Medium and apply known compound speed offsets.
+    # anchor the corrupted compound to Medium ± known compound offset AND
+    # floor its deg rate — the same polluted data underestimates wear.
+    # Physical reality: deg(SOFT) > deg(MEDIUM) > deg(HARD).
     med = curves.get("MEDIUM")
     sft = curves.get("SOFT")
     hrd = curves.get("HARD")
     if med:
-        expected = {"SOFT": med.baseline - 0.6, "HARD": med.baseline + 0.4}
         if sft and sft.baseline > med.baseline:
-            curves["SOFT"] = DegCurve("SOFT", sft.deg_rate,
-                                      expected["SOFT"], sft.data_points,
+            # Soft data untrustworthy: anchor baseline and floor deg above Medium's
+            fixed_deg = max(sft.deg_rate, med.deg_rate * 1.3)
+            curves["SOFT"] = DegCurve("SOFT", fixed_deg,
+                                      med.baseline - 0.6, sft.data_points,
                                       sft.confidence + "*", sft.sessions)
         if hrd and hrd.baseline < med.baseline:
-            curves["HARD"] = DegCurve("HARD", hrd.deg_rate,
-                                      expected["HARD"], hrd.data_points,
+            # Hard data untrustworthy: anchor baseline and cap deg below Medium's
+            fixed_deg = min(hrd.deg_rate, med.deg_rate * 0.7)
+            curves["HARD"] = DegCurve("HARD", fixed_deg,
+                                      med.baseline + 0.4, hrd.data_points,
                                       hrd.confidence + "*", hrd.sessions)
 
     return curves
@@ -315,6 +323,7 @@ def optimize_strategy(
     curves:           dict[str, DegCurve],
     field_baseline:   float,
     pit_loss:         float = PIT_LOSS,
+    needs_compound_change: bool = False,   # F1 rule: must use 2 dry compounds
 ) -> DriverStrategy:
 
     remaining = total_laps - current_lap
@@ -329,19 +338,23 @@ def optimize_strategy(
     best = float("inf")
     best_pits: list[PitPlan] = []
 
-    # 0-stop
-    t = stint_t(current_compound, current_age, remaining)
-    if t < best:
-        best, best_pits = t, []
+    # 0-stop — only legal if the driver has already used two dry compounds
+    if not needs_compound_change:
+        t = stint_t(current_compound, current_age, remaining)
+        if t < best:
+            best, best_pits = t, []
+
+    # Effective cost per stop includes execution/traffic risk beyond pit lane time
+    stop_cost = pit_loss + STOP_RISK
 
     # 1-stop
     for pit in range(MIN_STINT, remaining - MIN_STINT + 1):
         for c2 in DRY:
-            if c2 == current_compound and current_age < 5:
+            if c2 == current_compound and (needs_compound_change or current_age < 5):
                 continue
             if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
                 continue
-            t = stint_t(current_compound, current_age, pit) + pit_loss + stint_t(c2, 0, remaining - pit)
+            t = stint_t(current_compound, current_age, pit) + stop_cost + stint_t(c2, 0, remaining - pit)
             if t < best:
                 best, best_pits = t, [PitPlan(current_lap + pit, c2)]
 
@@ -353,10 +366,12 @@ def optimize_strategy(
                 continue
             for c2 in DRY:
                 for c3 in DRY:
+                    if needs_compound_change and c2 == current_compound and c3 == current_compound:
+                        continue
                     if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
                         continue
-                    t = (stint_t(current_compound, current_age, p1) + pit_loss
-                         + stint_t(c2, 0, p2) + pit_loss
+                    t = (stint_t(current_compound, current_age, p1) + stop_cost
+                         + stint_t(c2, 0, p2) + stop_cost
                          + stint_t(c3, 0, r3))
                     if t < best:
                         best = t
@@ -491,8 +506,15 @@ def simulate_race(
                 else "MEDIUM" if pace and pace.laps_counted >= 5
                 else "LOW")
 
+        # F1 rule: must use ≥2 dry compounds — if driver has only used one,
+        # a pit stop is mandatory before the end
+        compounds_used = driver.get("compounds_used") or [compound]
+        dry_used = {c for c in compounds_used if c in DRY}
+        needs_change = len(dry_used) < 2
+
         strat = optimize_strategy(current_lap, total_laps, compound, age,
-                                  pd, curves, field_baseline, pit_loss)
+                                  pd, curves, field_baseline, pit_loss,
+                                  needs_compound_change=needs_change)
         strat.driver_number = num
         strat.acronym = acronym
 
