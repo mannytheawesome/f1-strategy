@@ -157,14 +157,25 @@ def generate_strategies(
     laps_left_on_current = max(MIN_STINT, cliff_current - current_tyre_age)
     laps_left_on_current = min(laps_left_on_current, remaining - MIN_STINT)
 
+    # Compound "hardness" rank — can only switch to equal or harder compound
+    # unless fewer than SOFT_SPLASH_LAPS remain (late splash is valid)
+    HARDNESS = {"SOFT": 0, "MEDIUM": 1, "HARD": 2}
+    SOFT_SPLASH_LAPS = 15   # allow downgrade to softer only in last 15 laps
+
     # ── 1-stop strategies ─────────────────────────────────────────────────
     for c2 in DRY_COMPOUNDS:
         if c2 == current_compound and current_tyre_age < 5:
             continue   # same compound again only if already some age
+        # Don't suggest going to a softer compound mid-race unless it's a late splash
+        if HARDNESS.get(c2, 0) < HARDNESS.get(current_compound, 0):
+            continue
         for ext in range(max(MIN_STINT, laps_left_on_current - 5),
                          min(remaining - MIN_STINT, laps_left_on_current + 8) + 1, 3):
             r2 = remaining - ext
             if r2 < MIN_STINT:
+                continue
+            # Allow soft only if the soft stint is short (splash) or current is also soft
+            if c2 == "SOFT" and r2 > SOFT_SPLASH_LAPS and current_compound != "SOFT":
                 continue
             add(f"{current_compound[0]}–{c2[0]}", [(current_compound, ext), (c2, r2)])
 
