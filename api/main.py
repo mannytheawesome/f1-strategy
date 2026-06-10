@@ -507,6 +507,7 @@ def predict(session_key: int = None, lap: int = None):
                 "interval":      d.interval,
                 "retired":       d.retired,
                 "compounds_used": list({s.compound for s in d.stints}),
+                "current_lap":   d.current_lap,
             }
             for d in drivers_sorted
         ]

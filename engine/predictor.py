@@ -496,9 +496,16 @@ def simulate_race(
         acronym  = driver.get("acronym", str(num))
         compound = driver.get("compound") or "MEDIUM"
         age      = driver.get("tyre_age") or 0
-        gap      = driver.get("gap_to_leader")
-        gap_s    = gap if isinstance(gap, (int, float)) else 0.0
         pos      = driver.get("position") or 99
+
+        # Lapped drivers report gap as "+N LAP" string — convert to seconds
+        gap = driver.get("gap_to_leader")
+        if isinstance(gap, (int, float)):
+            gap_s = gap
+        else:
+            leader_lap = max((d.get("current_lap") or 0) for d in drivers_sorted)
+            laps_down = max(1, leader_lap - (driver.get("current_lap") or leader_lap))
+            gap_s = laps_down * field_baseline
 
         pace = pace_model.get(num)
         pd   = pace.pace_delta if pace else 0.0
