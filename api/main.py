@@ -504,8 +504,12 @@ def predict(session_key: int = None, lap: int = None):
             for d in drivers_sorted
         ]
 
+        is_street = any(c in circuit.lower() for c in ["monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"])
+        track_pos_weight = 0.75 if is_street else 0.5
+
         forecasts = simulate_race(
-            serialised, max_lap, total_laps, curves, pace_model, sc_events
+            serialised, max_lap, total_laps, curves, pace_model, sc_events,
+            track_position_weight=track_pos_weight,
         )
 
         return {

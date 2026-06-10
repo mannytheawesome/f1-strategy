@@ -207,6 +207,24 @@ def build_deg_curves(
         conf = "HIGH" if pts >= 20 else "MEDIUM" if pts >= 8 else "LOW"
         curves[c] = DegCurve(c, max(deg, 0.0), base, pts, conf, [s[4] for s in samps])
 
+    # Sanity-check baselines: Soft must be fastest, Hard must be slowest.
+    # FP Soft data is often contaminated by track evolution / cool-down laps,
+    # making its regression baseline unreliable. If the ordering is wrong,
+    # anchor all baselines to Medium and apply known compound speed offsets.
+    med = curves.get("MEDIUM")
+    sft = curves.get("SOFT")
+    hrd = curves.get("HARD")
+    if med:
+        expected = {"SOFT": med.baseline - 0.6, "HARD": med.baseline + 0.4}
+        if sft and sft.baseline > med.baseline:
+            curves["SOFT"] = DegCurve("SOFT", sft.deg_rate,
+                                      expected["SOFT"], sft.data_points,
+                                      sft.confidence + "*", sft.sessions)
+        if hrd and hrd.baseline < med.baseline:
+            curves["HARD"] = DegCurve("HARD", hrd.deg_rate,
+                                      expected["HARD"], hrd.data_points,
+                                      hrd.confidence + "*", hrd.sessions)
+
     return curves
 
 
@@ -439,8 +457,14 @@ def simulate_race(
     pace_model:     dict[int, DriverPace],
     sc_events:      list[SCEvent],
     pit_loss:       float = PIT_LOSS,
+    track_position_weight: float = 0.6,
 ) -> list[DriverForecast]:
-
+    """
+    track_position_weight: how much current position (gap) influences the
+    final predicted order vs pure pace simulation (0=pure pace, 1=pure position).
+    At Monaco ~0.8 (almost impossible to overtake without pit stop).
+    On normal circuits ~0.4–0.5.
+    """
     if total_laps <= current_lap:
         return []
 
@@ -472,7 +496,15 @@ def simulate_race(
         strat.driver_number = num
         strat.acronym = acronym
 
-        finish_time = gap_s + strat.total_time_from_now
+        # Blend current gap (track position) with simulated pace advantage.
+        # Pure pace sim overpredicts overtaking — especially at Monaco.
+        # track_position_weight=0.6 means 60% current gap, 40% pace simulation.
+        pace_finish_time = gap_s + strat.total_time_from_now
+        # Position-only estimate: assume everyone runs at the same absolute pace,
+        # so the finishing order == the current order, gaps are gap_s.
+        position_finish_time = gap_s
+        finish_time = (track_position_weight * position_finish_time
+                       + (1 - track_position_weight) * pace_finish_time)
 
         # Undercut vs driver immediately ahead
         driver_ahead = next(
