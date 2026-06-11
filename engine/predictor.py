@@ -422,7 +422,7 @@ def calc_undercut(
     """
     num  = driver["driver_number"]
     numa = driver_ahead["driver_number"]
-    gap  = driver.get("interval") or 0.0
+    gap  = _parse_gap(driver.get("interval"), field_baseline)
 
     c_d, c_a   = driver.get("compound", "MEDIUM"), driver_ahead.get("compound", "MEDIUM")
     age_d, age_a = driver.get("tyre_age", 0) or 0, driver_ahead.get("tyre_age", 0) or 0
@@ -462,6 +462,35 @@ def calc_undercut(
     )
 
 
+def _parse_gap(gap, lap_time_estimate: float) -> float:
+    """
+    Parse gap_to_leader in its various formats:
+      numeric        → as-is
+      'LEADER'       → 0
+      '+3.131'       → 3.131
+      '+1 LAP'       → 1 × lap_time_estimate
+      '+2 LAPS'      → 2 × lap_time_estimate
+      None / other   → 0
+    """
+    if isinstance(gap, (int, float)):
+        return float(gap)
+    if not isinstance(gap, str):
+        return 0.0
+    g = gap.strip().upper()
+    if g in ("LEADER", "", "—", "-"):
+        return 0.0
+    if "LAP" in g:
+        try:
+            n = int(g.replace("+", "").split()[0])
+        except (ValueError, IndexError):
+            n = 1
+        return n * lap_time_estimate
+    try:
+        return float(g.replace("+", ""))
+    except ValueError:
+        return 0.0
+
+
 # ── Full race simulation ──────────────────────────────────────────────────────
 
 def simulate_race(
@@ -498,14 +527,8 @@ def simulate_race(
         age      = driver.get("tyre_age") or 0
         pos      = driver.get("position") or 99
 
-        # Lapped drivers report gap as "+N LAP" string — convert to seconds
-        gap = driver.get("gap_to_leader")
-        if isinstance(gap, (int, float)):
-            gap_s = gap
-        else:
-            leader_lap = max((d.get("current_lap") or 0) for d in drivers_sorted)
-            laps_down = max(1, leader_lap - (driver.get("current_lap") or leader_lap))
-            gap_s = laps_down * field_baseline
+        # gap_to_leader arrives as a string: 'LEADER', '+3.131', '+1 LAP', '+2 LAPS'
+        gap_s = _parse_gap(driver.get("gap_to_leader"), field_baseline)
 
         pace = pace_model.get(num)
         pd   = pace.pace_delta if pace else 0.0
@@ -543,8 +566,8 @@ def simulate_race(
         )
         undercut = None
         if driver_ahead:
-            ivl = driver.get("interval")
-            if isinstance(ivl, (int, float)) and abs(ivl) < 6.0:
+            ivl = _parse_gap(driver.get("interval"), field_baseline)
+            if 0 < abs(ivl) < 6.0:
                 undercut = calc_undercut(driver, driver_ahead, curves,
                                          pace_model, field_baseline, pit_loss)
 
