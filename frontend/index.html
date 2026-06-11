@@ -753,6 +753,8 @@
   }
 
   function renderPredictions(data) {
+    // Ensure panel is visible (setMode may not have fired if page loaded in RACE mode)
+    document.getElementById('panel-predict').style.display = '';
     const el = document.getElementById('predict-panel');
     const forecasts = data.forecasts || [];
     if (!forecasts.length) {
