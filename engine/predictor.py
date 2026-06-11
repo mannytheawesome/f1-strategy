@@ -215,28 +215,45 @@ def build_deg_curves(
         conf = "HIGH" if pts >= 20 else "MEDIUM" if pts >= 8 else "LOW"
         curves[c] = DegCurve(c, max(deg, 0.0), base, pts, conf, [s[4] for s in samps])
 
-    # Sanity-check baselines: Soft must be fastest, Hard must be slowest.
-    # FP Soft data is often contaminated by track evolution / cool-down laps,
-    # making its regression baseline unreliable. If the ordering is wrong,
-    # anchor the corrupted compound to Medium ± known compound offset AND
-    # floor its deg rate — the same polluted data underestimates wear.
-    # Physical reality: deg(SOFT) > deg(MEDIUM) > deg(HARD).
+    # Sanity-check against physical reality. FP data is frequently polluted
+    # (track evolution, wet running, traffic, fuel loads), which corrupts
+    # both baselines and deg rates. Clamp to plausible bands anchored on
+    # the Medium compound:
+    #   - baseline offset vs Medium: SOFT ≈ -0.6s, HARD ≈ +0.4s (±1.0s band)
+    #   - deg rate: 0 to 0.30 s/lap, with SOFT ≥ MEDIUM ≥ HARD ordering
+    EXPECTED_OFFSET = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}
+    OFFSET_TOLERANCE = 1.0
+    MAX_DEG = 0.30
+
+    med = curves.get("MEDIUM")
+    if med:
+        for c in ("SOFT", "HARD"):
+            cur = curves.get(c)
+            if not cur:
+                continue
+            offset = cur.baseline - med.baseline
+            expected = EXPECTED_OFFSET[c]
+            if abs(offset - expected) > OFFSET_TOLERANCE:
+                curves[c] = DegCurve(c, cur.deg_rate,
+                                     med.baseline + expected, cur.data_points,
+                                     cur.confidence.rstrip("*") + "*", cur.sessions)
+
+    # Deg rate caps and monotonicity (SOFT wears fastest)
+    for c, cur in list(curves.items()):
+        if cur.deg_rate > MAX_DEG:
+            curves[c] = DegCurve(c, MAX_DEG, cur.baseline, cur.data_points,
+                                 cur.confidence.rstrip("*") + "*", cur.sessions)
     med = curves.get("MEDIUM")
     sft = curves.get("SOFT")
     hrd = curves.get("HARD")
-    if med:
-        if sft and sft.baseline > med.baseline:
-            # Soft data untrustworthy: anchor baseline and floor deg above Medium's
-            fixed_deg = max(sft.deg_rate, med.deg_rate * 1.3)
-            curves["SOFT"] = DegCurve("SOFT", fixed_deg,
-                                      med.baseline - 0.6, sft.data_points,
-                                      sft.confidence + "*", sft.sessions)
-        if hrd and hrd.baseline < med.baseline:
-            # Hard data untrustworthy: anchor baseline and cap deg below Medium's
-            fixed_deg = min(hrd.deg_rate, med.deg_rate * 0.7)
-            curves["HARD"] = DegCurve("HARD", fixed_deg,
-                                      med.baseline + 0.4, hrd.data_points,
-                                      hrd.confidence + "*", hrd.sessions)
+    if med and sft and sft.deg_rate < med.deg_rate:
+        curves["SOFT"] = DegCurve("SOFT", med.deg_rate * 1.3, sft.baseline,
+                                  sft.data_points,
+                                  sft.confidence.rstrip("*") + "*", sft.sessions)
+    if med and hrd and hrd.deg_rate > med.deg_rate:
+        curves["HARD"] = DegCurve("HARD", med.deg_rate * 0.7, hrd.baseline,
+                                  hrd.data_points,
+                                  hrd.confidence.rstrip("*") + "*", hrd.sessions)
 
     return curves
 
@@ -382,6 +399,17 @@ def optimize_strategy(
                         best = t
                         best_pits = [PitPlan(current_lap + p1, c2),
                                      PitPlan(current_lap + p1 + p2, c3)]
+
+    # Fallback: compound change still required but no legal plan found
+    # (too few laps left for MIN_STINT windows) — force a late splash stop
+    if best == float("inf"):
+        alt = "SOFT" if current_compound != "SOFT" else "MEDIUM"
+        splash = min(3, max(1, remaining - 1))
+        pit_at = remaining - splash
+        t = (stint_t(current_compound, current_age, pit_at) + stop_cost
+             + stint_t(alt, 0, splash))
+        best = t
+        best_pits = [PitPlan(current_lap + pit_at, alt)]
 
     # Tyre cliff
     must_pit = None
@@ -585,8 +613,9 @@ def simulate_race(
         # Pure pace sim overpredicts overtaking — especially at Monaco.
         # track_position_weight=0.6 means 60% current gap, 40% pace simulation.
         pace_finish_time = gap_s + strat.total_time_from_now
-        # Position-only estimate: assume everyone runs at the same absolute pace,
-        # so the finishing order == the current order, gaps are gap_s.
+        # Position-only estimate: assume current order holds, gaps stay as-is.
+        # (Adding pit-stop debt here was tried and made backtests worse —
+        # the optimizer's planned-stop count is too noisy to anchor on.)
         position_finish_time = gap_s
         finish_time = (track_position_weight * position_finish_time
                        + (1 - track_position_weight) * pace_finish_time)
