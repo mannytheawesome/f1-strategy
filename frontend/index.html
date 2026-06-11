@@ -261,6 +261,35 @@
     .status-OVERDUE { color: #e8002d; font-weight: 700; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
 
+    /* prediction panel */
+    .pred-rows { display: flex; flex-direction: column; gap: 3px; }
+    .pred-row {
+      display: grid;
+      grid-template-columns: 26px 26px 36px 34px 52px 1fr;
+      gap: 4px; align-items: center;
+      font-size: 10px; padding: 2px 0;
+      border-bottom: 1px solid #1d1d1d;
+    }
+    .pred-pos    { color: var(--text); font-weight: bold; }
+    .pred-up     { color: var(--green); font-size: 9px; }
+    .pred-down   { color: var(--red); font-size: 9px; }
+    .pred-neu    { color: #444; }
+    .pred-name   { font-weight: bold; }
+    .pred-win    { color: var(--green); }
+    .pred-win.dim{ color: #333; }
+    .pred-range  { color: var(--muted); }
+    .pred-strategy { display: flex; gap: 3px; flex-wrap: wrap; }
+    .pred-pit    { padding: 0 3px; border-radius: 2px; font-size: 9px; background: #222; }
+    .pred-pit.SOFT   { color: var(--soft); }
+    .pred-pit.MEDIUM { color: var(--medium); }
+    .pred-pit.HARD   { color: var(--hard); }
+    .pred-stay   { color: var(--muted); font-size: 9px; }
+    .pred-uc {
+      grid-column: 1 / -1;
+      color: var(--medium); font-size: 9px;
+      padding: 1px 0 3px 26px;
+    }
+
     /* stint history dots */
     .stint-history { display: flex; gap: 3px; }
     .stint-dot { width: 7px; height: 7px; border-radius: 50%; }
@@ -332,6 +361,12 @@
       <h2>RACE STRATEGY</h2>
       <div id="strategy-ref"></div>
       <canvas id="strategy-canvas" width="260" height="200"></canvas>
+    </div>
+
+    <!-- RACE: prediction model -->
+    <div class="panel-box" id="panel-predict" style="display:none">
+      <h2>PREDICTION <span id="predict-lap" style="color:var(--muted)"></span></h2>
+      <div id="predict-panel"></div>
     </div>
 
     <!-- Tyre inventory (FP + Race) -->
@@ -444,6 +479,8 @@
       mode === 'QUALI' ? '' : 'none';
     document.getElementById('panel-inventory').style.display =
       (mode === 'FP' || mode === 'RACE' || mode === 'SPRINT') ? '' : 'none';
+    document.getElementById('panel-predict').style.display =
+      (mode === 'RACE' || mode === 'SPRINT') ? '' : 'none';
 
     // Clear row cache when switching modes
     Object.keys(rowMap).forEach(k => { rowMap[k].remove(); delete rowMap[k]; });
@@ -464,6 +501,7 @@
     const val = document.getElementById('session-input').value.trim();
     sessionKey = val ? parseInt(val) : null;
     strategyFetched = false;
+    predictLastLap = -1;
     fetchData().then(() => {
       if (currentMode === 'FP' || currentMode === 'QUALI') fetchLeftPanel(currentMode);
       else fetchAndDrawStrategies(true);
@@ -685,6 +723,74 @@
     }
 
     drawTrackMap(data.drivers);
+
+    // Prediction panel: refetch when the leader's lap changes (max 1/lap)
+    if (currentMode === 'RACE' || currentMode === 'SPRINT') {
+      const leaderLap = Math.max(...data.drivers.map(d => d.current_lap || 0));
+      fetchPredictions(leaderLap);
+    }
+  }
+
+  // ── Prediction panel ──────────────────────────────────────────────────────
+  let predictLastLap = -1;
+  let predictInFlight = false;
+
+  async function fetchPredictions(leaderLap) {
+    if (predictInFlight || leaderLap === predictLastLap) return;
+    predictInFlight = true;
+    try {
+      const url = sessionKey
+        ? `/api/predict?session_key=${sessionKey}${replayMode ? `&lap=${leaderLap}` : ''}`
+        : `/api/predict`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      predictLastLap = leaderLap;
+      renderPredictions(data);
+    } catch(e) {} finally {
+      predictInFlight = false;
+    }
+  }
+
+  function renderPredictions(data) {
+    const el = document.getElementById('predict-panel');
+    const forecasts = data.forecasts || [];
+    if (!forecasts.length) {
+      el.innerHTML = '<div style="color:var(--muted)">Race finished — no prediction</div>';
+      return;
+    }
+
+    document.getElementById('predict-lap').textContent =
+      `LAP ${data.lap}/${data.total_laps} · SC ${(data.sc_probability_remaining*100).toFixed(0)}%`;
+
+    let html = '<div class="pred-rows">';
+    forecasts.slice(0, 10).forEach(f => {
+      const delta = f.current_position - f.predicted_position;
+      const deltaHTML = delta > 0 ? `<span class="pred-up">▲${delta}</span>`
+                      : delta < 0 ? `<span class="pred-down">▼${-delta}</span>`
+                      : `<span class="pred-neu">—</span>`;
+      const winPct = (f.win_probability * 100);
+      const winHTML = winPct >= 1
+        ? `<span class="pred-win">${winPct.toFixed(0)}%</span>`
+        : `<span class="pred-win dim">·</span>`;
+      const pits = (f.strategy.pits_remaining || []);
+      const pitHTML = pits.length
+        ? pits.map(p => `<span class="pred-pit ${p.compound}">${p.compound[0]}@${p.lap}</span>`).join(' ')
+        : `<span class="pred-stay">stays out</span>`;
+      const ucHTML = (f.undercut && f.undercut.viable)
+        ? `<div class="pred-uc">⚡ undercut ${f.undercut.target}: ${f.undercut.recommendation}</div>` : '';
+
+      html += `<div class="pred-row">
+        <span class="pred-pos">P${f.predicted_position}</span>
+        ${deltaHTML}
+        <span class="pred-name">${f.acronym}</span>
+        ${winHTML}
+        <span class="pred-range">P${f.position_range[0]}–${f.position_range[1]}</span>
+        <span class="pred-strategy">${pitHTML}</span>
+      </div>${ucHTML}`;
+    });
+    html += '</div>';
+    el.innerHTML = html;
   }
 
   // ── Row class helper ────────────────────────────────────────────────────
