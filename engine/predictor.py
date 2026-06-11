@@ -110,6 +110,11 @@ class DriverForecast:
     confidence:         str
     strategy:           DriverStrategy
     undercut:           Optional[UndercutResult]
+    # Monte Carlo outputs (filled by run_monte_carlo)
+    win_probability:    float = 0.0
+    podium_probability: float = 0.0
+    points_probability: float = 0.0
+    position_range:     tuple[int, int] = (0, 0)   # P5-P95 of simulated finishes
 
 
 # ── SC detection ─────────────────────────────────────────────────────────────
@@ -515,6 +520,23 @@ def simulate_race(
     baselines = [c.baseline for c in curves.values() if c.baseline > 0]
     field_baseline = statistics.median(baselines) if baselines else 85.0
 
+    # Build cumulative gaps by chaining intervals down the running order.
+    # gap_to_leader saturates at '+1 LAP' for lapped drivers, which would give
+    # every lapped driver the same gap — interval chaining preserves their
+    # true relative spacing.
+    active = [d for d in drivers_sorted if not d.get("retired")]
+    cumulative_gaps: dict[int, float] = {}
+    running = 0.0
+    for i, d in enumerate(active):
+        if i > 0:
+            chained = running + _parse_gap(d.get("interval"), field_baseline)
+            direct  = _parse_gap(d.get("gap_to_leader"), field_baseline)
+            # direct is exact for unlapped drivers; for lapped drivers it
+            # saturates at N×lap_time which acts as a lower bound. The
+            # chained interval misses lap boundaries. Take the max of both.
+            running = max(chained, direct)
+        cumulative_gaps[d["driver_number"]] = running
+
     scored: list[tuple[float, DriverForecast]] = []
 
     for driver in drivers_sorted:
@@ -527,8 +549,7 @@ def simulate_race(
         age      = driver.get("tyre_age") or 0
         pos      = driver.get("position") or 99
 
-        # gap_to_leader arrives as a string: 'LEADER', '+3.131', '+1 LAP', '+2 LAPS'
-        gap_s = _parse_gap(driver.get("gap_to_leader"), field_baseline)
+        gap_s = cumulative_gaps.get(num, 0.0)
 
         pace = pace_model.get(num)
         pd   = pace.pace_delta if pace else 0.0
@@ -588,7 +609,86 @@ def simulate_race(
         fc.predicted_position = rank
         fc.predicted_gap = round(ft - winner, 2)
 
-    return [fc for _, fc in scored]
+    forecasts = [fc for _, fc in scored]
+
+    # Monte Carlo pass adds probability distributions
+    run_monte_carlo(forecasts, scored, current_lap, total_laps,
+                    sc_events, field_baseline, pit_loss,
+                    circuit_street=track_position_weight >= 0.7)
+
+    return forecasts
+
+
+# ── Monte Carlo simulation ────────────────────────────────────────────────────
+
+def run_monte_carlo(
+    forecasts:      list[DriverForecast],
+    scored:         list[tuple[float, DriverForecast]],
+    current_lap:    int,
+    total_laps:     int,
+    sc_events:      list[SCEvent],
+    field_baseline: float,
+    pit_loss:       float,
+    n_runs:         int = 500,
+    circuit_street: bool = False,
+) -> None:
+    """
+    Perturb each driver's deterministic finish time with:
+      1. Pace noise        — gaussian, scaled by their pace_std proxy
+      2. SC lottery        — if a random SC falls in the remaining laps,
+                             drivers who haven't pitted yet gain ~half the
+                             pit loss (cheap stop), others lose nothing
+      3. Reliability/error — small chance (~2% per driver) of a big loss
+
+    Mutates forecasts in place with win/podium/points probabilities and
+    P5–P95 position range.
+    """
+    import random
+
+    if not scored:
+        return
+
+    remaining = total_laps - current_lap
+    sc_rate   = SC_RATE_STREET if circuit_street else SC_RATE_DEFAULT
+    p_sc      = 1 - (1 - sc_rate) ** max(0, remaining)
+
+    base_times = {fc.driver_number: ft for ft, fc in scored}
+    has_stop_planned = {
+        fc.driver_number: len(fc.strategy.pits_remaining) > 0 for _, fc in scored
+    }
+
+    # Pace noise: traffic, tyre warm-up, small mistakes, weather drift.
+    # ~0.4s/√lap gives ±2s over 25 laps, ±3.5s over 70 — roughly matches
+    # how much real race gaps wander lap to lap
+    sigma = 0.4 * (remaining ** 0.5)
+
+    finish_counts: dict[int, list[int]] = {fc.driver_number: [] for fc in forecasts}
+
+    for _ in range(n_runs):
+        run_times = []
+        sc_happens = random.random() < p_sc
+        for fc in forecasts:
+            t = base_times[fc.driver_number]
+            t += random.gauss(0, sigma)
+            if sc_happens and has_stop_planned[fc.driver_number]:
+                # Free-ish pit stop under SC: refund ~60% of pit loss
+                t -= pit_loss * 0.6
+            if random.random() < 0.02:
+                t += random.uniform(20, 80)   # incident / slow stop / damage
+            run_times.append((t, fc.driver_number))
+        run_times.sort()
+        for rank, (_, num) in enumerate(run_times, 1):
+            finish_counts[num].append(rank)
+
+    for fc in forecasts:
+        positions = sorted(finish_counts[fc.driver_number])
+        if not positions:
+            continue
+        n = len(positions)
+        fc.win_probability    = round(sum(1 for p in positions if p == 1) / n, 3)
+        fc.podium_probability = round(sum(1 for p in positions if p <= 3) / n, 3)
+        fc.points_probability = round(sum(1 for p in positions if p <= 10) / n, 3)
+        fc.position_range     = (positions[int(n * 0.05)], positions[int(n * 0.95) - 1])
 
 
 # ── Serialisation ─────────────────────────────────────────────────────────────
@@ -617,6 +717,10 @@ def forecast_to_dict(fc: DriverForecast) -> dict:
             "viable":         u.viable,
             "recommendation": u.recommendation,
         } if u else None,
+        "win_probability":    fc.win_probability,
+        "podium_probability": fc.podium_probability,
+        "points_probability": fc.points_probability,
+        "position_range":     list(fc.position_range),
     }
 
 
