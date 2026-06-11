@@ -762,8 +762,11 @@
       return;
     }
 
-    document.getElementById('predict-lap').textContent =
-      `LAP ${data.lap}/${data.total_laps} · SC ${(data.sc_probability_remaining*100).toFixed(0)}%`;
+    const scActive = (data.sc_events || []).some(e =>
+      e.start_lap <= data.lap && data.lap <= e.end_lap + 1);
+    document.getElementById('predict-lap').innerHTML = scActive
+      ? `LAP ${data.lap}/${data.total_laps} · <span style="color:var(--medium)">⚠ SC — CHEAP PIT WINDOW</span>`
+      : `LAP ${data.lap}/${data.total_laps} · SC ${(data.sc_probability_remaining*100).toFixed(0)}%`;
 
     let html = '<div class="pred-rows">';
     forecasts.slice(0, 10).forEach(f => {

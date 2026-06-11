@@ -563,11 +563,23 @@ def simulate_race(
         dry_used = {c for c in compounds_used if c in DRY}
         needs_change = len(dry_used) < 2
 
+        # Active SC: pit lane loss is roughly halved (field bunched, slow laps).
+        # If an SC is running on the current lap, evaluate strategy with the
+        # discounted pit loss — makes "pit now under SC" win when it should.
+        sc_active = any(ev.start_lap <= current_lap <= ev.end_lap + 1 for ev in sc_events)
+        effective_pit_loss = pit_loss * 0.45 if sc_active else pit_loss
+
         strat = optimize_strategy(current_lap, total_laps, compound, age,
-                                  pd, curves, field_baseline, pit_loss,
+                                  pd, curves, field_baseline, effective_pit_loss,
                                   needs_compound_change=needs_change)
         strat.driver_number = num
         strat.acronym = acronym
+
+        # If SC is active and a stop is still needed, recommend taking it NOW
+        if sc_active and strat.pits_remaining:
+            first = strat.pits_remaining[0]
+            if first.lap > current_lap + 1:
+                strat.pits_remaining[0] = PitPlan(current_lap + 1, first.compound)
 
         # Blend current gap (track position) with simulated pace advantage.
         # Pure pace sim overpredicts overtaking — especially at Monaco.
