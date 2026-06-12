@@ -134,23 +134,46 @@ class DriverState:
 # API helpers
 # ---------------------------------------------------------------------------
 
+# Stale store: last-known-good data with no expiry. Served when OpenF1
+# is down/rate-limited so a transient upstream failure never 502s a live page.
+_stale: dict = {}
+
+
 def _get(endpoint: str, **params) -> list:
-    r = requests.get(f"{BASE}/{endpoint}", params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = requests.get(f"{BASE}/{endpoint}", params=params, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(1.5)
+    raise last_err
 
 
 def _cached_get(cache_key: str, endpoint: str, ttl: float, **params):
     hit = _cache_get(cache_key)
     if hit is not None:
         return hit
-    data = _get(endpoint, **params)
+    try:
+        data = _get(endpoint, **params)
+    except Exception:
+        with _cache_lock:
+            stale = _stale.get(cache_key)
+        if stale is not None:
+            return stale
+        raise
     _cache_set(cache_key, data, ttl)
+    with _cache_lock:
+        _stale[cache_key] = data
     return data
 
 
 def get_latest_session() -> dict:
-    return _get("sessions", session_key="latest")[0]
+    rows = _cached_get("session:latest", "sessions", 30, session_key="latest")
+    return rows[0]
 
 
 def get_session(session_key: int) -> dict:
