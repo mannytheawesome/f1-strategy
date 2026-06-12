@@ -31,7 +31,10 @@ import threading
 
 _cache: dict = {}
 _cache_lock = threading.Lock()
-LIVE_TTL = 8       # seconds — re-fetch live session data frequently
+# OpenF1 sponsor tier allows 60 req/min. Live state needs 5 endpoints
+# (laps/stints/drivers/positions/intervals) per refresh + fast interval and
+# sector polling on top. TTL=10s keeps the total comfortably under budget.
+LIVE_TTL = 10      # seconds — re-fetch live session data frequently
 HIST_TTL = 3600    # seconds — historical data never changes
 
 def _cache_get(key: str):

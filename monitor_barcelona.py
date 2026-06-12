@@ -26,8 +26,10 @@ REC = os.path.join(HERE, "recordings")
 
 SESSIONS = [
     # (label, session_key, start_utc, end_utc with buffer)
+    # NOTE: free OpenF1 tier blocks data until ~30 min after session end,
+    # so the window extends past that point to capture the analysis.
     ("FP1", 11300, "2026-06-12T11:25:00", "2026-06-12T12:45:00"),
-    ("FP2", 11301, "2026-06-12T14:55:00", "2026-06-12T16:15:00"),
+    ("FP2", 11301, "2026-06-12T14:55:00", "2026-06-12T16:40:00"),
 ]
 
 POLL_S = 30
