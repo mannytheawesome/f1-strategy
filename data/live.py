@@ -4,6 +4,7 @@ Polls the OpenF1 API during a session and builds a live picture of
 each driver's stint/tyre state, lap times, sector times, and track position.
 """
 
+import os
 import time
 import requests
 from datetime import datetime, timezone
@@ -11,6 +12,17 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 BASE = "https://api.openf1.org/v1"
+
+# OpenF1 live data requires a paid subscription (free tier is historical-only:
+# data is unavailable from 30 min before to 30 min after each session).
+# Set OPENF1_API_KEY to enable live access once subscribed.
+OPENF1_API_KEY = os.environ.get("OPENF1_API_KEY", "")
+
+
+def _auth_headers() -> dict:
+    if OPENF1_API_KEY:
+        return {"Authorization": f"Bearer {OPENF1_API_KEY}"}
+    return {}
 
 # ---------------------------------------------------------------------------
 # Simple in-memory cache — avoids re-fetching static historical data
@@ -143,7 +155,8 @@ def _get(endpoint: str, **params) -> list:
     last_err = None
     for attempt in range(2):
         try:
-            r = requests.get(f"{BASE}/{endpoint}", params=params, timeout=30)
+            r = requests.get(f"{BASE}/{endpoint}", params=params,
+                             headers=_auth_headers(), timeout=30)
             r.raise_for_status()
             return r.json()
         except Exception as e:
