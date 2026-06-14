@@ -534,7 +534,7 @@ def simulate_race(
     pace_model:     dict[int, DriverPace],
     sc_events:      list[SCEvent],
     pit_loss:       float = PIT_LOSS,
-    track_position_weight: float = 0.6,
+    track_position_weight: float = 0.6,  # 0.75 street / 0.6 normal — tuned on 76-race backtest
 ) -> list[DriverForecast]:
     """
     track_position_weight: how much current position (gap) influences the

@@ -48,11 +48,14 @@ def _cache_path(endpoint: str, params: dict) -> str:
     return os.path.join(CACHE_DIR, safe + ".json")
 
 
-def fetch(endpoint: str, max_retries: int = 6, **params):
+def fetch(endpoint: str, max_retries: int = 6, cache_only: bool = False, **params):
     path = _cache_path(endpoint, params)
     if os.path.exists(path):
         with open(path) as f:
             return json.load(f)
+
+    if cache_only:
+        raise FileNotFoundError(f"not in cache: {endpoint} {params}")
 
     qs = urllib.parse.urlencode(params)
     url = f"https://api.openf1.org/v1/{endpoint}?{qs}"
@@ -101,15 +104,16 @@ def enumerate_weekends() -> list[dict]:
 
 # ── Data assembly per race ────────────────────────────────────────────────────
 
-def load_weekend(w: dict) -> dict | None:
+def load_weekend(w: dict, cache_only: bool = False) -> dict | None:
     """Fetch all needed data for one weekend. Returns None if unusable."""
+    _fetch = lambda ep, **kw: fetch(ep, cache_only=cache_only, **kw)
     try:
-        race_laps   = fetch("laps", session_key=w["race_key"])
-        race_stints = fetch("stints", session_key=w["race_key"])
-        drivers_raw = fetch("drivers", session_key=w["race_key"])
-        positions   = fetch("position", session_key=w["race_key"])
-        intervals   = fetch("intervals", session_key=w["race_key"])
-    except RuntimeError:
+        race_laps   = _fetch("laps", session_key=w["race_key"])
+        race_stints = _fetch("stints", session_key=w["race_key"])
+        drivers_raw = _fetch("drivers", session_key=w["race_key"])
+        positions   = _fetch("position", session_key=w["race_key"])
+        intervals   = _fetch("intervals", session_key=w["race_key"])
+    except (RuntimeError, FileNotFoundError):
         return None
     if not race_laps or not drivers_raw:
         return None
@@ -118,10 +122,10 @@ def load_weekend(w: dict) -> dict | None:
     names = ["FP1", "FP2", "FP3"]
     for i, k in enumerate(w["fp_keys"][:3]):
         try:
-            fl = fetch("laps", session_key=k)
-            fs = fetch("stints", session_key=k)
+            fl = _fetch("laps", session_key=k)
+            fs = _fetch("stints", session_key=k)
             fp_data.append((names[i] if i < 3 else f"FP{i+1}", fl, fs))
-        except RuntimeError:
+        except (RuntimeError, FileNotFoundError):
             pass
 
     return {
@@ -297,7 +301,7 @@ def phase_collect():
     print(f"\nCollected {ok}/{len(weekends)} weekends into {CACHE_DIR}")
 
 
-def phase_evaluate(tpw_street=0.75, tpw_normal=0.5, quiet=False):
+def phase_evaluate(tpw_street=0.75, tpw_normal=0.6, quiet=False):
     weekends = enumerate_weekends()
     all_results = []
     for w in weekends:
@@ -364,7 +368,7 @@ def phase_sweep():
     weekends = enumerate_weekends()
     loaded = []
     for w in weekends:
-        d = load_weekend(w)
+        d = load_weekend(w, cache_only=True)
         if d:
             loaded.append(d)
     print(f"{len(loaded)} weekends loaded for sweep")
