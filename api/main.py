@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from data.live import (
     build_state, get_latest_session, get_session, get_laps, get_stints, get_drivers,
     DriverState, Stint, HIST_TTL, _get, _cache_get, _cache_set, LIVE_TTL,
+    get_track_layout,
 )
 from engine.degradation import build_degradation_curves, predict_drivers
 from engine.strategy import generate_strategies
@@ -147,6 +148,22 @@ def live_state(session_key: int = None):
         for d in serialised:
             d.update(preds.get(d["driver_number"], {}))
         return {"session": session, "session_mode": _session_mode(session), "drivers": serialised}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/track_layout")
+def track_layout(session_key: int = None):
+    """
+    Returns a polyline tracing the circuit, derived from one lap of one
+    driver's telemetry. Cached for the session — fetch once on session load.
+    """
+    try:
+        if session_key is None:
+            session = get_latest_session()
+            session_key = session["session_key"]
+        points = get_track_layout(session_key)
+        return {"points": points}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

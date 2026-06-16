@@ -6,3 +6,5 @@ fastf1-env/
 *.log
 qr.png
 .DS_Store
+cache/
+recordings/

@@ -1122,7 +1122,51 @@
     }
   }
 
+  // Track outline is fixed for the whole session — fetch once, cache the
+  // transform, and reuse it for both the backdrop and the live dots so cars
+  // don't jitter/rescale every refresh.
+  let trackLayoutSessionKey = undefined;
+  let trackLayoutPoints = null;   // [{x,y}, ...] or [] if unavailable
+  let trackToCanvas = null;       // (x, y) => [cx, cy]
+
+  function computeTrackTransform(points, W, H, pad) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of points) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const scaleX = (W - pad*2) / (maxX - minX || 1);
+    const scaleY = (H - pad*2) / (maxY - minY || 1);
+    const scale  = Math.min(scaleX, scaleY);
+    return (x, y) => [
+      pad + (x - minX) * scale,
+      H - pad - (y - minY) * scale,   // flip Y
+    ];
+  }
+
+  async function fetchTrackLayout() {
+    if (trackLayoutSessionKey === sessionKey && trackLayoutPoints !== null) return;
+    trackLayoutSessionKey = sessionKey;
+    try {
+      const url = sessionKey ? `/api/track_layout?session_key=${sessionKey}` : `/api/track_layout`;
+      const res = await fetch(url);
+      const data = res.ok ? await res.json() : { points: [] };
+      trackLayoutPoints = data.points || [];
+      if (trackLayoutPoints.length >= 10) {
+        const canvas = document.getElementById('track-canvas');
+        trackToCanvas = computeTrackTransform(trackLayoutPoints, canvas.width, canvas.height, 16);
+      } else {
+        trackToCanvas = null;
+      }
+    } catch (e) {
+      trackLayoutPoints = [];
+      trackToCanvas = null;
+    }
+  }
+
   function drawTrackMap(drivers) {
+    fetchTrackLayout();   // fire-and-forget; uses cached result once loaded
+
     const canvas = document.getElementById('track-canvas');
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
@@ -1134,26 +1178,32 @@
       loadingEl.textContent = 'Fetching positions…';
       return;
     }
-    loadingEl.textContent = `${located.length} drivers located`;
 
-    // find bounds
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const d of located) {
-      minX = Math.min(minX, d.track_x); maxX = Math.max(maxX, d.track_x);
-      minY = Math.min(minY, d.track_y); maxY = Math.max(maxY, d.track_y);
-    }
-    const scaleX = (W - PAD*2) / (maxX - minX || 1);
-    const scaleY = (H - PAD*2) / (maxY - minY || 1);
-    const scale  = Math.min(scaleX, scaleY);
+    // Fall back to a per-frame bounding box if the track outline isn't
+    // ready yet (e.g. fewer than 3 laps completed so far).
+    const toCanvas = trackToCanvas || computeTrackTransform(
+      located.map(d => ({x: d.track_x, y: d.track_y})), W, H, PAD);
 
-    const toCanvas = (x, y) => [
-      PAD + (x - minX) * scale,
-      H - PAD - (y - minY) * scale,   // flip Y
-    ];
+    loadingEl.textContent = trackToCanvas
+      ? `${located.length} drivers located`
+      : `${located.length} drivers located (outline pending)`;
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, W, H);
+
+    // draw track outline backdrop
+    if (trackToCanvas && trackLayoutPoints && trackLayoutPoints.length >= 10) {
+      ctx.beginPath();
+      trackLayoutPoints.forEach((p, i) => {
+        const [cx, cy] = trackToCanvas(p.x, p.y);
+        if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+      });
+      ctx.closePath();
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
 
     // draw each driver as a dot + label
     for (const d of located) {

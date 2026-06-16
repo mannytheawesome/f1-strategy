@@ -306,6 +306,61 @@ def get_latest_locations(session: dict) -> dict[int, dict]:
         return {}
 
 
+def get_track_layout(session_key: int) -> list[dict]:
+    """
+    Trace the circuit outline from one driver's location telemetry over one
+    full lap. Cached for the session (the layout never changes mid-session).
+    Returns a downsampled list of {x, y} points, or [] if not enough data yet.
+    """
+    cache_key = f"track_layout:{session_key}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        laps_raw = get_laps(session_key, HIST_TTL)
+        by_driver: dict[int, dict[int, str]] = {}
+        for lap in laps_raw:
+            n, ln, ds = lap["driver_number"], lap["lap_number"], lap.get("date_start")
+            if ds:
+                by_driver.setdefault(n, {})[ln] = ds
+        if not by_driver:
+            return []
+
+        ref = max(by_driver, key=lambda n: len(by_driver[n]))
+        lap_dates = by_driver[ref]
+        lap_nums = sorted(lap_dates)
+        if len(lap_nums) < 3:
+            return []  # not enough laps yet to pick a clean reference lap
+
+        idx = min(2, len(lap_nums) - 2)   # skip formation/out-lap, lap 1-2
+        lap_n = lap_nums[idx]
+        start_ts = lap_dates[lap_n]
+        end_ts = lap_dates[lap_nums[idx + 1]]
+
+        # date_gt/date_lt filtering is unreliable on this endpoint for
+        # historical sessions, so fetch the full per-driver history and
+        # filter locally — only done once per session, then cached.
+        rows = _get("location", session_key=session_key, driver_number=ref)
+        path = [
+            (r["x"], r["y"]) for r in rows
+            if r.get("date") and start_ts <= r["date"] < end_ts
+            and r.get("x") is not None and r.get("y") is not None
+        ]
+        if len(path) < 10:
+            return []
+
+        if len(path) > 250:
+            step = len(path) // 250
+            path = path[::step]
+
+        result = [{"x": x, "y": y} for x, y in path]
+        _cache_set(cache_key, result, 6 * 3600)
+        return result
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # State builder
 # ---------------------------------------------------------------------------
