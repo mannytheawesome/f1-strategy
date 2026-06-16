@@ -193,6 +193,12 @@ def generate_strategies(
                     s3 = remaining - s1 - s2
                     if s3 < MIN_STINT:
                         continue
+                    # No downgrade to a softer compound mid-race unless it's
+                    # a genuine late splash on the final stint.
+                    if HARDNESS.get(c2, 0) < HARDNESS.get(current_compound, 0):
+                        continue
+                    if HARDNESS.get(c3, 0) < HARDNESS.get(c2, 0) and s3 > SOFT_SPLASH_LAPS:
+                        continue
                     add(f"{current_compound[0]}–{c2[0]}–{c3[0]}",
                         [(current_compound, s1), (c2, s2), (c3, s3)])
 
