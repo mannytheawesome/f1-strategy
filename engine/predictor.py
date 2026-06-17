@@ -26,6 +26,12 @@ STOP_RISK       = 6.0    # extra penalty per stop: traffic, out-lap, execution r
 SC_LAP_MULT     = 1.35   # median lap time > 35% above session median → SC
 MIN_STINT       = 8      # minimum viable stint length
 SOFT_SPLASH_MAX = 15     # Soft allowed as final compound only if ≤ this many laps
+DNF_RATE        = 0.04   # ~4% per driver per race (historical base rate)
+
+# Fuel correction: cars improve ~0.035s/lap as fuel burns off (100kg load, ~0.3kg/km).
+# Applied to RACE laps before deg regression so the slope reflects tyre wear, not
+# fuel-lightening — without this, M/H deg rates come out near-zero on long stints.
+FUEL_RATE = 0.035        # s/lap improvement from fuel burn-off
 
 # RACE data dominates when available — fuel burn-off and track evolution make
 # FP deg rates 2-3x higher than what actually materialises in the race
@@ -37,6 +43,22 @@ DRY = ["SOFT", "MEDIUM", "HARD"]
 STREET_CIRCUITS = {"monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"}
 SC_RATE_DEFAULT = 0.0067
 SC_RATE_STREET  = 0.0120
+
+# Per-circuit SC rates (events per lap) from 2018-2025 historical data.
+# Circuits not listed fall back to SC_RATE_DEFAULT or SC_RATE_STREET.
+SC_RATE_CIRCUIT: dict[str, float] = {
+    "red_bull_ring":    0.0105,   # Austria — gravel traps, fast lap = frequent SC
+    "silverstone":      0.0080,   # Britain — high speed, above-average
+    "spa":              0.0090,   # Belgium — long lap, Eau Rouge incidents
+    "monza":            0.0080,   # Italy — slipstream battles, high speed
+    "suzuka":           0.0075,   # Japan — one-lap incidents, tight first sector
+    "interlagos":       0.0090,   # Brazil — unpredictable weather, Senna S
+    "albert_park":      0.0085,   # Australia — street-ish, first race incidents
+    "bahrain":          0.0060,   # Bahrain — clean, low SC rate
+    "Catalunya":        0.0055,   # Spain — low SC rate historically
+    "hungaroring":      0.0060,   # Hungary — low SC rate, easy to defend
+    "zandvoort":        0.0085,   # Netherlands — barriers close, VSC common
+}
 
 
 # ── Data classes ─────────────────────────────────────────────────────────────
@@ -153,8 +175,15 @@ def sc_probability(sc_events: list[SCEvent], current_lap: int,
     remaining = max(0, total_laps - current_lap)
     if remaining <= 0:
         return 0.0
-    rate = SC_RATE_STREET if any(c in circuit.lower() for c in STREET_CIRCUITS) \
-           else SC_RATE_DEFAULT
+    cl = circuit.lower()
+    if any(c in cl for c in STREET_CIRCUITS):
+        rate = SC_RATE_STREET
+    else:
+        # Check per-circuit lookup (partial match on circuit short name)
+        rate = next(
+            (v for k, v in SC_RATE_CIRCUIT.items() if k in cl or cl in k),
+            SC_RATE_DEFAULT
+        )
     p_no = (1 - rate) ** remaining
     if sc_events:
         p_no = min(p_no * 1.15, 0.95)
@@ -178,6 +207,7 @@ def build_deg_curves(
             for ln in range(s["lap_start"], end + 1):
                 stint_map[(s["driver_number"], ln)] = s
 
+        is_race = name == "RACE"
         by_c: dict[str, list[tuple]] = {}
         for lap in laps_raw:
             dur = lap.get("lap_duration")
@@ -190,7 +220,11 @@ def build_deg_curves(
             if c not in DRY:
                 continue
             age = float(s.get("tyre_age_at_start", 0) + lap["lap_number"] - s["lap_start"])
-            by_c.setdefault(c, []).append((age, dur))
+            # Undo the fuel lightening effect so regression slope reflects tyre
+            # wear only. Without this, long Medium/Hard stints in race data have
+            # near-zero or negative slopes (fuel saving > deg).
+            fuel_adj = FUEL_RATE * lap["lap_number"] if is_race else 0.0
+            by_c.setdefault(c, []).append((age, dur + fuel_adj))
 
         for c, data in by_c.items():
             if len(data) < 5:
@@ -220,10 +254,13 @@ def build_deg_curves(
     # both baselines and deg rates. Clamp to plausible bands anchored on
     # the Medium compound:
     #   - baseline offset vs Medium: SOFT ≈ -0.6s, HARD ≈ +0.4s (±1.0s band)
-    #   - deg rate: 0 to 0.30 s/lap, with SOFT ≥ MEDIUM ≥ HARD ordering
+    #   - deg rate: physical minimum floor → 0.30 s/lap cap, SOFT ≥ MED ≥ HARD
+    # Minimum floors prevent fuel-dominated regression zeroing out deg and
+    # making Hard/Medium look identical to the strategy optimizer.
     EXPECTED_OFFSET = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}
     OFFSET_TOLERANCE = 1.0
     MAX_DEG = 0.30
+    MIN_DEG = {"SOFT": 0.06, "MEDIUM": 0.025, "HARD": 0.010}
 
     med = curves.get("MEDIUM")
     if med:
@@ -238,10 +275,12 @@ def build_deg_curves(
                                      med.baseline + expected, cur.data_points,
                                      cur.confidence.rstrip("*") + "*", cur.sessions)
 
-    # Deg rate caps and monotonicity (SOFT wears fastest)
+    # Deg rate caps, floors, and monotonicity (SOFT wears fastest)
     for c, cur in list(curves.items()):
-        if cur.deg_rate > MAX_DEG:
-            curves[c] = DegCurve(c, MAX_DEG, cur.baseline, cur.data_points,
+        floored = max(cur.deg_rate, MIN_DEG.get(c, 0.0))
+        capped  = min(floored, MAX_DEG)
+        if capped != cur.deg_rate:
+            curves[c] = DegCurve(c, capped, cur.baseline, cur.data_points,
                                  cur.confidence.rstrip("*") + "*", cur.sessions)
     med = curves.get("MEDIUM")
     sft = curves.get("SOFT")
@@ -266,8 +305,15 @@ def build_pace_model(
     drivers_raw: dict[int, dict],
     curves:      dict[str, DegCurve],
     stints_raw:  list[dict],
+    quali_times: dict[int, float] | None = None,
 ) -> dict[int, DriverPace]:
-    """Age-corrected pace: remove tyre-deg component so we compare drivers at equivalent tyre age."""
+    """
+    Age- and fuel-corrected pace delta per driver.
+    If quali_times (driver_number → best Q lap) is supplied it is blended in
+    as a prior — weighted equivalent to 10 race laps — so that early in the
+    race, when few clean laps are available, the model relies on qualifying
+    pace rather than noisy heavy-fuel data.
+    """
     sc_laps: set[int] = {ln for ev in sc_events for ln in range(ev.start_lap, ev.end_lap + 2)}
 
     stint_map: dict[tuple, dict] = {}
@@ -285,13 +331,17 @@ def build_pace_model(
             continue
         s = stint_map.get((lap["driver_number"], lap["lap_number"]))
         age_correction = 0.0
+        fuel_correction = FUEL_RATE * lap["lap_number"]
         if s:
             c = s.get("compound", "")
             age = s.get("tyre_age_at_start", 0) + (lap["lap_number"] - s["lap_start"])
             curve = curves.get(c)
             if curve:
                 age_correction = curve.deg_rate * age
-        by_driver.setdefault(lap["driver_number"], []).append(dur - age_correction)
+        # Subtract both tyre-age and fuel contributions so we're comparing
+        # drivers at equivalent tyre age AND equivalent fuel load.
+        by_driver.setdefault(lap["driver_number"], []).append(
+            dur - age_correction - fuel_correction)
 
     result: dict[int, DriverPace] = {}
     medians = []
@@ -316,6 +366,36 @@ def build_pace_model(
         fm = statistics.median(medians)
         for p in result.values():
             p.pace_delta = round(p.pace_median - fm, 3)
+
+    # Blend qualifying pace as a prior (equivalent to QUALI_PRIOR_LAPS race laps).
+    # Qualifying is low-fuel, one-lap pace, so we scale the relative deltas to
+    # race pace rather than using absolute times.
+    QUALI_PRIOR_LAPS = 10
+    if quali_times and len(quali_times) >= 5:
+        q_vals = [v for v in quali_times.values() if v and v > 0]
+        q_median = statistics.median(q_vals) if q_vals else 0
+        r_median = fm if medians else 0
+        if q_median > 0 and r_median > 0:
+            scale = r_median / q_median
+            all_nums = set(result) | set(quali_times)
+            for num in all_nums:
+                q_t = quali_times.get(num)
+                q_delta_scaled = (q_t - q_median) * scale if q_t else 0.0
+                if num in result:
+                    p = result[num]
+                    r_w = p.laps_counted
+                    blended = (p.pace_delta * r_w + q_delta_scaled * QUALI_PRIOR_LAPS) / (r_w + QUALI_PRIOR_LAPS)
+                    p.pace_delta = round(blended, 3)
+                else:
+                    # driver has quali time but no clean race laps yet
+                    acro = drivers_raw.get(num, {}).get("name_acronym", str(num))
+                    result[num] = DriverPace(
+                        driver_number=num, acronym=acro,
+                        pace_median=r_median + q_delta_scaled,
+                        pace_std=0.3,
+                        pace_delta=round(q_delta_scaled, 3),
+                        laps_counted=0,
+                    )
 
     return result
 
@@ -705,9 +785,12 @@ def run_monte_carlo(
 
     finish_counts: dict[int, list[int]] = {fc.driver_number: [] for fc in forecasts}
 
+    active_count = len(forecasts)
+
     for _ in range(n_runs):
         run_times = []
         sc_happens = random.random() < p_sc
+        dnf_count = 0
         for fc in forecasts:
             t = base_times[fc.driver_number]
             t += random.gauss(0, sigma)
@@ -716,6 +799,10 @@ def run_monte_carlo(
                 t -= pit_loss * 0.6
             if random.random() < 0.02:
                 t += random.uniform(20, 80)   # incident / slow stop / damage
+            if random.random() < DNF_RATE:
+                # Mechanical failure / crash — place behind all finishers
+                t += 1000 + dnf_count
+                dnf_count += 1
             run_times.append((t, fc.driver_number))
         run_times.sort()
         for rank, (_, num) in enumerate(run_times, 1):

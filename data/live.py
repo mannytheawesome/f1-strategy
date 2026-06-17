@@ -306,6 +306,32 @@ def get_latest_locations(session: dict) -> dict[int, dict]:
         return {}
 
 
+def get_quali_times(meeting_key: int) -> dict[int, float]:
+    """
+    Best qualifying lap time per driver for the given meeting.
+    Returns {} if no qualifying session exists or data is unavailable.
+    """
+    try:
+        all_sessions = _cached_get(f"sessions:meeting:{meeting_key}", "sessions",
+                                   HIST_TTL, meeting_key=meeting_key)
+        quali = next((s for s in sorted(all_sessions, key=lambda s: s.get("date_start",""))
+                      if s.get("session_type","").lower() == "qualifying"), None)
+        if not quali:
+            return {}
+        laps = _cached_get(f"laps:{quali['session_key']}", "laps",
+                           HIST_TTL, session_key=quali["session_key"])
+        best: dict[int, float] = {}
+        for lap in laps:
+            t = lap.get("lap_duration")
+            n = lap.get("driver_number")
+            if t and 55 < t < 200 and n:
+                if n not in best or t < best[n]:
+                    best[n] = t
+        return best
+    except Exception:
+        return {}
+
+
 def get_track_layout(session_key: int) -> list[dict]:
     """
     Trace the circuit outline from one driver's location telemetry over one

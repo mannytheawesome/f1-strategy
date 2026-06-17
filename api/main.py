@@ -13,16 +13,17 @@ from fastapi.responses import FileResponse
 from data.live import (
     build_state, get_latest_session, get_session, get_laps, get_stints, get_drivers,
     DriverState, Stint, HIST_TTL, _get, _cache_get, _cache_set, LIVE_TTL,
-    get_track_layout,
+    get_track_layout, get_quali_times,
 )
 from engine.degradation import build_degradation_curves, predict_drivers
 from engine.strategy import generate_strategies
-from engine.fp_analysis import analyse_fp
+from engine.fp_analysis import analyse_fp, _field_compound_summary
 from engine.quali_analysis import analyse_quali
 from engine.tyre_inventory import compute_inventory
 from engine.predictor import (
     detect_sc, sc_probability, build_deg_curves, build_pace_model,
-    simulate_race, forecast_to_dict, curves_to_dict,
+    simulate_race, forecast_to_dict, curves_to_dict, optimize_strategy,
+    DRY, PIT_LOSS,
 )
 
 
@@ -193,16 +194,112 @@ def replay_state(session_key: int, lap: int):
 @app.get("/api/fp_analysis")
 def fp_analysis(session_key: int):
     try:
-        session    = get_session(session_key)
-        laps_raw   = get_laps(session_key, HIST_TTL)
-        stints_raw = get_stints(session_key, HIST_TTL)
-        drv_raw    = get_drivers(session_key, HIST_TTL)
-        summaries  = analyse_fp(laps_raw, stints_raw, drv_raw)
+        session      = get_session(session_key)
+        session_name = session.get("session_name", "")
+        laps_raw     = get_laps(session_key, HIST_TTL)
+        stints_raw   = get_stints(session_key, HIST_TTL)
+        drv_raw      = get_drivers(session_key, HIST_TTL)
+        summaries    = analyse_fp(laps_raw, stints_raw, drv_raw, session_name=session_name)
         return {
             "session": session,
             "session_mode": _session_mode(session),
             "drivers": [s.to_dict() for s in summaries],
+            "compound_field_summary": _field_compound_summary(summaries),
         }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/pre_race_strategy")
+def pre_race_strategy(session_key: int, total_laps: int = 71):
+    """
+    Pre-race strategy forecast from FP data.
+    Builds deg curves from all available FP sessions for this meeting and
+    returns the top 1-stop and 2-stop strategies across all starting compounds,
+    so teams/analysts can plan before the race starts.
+
+    total_laps: circuit lap count (defaults to 71 for Austria / Red Bull Ring).
+    """
+    try:
+        session     = get_session(session_key)
+        meeting_key = session.get("meeting_key")
+        circuit     = session.get("circuit_short_name", "")
+
+        # Gather all FP sessions in this meeting
+        all_sessions_raw = sorted(
+            _get("sessions", meeting_key=meeting_key),
+            key=lambda s: s.get("date_start", "")
+        )
+        fp_sessions = [s for s in all_sessions_raw
+                       if s.get("session_type", "").lower() == "practice"]
+        fp_names = ["FP1", "FP2", "FP3"]
+
+        fp_data = []
+        for i, fp_s in enumerate(fp_sessions[:3]):
+            try:
+                fp_data.append((
+                    fp_names[i],
+                    get_laps(fp_s["session_key"], HIST_TTL),
+                    get_stints(fp_s["session_key"], HIST_TTL),
+                ))
+            except Exception:
+                pass
+
+        if not fp_data:
+            raise HTTPException(status_code=404, detail="No FP data available yet")
+
+        curves   = build_deg_curves(fp_data)
+        sc_prob  = sc_probability([], 0, total_laps, circuit)
+
+        # Field baseline from available compound baselines
+        baselines = [c.baseline for c in curves.values() if c.baseline > 0]
+        field_bl  = sum(baselines) / len(baselines) if baselines else 90.0
+
+        # Generate optimal 1-stop and 2-stop for each starting compound
+        strategies = []
+        for start_c in DRY:
+            strat = optimize_strategy(
+                current_lap=0,
+                total_laps=total_laps,
+                current_compound=start_c,
+                current_age=0,
+                pace_delta=0.0,
+                curves=curves,
+                field_baseline=field_bl,
+                needs_compound_change=True,
+            )
+            stops = len(strat.pits_remaining)
+            compounds_seq = [start_c] + [p.compound for p in strat.pits_remaining]
+            stint_lengths = []
+            prev = 0
+            for p in strat.pits_remaining:
+                stint_lengths.append(p.lap - prev)
+                prev = p.lap
+            stint_lengths.append(total_laps - prev)
+            strategies.append({
+                "start_compound":  start_c,
+                "stops":           stops,
+                "compound_sequence": compounds_seq,
+                "pit_laps":        [p.lap for p in strat.pits_remaining],
+                "stint_lengths":   stint_lengths,
+                "total_time":      round(strat.total_time_from_now, 2),
+            })
+
+        # Sort by total time — best strategy first
+        strategies.sort(key=lambda s: s["total_time"])
+
+        return {
+            "session_key":   session_key,
+            "meeting_key":   meeting_key,
+            "circuit":       circuit,
+            "total_laps":    total_laps,
+            "sc_probability": sc_prob,
+            "fp_sessions_used": [fp_names[i] for i in range(len(fp_data))],
+            "deg_curves":    curves_to_dict(curves),
+            "strategies":    strategies,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -504,7 +601,9 @@ def predict(session_key: int = None, lap: int = None):
 
         sc_events  = detect_sc(laps_to_now)
         sc_prob    = sc_probability(sc_events, max_lap, total_laps, circuit)
-        pace_model = build_pace_model(laps_to_now, sc_events, drivers_raw, curves, stints_raw)
+        quali_times = get_quali_times(meeting_key) if meeting_key else {}
+        pace_model = build_pace_model(laps_to_now, sc_events, drivers_raw, curves,
+                                      stints_raw, quali_times=quali_times or None)
 
         # Current driver state
         state = build_state(session_key, include_locations=False,

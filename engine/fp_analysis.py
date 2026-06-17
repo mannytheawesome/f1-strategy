@@ -8,6 +8,11 @@ Classifies each stint as:
 
 Calculates per-driver per-compound degradation rate using true tyre age
 as X-axis, properly handling returned tyres across multiple stints.
+
+Fuel correction: FP2 race sims are typically run on 50-70% race fuel
+(~50-70 kg). We apply a proportional correction assuming ~35 kg average
+mid-session load, giving FUEL_RATE * lap_in_stint seconds of improvement
+as the car lightens. This brings FP deg rates closer to race-day values.
 """
 
 from __future__ import annotations
@@ -25,6 +30,13 @@ MAX_LAP_TIME = 600   # ignore laps longer than this (red flag, pit stop, etc.)
 
 # ── Minimum data for degradation regression ──────────────────────────────────
 DEG_MIN_LAPS = 5     # need at least this many timed laps to fit a deg rate
+
+# ── Fuel correction ───────────────────────────────────────────────────────────
+# Same constant as engine/predictor.py FUEL_RATE. Applied to long-run stints
+# only (race sims) — hotlaps and short runs don't carry enough fuel for this
+# to matter. FP1 not corrected (too early, lap times noisy from green track).
+FUEL_RATE     = 0.035   # s/lap improvement per lap of fuel burn
+FUEL_CORRECT_SESSIONS = {"FP2", "FP3"}  # sessions where race sims happen
 
 
 @dataclass
@@ -114,23 +126,28 @@ def _linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float]:
     return slope, intercept
 
 
-def _compute_deg_rate(stints: list[FPStint], compound: str) -> float | None:
+def _compute_deg_rate(stints: list[FPStint], compound: str,
+                      fuel_correct: bool = False) -> float | None:
     """
     Compute degradation rate (s/lap of tyre age) for a given compound.
 
     Uses true tyre age as X (handles returned tyres correctly).
     Only uses laps from stints with enough data (DEG_MIN_LAPS).
+
+    fuel_correct: if True, adds FUEL_RATE * lap_in_stint back to each
+    lap time before regression, removing the fuel-lightening trend so the
+    slope reflects tyre wear only (not fuel burn-off).
     """
     relevant = [s for s in stints if s.compound == compound]
-    # Pool laps from all long-enough stints
     xs, ys = [], []
     for s in relevant:
         tl = s.timed_laps
         if len(tl) < DEG_MIN_LAPS:
             continue
-        for lap in tl:
+        for i, lap in enumerate(tl):
             xs.append(float(lap.true_age))
-            ys.append(lap.lap_time)
+            fuel_adj = FUEL_RATE * i if fuel_correct else 0.0
+            ys.append(lap.lap_time + fuel_adj)
 
     if len(xs) < DEG_MIN_LAPS:
         return None
@@ -228,8 +245,49 @@ class FPDriverSummary:
         }
 
 
+def _field_compound_summary(summaries: list[FPDriverSummary]) -> dict:
+    """
+    Aggregate field-level stats per compound across all driver summaries.
+    Returns dict keyed by compound with: median_hotlap, median_race_pace,
+    driver_count, median_deg_rate — to answer "which tyre is best for the race?"
+    """
+    hotlaps:    dict[str, list[float]] = {}
+    race_paces: dict[str, list[float]] = {}
+    deg_rates:  dict[str, list[float]] = {}
+
+    for s in summaries:
+        for cs in s.compound_summaries:
+            c = cs.compound
+            if cs.best_hotlap:
+                hotlaps.setdefault(c, []).append(cs.best_hotlap)
+            if cs.best_race_pace:
+                race_paces.setdefault(c, []).append(cs.best_race_pace)
+            if c in s.deg_rates and s.deg_rates[c] is not None:
+                deg_rates.setdefault(c, []).append(s.deg_rates[c])
+
+    COMPOUND_ORDER = {"SOFT": 0, "MEDIUM": 1, "HARD": 2, "INTERMEDIATE": 3, "WET": 4}
+    result = {}
+    for c in sorted(hotlaps.keys() | race_paces.keys(),
+                    key=lambda x: COMPOUND_ORDER.get(x, 9)):
+        hp = sorted(hotlaps.get(c, []))
+        rp = sorted(race_paces.get(c, []))
+        dr = deg_rates.get(c, [])
+        result[c] = {
+            "compound":          c,
+            "hotlap_driver_count": len(hp),
+            "median_hotlap":     round(statistics.median(hp), 3) if hp else None,
+            "best_hotlap":       round(min(hp), 3) if hp else None,
+            "race_pace_driver_count": len(rp),
+            "median_race_pace":  round(statistics.median(rp), 3) if rp else None,
+            "best_race_pace":    round(min(rp), 3) if rp else None,
+            "median_deg_rate":   round(statistics.median(dr), 4) if dr else None,
+        }
+    return result
+
+
 def analyse_fp(laps_raw: list[dict], stints_raw: list[dict],
-               drivers_raw: dict[int, dict]) -> list[FPDriverSummary]:
+               drivers_raw: dict[int, dict],
+               session_name: str = "") -> list[FPDriverSummary]:
     """Build per-driver FP summaries."""
 
     # Build stint lookup: (driver, lap_number) → stint dict
@@ -289,9 +347,9 @@ def analyse_fp(laps_raw: list[dict], stints_raw: list[dict],
 
         summary.stints = sorted(stints_built.values(), key=lambda s: s.stint_number)
 
-        # Compute degradation rates per compound
+        fuel_correct = session_name.upper() in FUEL_CORRECT_SESSIONS
         for compound in summary.compounds_used:
-            rate = _compute_deg_rate(summary.stints, compound)
+            rate = _compute_deg_rate(summary.stints, compound, fuel_correct=fuel_correct)
             if rate is not None:
                 summary.deg_rates[compound] = rate
 
