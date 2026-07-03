@@ -47,7 +47,8 @@ SC_RATE_STREET  = 0.0120
 # Per-circuit SC rates (events per lap) from 2018-2025 historical data.
 # Circuits not listed fall back to SC_RATE_DEFAULT or SC_RATE_STREET.
 SC_RATE_CIRCUIT: dict[str, float] = {
-    "red_bull_ring":    0.0105,   # Austria — gravel traps, fast lap = frequent SC
+    "red_bull_ring":    0.0105,   # Austria (alt name)
+    "spielberg":        0.0105,   # Austria — gravel traps, fast lap = frequent SC
     "silverstone":      0.0080,   # Britain — high speed, above-average
     "spa":              0.0090,   # Belgium — long lap, Eau Rouge incidents
     "monza":            0.0080,   # Italy — slipstream battles, high speed
