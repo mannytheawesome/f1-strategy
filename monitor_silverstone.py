@@ -19,6 +19,8 @@ import json, os, time
 from datetime import datetime, timezone
 import requests
 
+from mqtt_monitor import MQTTSessionMonitor
+
 BASE = "https://f1-strategy-production.up.railway.app"
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG  = os.path.join(HERE, "silverstone_monitor.log")
@@ -33,41 +35,13 @@ SESSIONS = [
     ("RACE",   11326, "2026-07-05T13:55:00", "2026-07-05T17:00:00", 52),
 ]
 
-POLL_S = 30
-
-
 def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    line = f"[{ts}] {msg}"
-    print(line, flush=True)
-    with open(LOG, "a") as f:
-        f.write(line + "\n")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 def utc(s: str) -> datetime:
     return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
-
-
-def check_anomalies(data: dict, label: str, last_state: dict) -> dict:
-    drivers = data.get("drivers", [])
-    if not drivers:
-        log(f"⚠️  {label}: no drivers in response")
-        return last_state
-
-    laps = [d.get("current_lap") or 0 for d in drivers]
-    max_lap = max(laps) if laps else 0
-    active  = sum(1 for d in drivers if (d.get("current_lap") or 0) > 0)
-
-    if max_lap != last_state.get("max_lap"):
-        log(f"{label}: lap {max_lap}, {active}/{len(drivers)} active")
-        last_state["max_lap"] = max_lap
-        last_state["stalled_polls"] = 0
-    else:
-        last_state["stalled_polls"] = last_state.get("stalled_polls", 0) + 1
-        if last_state["stalled_polls"] == 10 and active > 0:
-            log(f"ℹ️  {label}: no lap progress for 5 min")
-
-    return last_state
 
 
 def save_analysis(label: str, key: int, total_laps: int, rec_dir: str):
@@ -144,31 +118,10 @@ def monitor_session(label: str, key: int, start: datetime, end: datetime, total_
         log(f"{label}: waiting {wait/60:.0f} min until session start")
         time.sleep(wait)
 
-    log(f"=== {label} (session {key}) monitoring started ===")
-    errors, last_state = 0, {}
-
-    while datetime.now(timezone.utc) < end:
-        try:
-            r = requests.get(f"{BASE}/api/live?session_key={key}", timeout=30)
-            if r.status_code == 200:
-                data = r.json()
-                errors = 0
-                ts = datetime.now(timezone.utc).strftime("%H%M%S")
-                with open(os.path.join(rec_dir, f"live_{ts}.json"), "w") as f:
-                    json.dump(data, f)
-                last_state = check_anomalies(data, label, last_state)
-            else:
-                errors += 1
-                log(f"⚠️  {label}: HTTP {r.status_code} ({errors} consecutive)")
-        except Exception as e:
-            errors += 1
-            log(f"⚠️  {label}: {str(e)[:80]} ({errors} consecutive)")
-
-        if errors >= 6:
-            log(f"⛔ {label}: 6 consecutive failures")
-            errors = 0
-
-        time.sleep(POLL_S)
+    log(f"=== {label} (session {key}) monitoring started (MQTT) ===")
+    monitor = MQTTSessionMonitor(key, rec_dir, log_fn=log)
+    monitor.run_until(end)
+    log(f"{label}: MQTT stream ended, {monitor.message_count} total messages received")
 
     save_analysis(label, key, total_laps, rec_dir)
 

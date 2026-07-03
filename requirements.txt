@@ -7,3 +7,4 @@ scipy==1.15.3
 starlette==1.2.1
 pydantic==2.13.4
 anyio==4.13.0
+paho-mqtt==2.1.0

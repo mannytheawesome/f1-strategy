@@ -28,6 +28,11 @@ _oauth_token: str = ""
 _oauth_expires_at: float = 0.0
 _oauth_lock = threading.Lock()
 
+# Diagnostics only — never store credential values here, just outcomes.
+_last_token_attempt_at: float = 0.0
+_last_token_success: bool = False
+_last_token_error: str = ""
+
 
 def _fetch_oauth_token() -> tuple[str, int]:
     """POST credentials to OpenF1 token endpoint, return (access_token, ttl_seconds)."""
@@ -45,19 +50,48 @@ def _fetch_oauth_token() -> tuple[str, int]:
 def _get_oauth_token() -> str:
     """Return a valid bearer token, refreshing 60s before expiry."""
     global _oauth_token, _oauth_expires_at
+    global _last_token_attempt_at, _last_token_success, _last_token_error
     with _oauth_lock:
         if not OPENF1_USERNAME or not OPENF1_PASSWORD:
+            _last_token_attempt_at = time.time()
+            _last_token_success = False
+            _last_token_error = "OPENF1_USERNAME/OPENF1_PASSWORD not set"
             return ""
         if time.time() < _oauth_expires_at - 60 and _oauth_token:
             return _oauth_token
+        _last_token_attempt_at = time.time()
         try:
             token, ttl = _fetch_oauth_token()
             _oauth_token = token
             _oauth_expires_at = time.time() + ttl
+            _last_token_success = True
+            _last_token_error = ""
             return _oauth_token
         except Exception as e:
+            _last_token_success = False
+            _last_token_error = str(e)[:200]
             print(f"[auth] OAuth token refresh failed: {e}")
             return _oauth_token  # return stale token if we have one
+
+
+def get_auth_diagnostics() -> dict:
+    """Safe-to-expose snapshot of OpenF1 auth state — never returns credential
+    or token values, only presence/length/outcome, for remote debugging."""
+    _get_oauth_token()  # trigger a fresh attempt if the cached token is stale
+    return {
+        "openf1_username_set": bool(OPENF1_USERNAME),
+        "openf1_username_length": len(OPENF1_USERNAME),
+        "openf1_password_set": bool(OPENF1_PASSWORD),
+        "openf1_password_length": len(OPENF1_PASSWORD),
+        "token_cached": bool(_oauth_token),
+        "token_expires_in_s": max(0, round(_oauth_expires_at - time.time())) if _oauth_token else 0,
+        "last_attempt_at": (
+            datetime.fromtimestamp(_last_token_attempt_at, tz=timezone.utc).isoformat()
+            if _last_token_attempt_at else None
+        ),
+        "last_attempt_success": _last_token_success,
+        "last_attempt_error": _last_token_error,
+    }
 
 
 def _auth_headers() -> dict:

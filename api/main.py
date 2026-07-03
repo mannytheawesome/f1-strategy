@@ -15,7 +15,7 @@ from data.live import (
     DriverState, Stint, HIST_TTL, _get, _cache_get, _cache_set, LIVE_TTL,
     get_track_layout, get_quali_times,
     get_weather_summary, get_race_control, get_sc_laps_from_race_control,
-    get_avg_pit_loss, get_pit_data,
+    get_avg_pit_loss, get_pit_data, get_auth_diagnostics,
 )
 from engine.degradation import build_degradation_curves, predict_drivers
 from engine.strategy import generate_strategies
@@ -127,6 +127,13 @@ def current_session(session_key: int = None):
         return get_latest_session()
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/debug/openf1_auth")
+def openf1_auth_debug():
+    """Read-only diagnostics for the OpenF1 OAuth flow — presence/length and
+    last attempt outcome only, never the actual credential or token values."""
+    return get_auth_diagnostics()
 
 
 @app.get("/api/live")
