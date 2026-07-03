@@ -14,6 +14,8 @@ from data.live import (
     build_state, get_latest_session, get_session, get_laps, get_stints, get_drivers,
     DriverState, Stint, HIST_TTL, _get, _cache_get, _cache_set, LIVE_TTL,
     get_track_layout, get_quali_times,
+    get_weather_summary, get_race_control, get_sc_laps_from_race_control,
+    get_avg_pit_loss, get_pit_data,
 )
 from engine.degradation import build_degradation_curves, predict_drivers
 from engine.strategy import generate_strategies
@@ -200,11 +202,13 @@ def fp_analysis(session_key: int):
         stints_raw   = get_stints(session_key, HIST_TTL)
         drv_raw      = get_drivers(session_key, HIST_TTL)
         summaries    = analyse_fp(laps_raw, stints_raw, drv_raw, session_name=session_name)
+        weather      = get_weather_summary(session_key, HIST_TTL)
         return {
             "session": session,
             "session_mode": _session_mode(session),
             "drivers": [s.to_dict() for s in summaries],
             "compound_field_summary": _field_compound_summary(summaries),
+            "weather": weather,
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -599,9 +603,20 @@ def predict(session_key: int = None, lap: int = None):
 
         curves = build_deg_curves(fp_data)
 
-        sc_events  = detect_sc(laps_to_now)
+        # SC detection: prefer official race control flags, fall back to lap-time heuristic
+        rc_events  = get_sc_laps_from_race_control(session_key, HIST_TTL)
+        if rc_events:
+            from engine.predictor import SCEvent
+            sc_events = [SCEvent(e["start_lap"], e["end_lap"], e["type"]) for e in rc_events]
+        else:
+            sc_events = detect_sc(laps_to_now)
+
         sc_prob    = sc_probability(sc_events, max_lap, total_laps, circuit)
         quali_times = get_quali_times(meeting_key) if meeting_key else {}
+
+        # Use actual measured pit loss if available
+        pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
+
         pace_model = build_pace_model(laps_to_now, sc_events, drivers_raw, curves,
                                       stints_raw, quali_times=quali_times or None)
 
@@ -634,7 +649,10 @@ def predict(session_key: int = None, lap: int = None):
         forecasts = simulate_race(
             serialised, max_lap, total_laps, curves, pace_model, sc_events,
             track_position_weight=track_pos_weight,
+            pit_loss=pit_loss,
         )
+
+        weather = get_weather_summary(session_key, HIST_TTL)
 
         return {
             "session_key": session_key,
@@ -645,7 +663,10 @@ def predict(session_key: int = None, lap: int = None):
                 {"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.type}
                 for e in sc_events
             ],
+            "sc_source":   "race_control" if rc_events else "heuristic",
             "sc_probability_remaining": sc_prob,
+            "pit_loss_used": pit_loss,
+            "weather": weather,
             "deg_curves": curves_to_dict(curves),
             "pace_model": {
                 str(n): {

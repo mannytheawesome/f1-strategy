@@ -251,6 +251,111 @@ def get_laps(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
     return _cached_get(f"laps:{session_key}", "laps", ttl, session_key=session_key)
 
 
+def get_weather(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
+    """
+    Weather snapshots for the session. Fields include: air_temperature,
+    track_temperature, rainfall, humidity, wind_speed, wind_direction, pressure.
+    Cached for HIST_TTL on finished sessions; caller should pass LIVE_TTL live.
+    """
+    return _cached_get(f"weather:{session_key}", "weather", ttl, session_key=session_key)
+
+
+def get_race_control(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
+    """
+    Official race control messages: SC deployments, VSC, yellow/red flags,
+    DRS enabled/disabled, etc. Use flag field: 'SAFETY CAR', 'VIRTUAL SAFETY CAR',
+    'RED', 'YELLOW', 'DOUBLE YELLOW', 'CLEAR', 'GREEN', 'CHEQUERED'.
+    scope field: 'Track' (whole track) or 'Sector' (localised).
+    """
+    return _cached_get(f"race_control:{session_key}", "race_control", ttl, session_key=session_key)
+
+
+def get_pit_data(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
+    """
+    Measured pit stop durations per driver per lap.
+    pit_duration: total time from pit entry to exit (includes stationary time).
+    lane_duration: time in pit lane (slightly different metric on some circuits).
+    """
+    return _cached_get(f"pit:{session_key}", "pit", ttl, session_key=session_key)
+
+
+def get_weather_summary(session_key: int, ttl: float = HIST_TTL) -> dict:
+    """
+    Aggregate weather stats for the session: min/max/avg track temp, any rainfall.
+    Returns a flat dict suitable for including in API responses.
+    """
+    rows = get_weather(session_key, ttl)
+    if not rows:
+        return {}
+    track_temps = [r["track_temperature"] for r in rows if r.get("track_temperature")]
+    air_temps   = [r["air_temperature"]   for r in rows if r.get("air_temperature")]
+    rainfalls   = [r["rainfall"]          for r in rows if r.get("rainfall") is not None]
+    wind_speeds = [r["wind_speed"]        for r in rows if r.get("wind_speed") is not None]
+    return {
+        "track_temp_avg": round(sum(track_temps)/len(track_temps), 1) if track_temps else None,
+        "track_temp_max": round(max(track_temps), 1) if track_temps else None,
+        "track_temp_min": round(min(track_temps), 1) if track_temps else None,
+        "air_temp_avg":   round(sum(air_temps)/len(air_temps), 1) if air_temps else None,
+        "rainfall":       max(rainfalls) > 0 if rainfalls else False,
+        "wind_speed_avg": round(sum(wind_speeds)/len(wind_speeds), 1) if wind_speeds else None,
+        "sample_count":   len(rows),
+    }
+
+
+def get_sc_laps_from_race_control(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
+    """
+    Extract SC/VSC events from official race control messages.
+    Returns list of {type: 'SC'|'VSC', start_lap, end_lap} dicts,
+    which can be passed directly to detect_sc or used alongside it.
+    """
+    messages = get_race_control(session_key, ttl)
+    events = []
+    active: dict[str, int | None] = {"SC": None, "VSC": None}
+
+    for msg in sorted(messages, key=lambda m: m.get("date", "")):
+        flag   = msg.get("flag", "")
+        lap    = msg.get("lap_number")
+        scope  = msg.get("scope", "")
+        if scope != "Track":
+            continue
+
+        if flag == "SAFETY CAR":
+            if active["SC"] is None:
+                active["SC"] = lap
+        elif flag == "VIRTUAL SAFETY CAR":
+            if active["VSC"] is None:
+                active["VSC"] = lap
+        elif flag in ("CLEAR", "GREEN") and lap:
+            for kind in ("SC", "VSC"):
+                if active[kind] is not None:
+                    events.append({
+                        "type":      kind,
+                        "start_lap": active[kind],
+                        "end_lap":   lap,
+                    })
+                    active[kind] = None
+
+    # Close any still-active events (red flag finish etc.)
+    for kind, start in active.items():
+        if start is not None:
+            events.append({"type": kind, "start_lap": start, "end_lap": start + 5})
+
+    return events
+
+
+def get_avg_pit_loss(session_key: int, ttl: float = HIST_TTL) -> float:
+    """
+    Compute the actual average pit stop time for this session from measured data.
+    Falls back to 22.0s (our constant) if no pit data available.
+    """
+    pits = get_pit_data(session_key, ttl)
+    durations = [p["pit_duration"] for p in pits
+                 if p.get("pit_duration") and 15 < p["pit_duration"] < 35]
+    if not durations:
+        return 22.0
+    return round(sum(durations) / len(durations), 1)
+
+
 def get_lap_timestamps(laps_raw: list[dict]) -> dict[int, str]:
     """Map lap_number → date_start for the race leader (driver with most laps or lowest number)."""
     # Build per-driver lap→date map, then pick the driver with the most laps as reference
