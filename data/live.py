@@ -6,28 +6,69 @@ each driver's stint/tyre state, lap times, sector times, and track position.
 
 import os
 import time
+import threading
 import requests
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
 
 BASE = "https://api.openf1.org/v1"
+TOKEN_URL = "https://api.openf1.org/token"
 
 # OpenF1 live data requires a paid subscription (free tier is historical-only:
 # data is unavailable from 30 min before to 30 min after each session).
-# Set OPENF1_API_KEY to enable live access once subscribed.
-OPENF1_API_KEY = os.environ.get("OPENF1_API_KEY", "")
+# Supply OPENF1_USERNAME + OPENF1_PASSWORD in Railway env vars to enable live
+# access. We exchange credentials for an OAuth2 bearer token and refresh it
+# automatically before it expires. Never log or expose these values.
+OPENF1_USERNAME = os.environ.get("OPENF1_USERNAME", "")
+OPENF1_PASSWORD = os.environ.get("OPENF1_PASSWORD", "")
+
+# Token state — refreshed automatically, guarded by a lock for thread safety
+_oauth_token: str = ""
+_oauth_expires_at: float = 0.0
+_oauth_lock = threading.Lock()
+
+
+def _fetch_oauth_token() -> tuple[str, int]:
+    """POST credentials to OpenF1 token endpoint, return (access_token, ttl_seconds)."""
+    resp = requests.post(
+        TOKEN_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={"username": OPENF1_USERNAME, "password": OPENF1_PASSWORD},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["access_token"], int(data.get("expires_in", 3600))
+
+
+def _get_oauth_token() -> str:
+    """Return a valid bearer token, refreshing 60s before expiry."""
+    global _oauth_token, _oauth_expires_at
+    with _oauth_lock:
+        if not OPENF1_USERNAME or not OPENF1_PASSWORD:
+            return ""
+        if time.time() < _oauth_expires_at - 60 and _oauth_token:
+            return _oauth_token
+        try:
+            token, ttl = _fetch_oauth_token()
+            _oauth_token = token
+            _oauth_expires_at = time.time() + ttl
+            return _oauth_token
+        except Exception as e:
+            print(f"[auth] OAuth token refresh failed: {e}")
+            return _oauth_token  # return stale token if we have one
 
 
 def _auth_headers() -> dict:
-    if OPENF1_API_KEY:
-        return {"Authorization": f"Bearer {OPENF1_API_KEY}"}
+    token = _get_oauth_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 # ---------------------------------------------------------------------------
 # Simple in-memory cache — avoids re-fetching static historical data
 # ---------------------------------------------------------------------------
-import threading
 
 _cache: dict = {}
 _cache_lock = threading.Lock()
