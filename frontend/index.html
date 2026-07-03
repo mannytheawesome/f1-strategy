@@ -722,7 +722,7 @@
       }
     }
 
-    drawTrackMap(data.drivers);
+    drawTrackMap(data.drivers, s.session_key);
 
     // Prediction panel: refetch when the leader's lap changes (max 1/lap)
     if (currentMode === 'RACE' || currentMode === 'SPRINT') {
@@ -1144,11 +1144,11 @@
     ];
   }
 
-  async function fetchTrackLayout() {
-    if (trackLayoutSessionKey === sessionKey && trackLayoutPoints !== null) return;
-    trackLayoutSessionKey = sessionKey;
+  async function fetchTrackLayout(resolvedSessionKey) {
+    if (trackLayoutSessionKey === resolvedSessionKey && trackLayoutPoints !== null) return;
+    trackLayoutSessionKey = resolvedSessionKey;
     try {
-      const url = sessionKey ? `/api/track_layout?session_key=${sessionKey}` : `/api/track_layout`;
+      const url = `/api/track_layout?session_key=${resolvedSessionKey}`;
       const res = await fetch(url);
       const data = res.ok ? await res.json() : { points: [] };
       trackLayoutPoints = data.points || [];
@@ -1164,8 +1164,8 @@
     }
   }
 
-  function drawTrackMap(drivers) {
-    fetchTrackLayout();   // fire-and-forget; uses cached result once loaded
+  function drawTrackMap(drivers, resolvedSessionKey) {
+    fetchTrackLayout(resolvedSessionKey);   // fire-and-forget; uses cached result once loaded
 
     const canvas = document.getElementById('track-canvas');
     const ctx = canvas.getContext('2d');
