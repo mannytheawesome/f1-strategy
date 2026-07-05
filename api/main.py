@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from data.live import (
     build_state, get_latest_session, get_session, get_laps, get_stints, get_drivers,
     DriverState, Stint, HIST_TTL, _get, _cache_get, _cache_set, LIVE_TTL,
@@ -48,7 +49,7 @@ app = FastAPI(title="F1 Strategy Predictor")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -716,6 +717,92 @@ def driver_laps(driver_number: int, session_key: int = None):
         }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Race briefings + what-if simulator
+# ---------------------------------------------------------------------------
+
+class WhatIfStint(BaseModel):
+    compound: str
+    lap_start: int
+    lap_end: int
+
+
+class WhatIfRequest(BaseModel):
+    session_key: int
+    driver_number: int
+    stints: list[WhatIfStint]
+
+
+@app.post("/api/whatif")
+def whatif(req: WhatIfRequest):
+    """
+    Counterfactual simulation: re-run a finished race with ONE driver's stint
+    plan replaced by the given plan; all other drivers keep their actual
+    strategies. Returns baseline vs modified forecasts and the actual result.
+    """
+    from engine.whatif import run_whatif
+    try:
+        return run_whatif(req.session_key, req.driver_number,
+                          [s.model_dump() for s in req.stints])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/races")
+def race_list(year: int = 2026):
+    """Completed race/sprint sessions for the year, newest first."""
+    try:
+        sessions = _cache_get(f"race_list:{year}")
+        if sessions is None:
+            raw = _get("sessions", year=year)
+            from datetime import datetime, timezone
+            from dateutil.parser import parse as parse_dt
+            now = datetime.now(timezone.utc)
+            sessions = []
+            for s in sorted(raw, key=lambda x: x.get("date_start", ""), reverse=True):
+                if s.get("session_type", "").lower() != "race":
+                    continue
+                end = s.get("date_end")
+                if not end:
+                    continue
+                end_dt = parse_dt(end)
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                if end_dt > now:
+                    continue
+                sessions.append({
+                    "session_key":  s["session_key"],
+                    "meeting_key":  s.get("meeting_key"),
+                    "session_name": s.get("session_name"),
+                    "country_name": s.get("country_name"),
+                    "circuit_short_name": s.get("circuit_short_name"),
+                    "date_start":   s.get("date_start"),
+                    "year":         s.get("year"),
+                })
+            _cache_set(f"race_list:{year}", sessions, 1800)
+        return {"year": year, "races": sessions}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/briefing")
+def briefing(session_key: int, regenerate: bool = False):
+    """
+    Full race briefing: structured data pack (results, stints, deg curves,
+    SC events, notable stats) plus LLM-written narrative sections. Generated
+    once per session and cached to disk.
+    """
+    from engine.briefing import get_briefing
+    try:
+        return get_briefing(session_key, regenerate=regenerate)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

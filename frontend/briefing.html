@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Race Briefings — F1 Strategy Predictor</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #e8e8e8;
+      --muted: #555;
+      --red: #e8002d;
+      --green: #00d246;
+      --purple: #9b00ff;
+      --soft: #e8002d;
+      --medium: #ffd700;
+      --hard: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
+
+    header {
+      background: var(--red);
+      padding: 10px 18px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; }
+    header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 3px 10px; }
+    header a:hover { background: rgba(255,255,255,0.15); }
+
+    .layout { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
+
+    #race-list {
+      flex: 0 0 250px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 10px;
+    }
+    #race-list h2 { font-size: 11px; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+    .race-item {
+      padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .race-item:hover { background: #222; }
+    .race-item.active { background: #2a1215; border-left: 3px solid var(--red); }
+    .race-item .name { font-weight: 700; }
+    .race-item .kind { font-size: 10px; color: var(--muted); }
+
+    #briefing { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    .card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; }
+    .card h2 { font-size: 12px; letter-spacing: 1px; color: var(--red); margin-bottom: 8px; text-transform: uppercase; }
+    .card h3 { font-size: 16px; margin-bottom: 6px; font-family: Georgia, serif; font-style: italic; }
+    .meta-row { display: flex; gap: 18px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
+    .prose { font-family: Georgia, serif; font-size: 14px; line-height: 1.65; color: #d8d4cc; max-width: 760px; white-space: pre-wrap; }
+    .notice { color: var(--muted); font-style: italic; padding: 6px 0; }
+
+    table.results { border-collapse: collapse; width: 100%; }
+    table.results th, table.results td { padding: 4px 8px; text-align: left; font-size: 11px; border-bottom: 1px solid var(--border); }
+    table.results th { color: var(--muted); font-weight: 400; letter-spacing: 1px; }
+    table.results tr.clickable { cursor: pointer; }
+    table.results tr.clickable:hover { background: #222; }
+    table.results tr.editing { background: #2a1215; }
+    .delta-up { color: var(--green); }
+    .delta-down { color: var(--red); }
+
+    .stintbar { display: flex; height: 14px; width: 260px; border: 1px solid var(--border); }
+    .stintbar div { height: 100%; }
+    .c-SOFT { background: var(--soft); }
+    .c-MEDIUM { background: var(--medium); }
+    .c-HARD { background: var(--hard); }
+
+    /* what-if editor */
+    #editor-track {
+      position: relative; height: 46px; background: #111;
+      border: 1px solid var(--border); user-select: none; touch-action: none;
+    }
+    .seg { position: absolute; top: 0; height: 100%; opacity: 0.85; cursor: pointer; }
+    .seg .seg-label {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      font-weight: 700; color: #000; font-size: 11px; pointer-events: none;
+    }
+    .handle {
+      position: absolute; top: 0; width: 12px; height: 100%; margin-left: -6px;
+      cursor: ew-resize; z-index: 5;
+    }
+    .handle::after {
+      content: ""; position: absolute; left: 5px; top: 0; width: 2px; height: 100%;
+      background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
+    }
+    .lap-tick { position: absolute; bottom: -16px; font-size: 9px; color: var(--muted); transform: translateX(-50%); }
+    #editor-hint { color: var(--muted); font-size: 10px; margin-top: 22px; }
+    .btnrow { display: flex; gap: 8px; margin-top: 10px; }
+    .btnrow button {
+      background: #222; color: var(--text); border: 1px solid var(--border);
+      font-family: inherit; font-size: 11px; padding: 4px 12px; cursor: pointer;
+    }
+    .btnrow button:hover { background: #333; }
+    #whatif-result { margin-top: 12px; }
+    .verdict { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .cmp-table td, .cmp-table th { padding: 3px 10px; font-size: 11px; text-align: left; }
+    .cmp-table th { color: var(--muted); font-weight: 400; }
+    canvas { display: block; }
+    #loading-overlay { color: var(--muted); padding: 30px; text-align: center; }
+    .spin { animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RACE BRIEFINGS</h1>
+    <a href="/">← LIVE TIMING</a>
+  </header>
+
+  <div class="layout">
+    <div id="race-list">
+      <h2>2026 SEASON</h2>
+      <div id="race-items" class="spin">Loading races…</div>
+    </div>
+    <div id="briefing">
+      <div class="card" id="loading-overlay">Select a race to load its briefing.</div>
+    </div>
+  </div>
+
+<script>
+  const COMPOUNDS = ["SOFT", "MEDIUM", "HARD"];
+  let currentBriefing = null;
+  let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
+  let whatifTimer = null;
+  let whatifSeq = 0;
+
+  // ── race list ──────────────────────────────────────────────────────────────
+  async function loadRaces() {
+    try {
+      const res = await fetch('/api/races?year=2026');
+      const data = await res.json();
+      const el = document.getElementById('race-items');
+      el.classList.remove('spin');
+      el.innerHTML = '';
+      for (const r of data.races) {
+        const div = document.createElement('div');
+        div.className = 'race-item';
+        const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
+        div.innerHTML = `<span class="name">${r.country_name}</span>
+          <span class="kind">${kind} · ${(r.date_start || '').slice(5, 10)}</span>`;
+        div.onclick = () => { selectRace(div, r.session_key); };
+        el.appendChild(div);
+      }
+      if (!data.races.length) el.textContent = 'No completed races yet.';
+    } catch (e) {
+      document.getElementById('race-items').textContent = 'Failed to load races.';
+    }
+  }
+
+  function selectRace(itemEl, sessionKey) {
+    document.querySelectorAll('.race-item').forEach(e => e.classList.remove('active'));
+    itemEl.classList.add('active');
+    loadBriefing(sessionKey);
+  }
+
+  // ── briefing ───────────────────────────────────────────────────────────────
+  async function loadBriefing(sessionKey) {
+    const root = document.getElementById('briefing');
+    root.innerHTML = '<div class="card spin" id="loading-overlay">Building briefing… (first load per race can take ~30s while the narrative is written)</div>';
+    editorState = null;
+    try {
+      const res = await fetch(`/api/briefing?session_key=${sessionKey}`);
+      if (!res.ok) throw new Error((await res.json()).detail || res.status);
+      currentBriefing = await res.json();
+      renderBriefing(currentBriefing);
+    } catch (e) {
+      root.innerHTML = `<div class="card"><span class="notice">Briefing failed: ${e.message}</span></div>`;
+    }
+  }
+
+  function renderBriefing(b) {
+    const d = b.data, n = b.narrative, s = d.session, st = d.stats;
+    const root = document.getElementById('briefing');
+    root.innerHTML = '';
+
+    // header card
+    const head = document.createElement('div');
+    head.className = 'card';
+    const weather = d.weather && d.weather.track_temp_avg
+      ? `track ${d.weather.track_temp_avg}°C · air ${d.weather.air_temp_avg}°C${d.weather.rainfall ? ' · RAIN' : ''}` : '';
+    head.innerHTML = `
+      <h3>${n ? n.headline : (s.country_name + ' — ' + s.session_name)}</h3>
+      <div class="meta-row">
+        <span>${s.country_name} · ${s.circuit}</span><span>${(s.date_start || '').slice(0, 10)}</span>
+        <span>${s.total_laps} laps</span><span>${weather}</span>
+        <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}</span>
+      </div>
+      ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}`;
+    root.appendChild(head);
+
+    if (n) {
+      root.appendChild(proseCard('The race', n.race_story));
+    }
+
+    // results + stint bars
+    const resCard = document.createElement('div');
+    resCard.className = 'card';
+    let rows = '';
+    for (const r of d.results) {
+      const delta = r.positions_delta;
+      const dTxt = delta == null ? '—'
+        : delta > 0 ? `<span class="delta-up">▲${delta}</span>`
+        : delta < 0 ? `<span class="delta-down">▼${-delta}</span>` : '·';
+      rows += `<tr class="clickable" data-driver="${r.driver_number}">
+        <td>${r.retired ? 'DNF' : (r.position ?? '—')}</td>
+        <td><b>${r.acronym}</b></td>
+        <td>${r.grid_position ?? '—'}</td><td>${dTxt}</td><td>${r.stops}</td>
+        <td>${stintBarHTML(r.stints, s.total_laps)}</td></tr>`;
+    }
+    resCard.innerHTML = `<h2>Classification & strategy — click a driver to open the what-if editor</h2>
+      <table class="results">
+        <tr><th>POS</th><th>DRV</th><th>GRID</th><th>Δ</th><th>STOPS</th><th>STINTS</th></tr>${rows}
+      </table>`;
+    root.appendChild(resCard);
+    resCard.querySelectorAll('tr.clickable').forEach(tr => {
+      tr.onclick = () => openEditor(parseInt(tr.dataset.driver), tr);
+    });
+
+    // what-if editor placeholder
+    const ed = document.createElement('div');
+    ed.className = 'card';
+    ed.id = 'editor-card';
+    ed.innerHTML = `<h2>What-if stint simulator</h2>
+      <div class="notice">Pick a driver above, then drag the pit-stop boundaries or click a stint to change compound. The race is re-simulated with everyone else on their actual strategy.</div>`;
+    root.appendChild(ed);
+
+    if (n) {
+      root.appendChild(proseCard('The tyres', n.tyre_story));
+    }
+    root.appendChild(degCurveCard(d.deg_curves));
+    if (n) {
+      root.appendChild(proseCard('Strategy verdicts', n.strategy_verdicts));
+    }
+  }
+
+  function proseCard(title, text) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = `<h2>${title}</h2><div class="prose">${escapeHTML(text)}</div>`;
+    return c;
+  }
+
+  function escapeHTML(t) {
+    return (t || '').replace(/[&<>]/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[m]));
+  }
+
+  function stintBarHTML(stints, totalLaps) {
+    let inner = '';
+    for (const st of stints) {
+      const w = ((st.lap_end - st.lap_start + 1) / totalLaps * 100).toFixed(1);
+      inner += `<div class="c-${st.compound}" style="width:${w}%" title="${st.compound} L${st.lap_start}-${st.lap_end}"></div>`;
+    }
+    return `<div class="stintbar">${inner}</div>`;
+  }
+
+  // ── deg curve chart ────────────────────────────────────────────────────────
+  function degCurveCard(curves) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = `<h2>Tyre degradation model</h2>`;
+    const cv = document.createElement('canvas');
+    cv.width = 560; cv.height = 220;
+    c.appendChild(cv);
+    const ctx = cv.getContext('2d');
+    const maxAge = 30, pad = 40;
+    const entries = COMPOUNDS.map(k => [k, curves[k]]).filter(([, v]) => v && v.baseline > 0);
+    if (!entries.length) return c;
+    const times = entries.flatMap(([, v]) => [v.baseline, v.baseline + v.deg_rate * maxAge]);
+    const tMin = Math.min(...times) - 0.3, tMax = Math.max(...times) + 0.3;
+    const x = a => pad + a / maxAge * (cv.width - pad - 10);
+    const y = t => (cv.height - 24) - (t - tMin) / (tMax - tMin) * (cv.height - 40);
+    ctx.strokeStyle = '#2a2a2a'; ctx.fillStyle = '#555'; ctx.font = '10px Courier New';
+    for (let a = 0; a <= maxAge; a += 5) {
+      ctx.beginPath(); ctx.moveTo(x(a), 12); ctx.lineTo(x(a), cv.height - 24); ctx.stroke();
+      ctx.fillText(a, x(a) - 4, cv.height - 10);
+    }
+    ctx.fillText('tyre age (laps)', cv.width / 2 - 40, cv.height - 0.5);
+    const colour = { SOFT: '#e8002d', MEDIUM: '#ffd700', HARD: '#ffffff' };
+    for (const [k, v] of entries) {
+      ctx.strokeStyle = colour[k]; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x(0), y(v.baseline)); ctx.lineTo(x(maxAge), y(v.baseline + v.deg_rate * maxAge)); ctx.stroke();
+      ctx.fillStyle = colour[k];
+      ctx.fillText(`${k} ${v.baseline.toFixed(1)}s +${v.deg_rate.toFixed(3)}/lap (${v.confidence})`,
+                   pad + 4, y(v.baseline + v.deg_rate * maxAge) - 6);
+    }
+    return c;
+  }
+
+  // ── what-if editor ─────────────────────────────────────────────────────────
+  function openEditor(driverNumber, rowEl) {
+    document.querySelectorAll('tr.editing').forEach(e => e.classList.remove('editing'));
+    rowEl.classList.add('editing');
+    const d = currentBriefing.data;
+    const r = d.results.find(r => r.driver_number === driverNumber);
+    if (!r || !r.stints.length) return;
+    editorState = {
+      driver_number: driverNumber,
+      acronym: r.acronym,
+      totalLaps: d.session.total_laps,
+      stints: r.stints.map(s => ({ compound: s.compound, lap_start: s.lap_start,
+                                   lap_end: s.lap_end ?? d.session.total_laps })),
+      original: JSON.stringify(r.stints),
+    };
+    // normalise to contiguous full-race coverage
+    normaliseStints();
+    renderEditor();
+  }
+
+  function normaliseStints() {
+    const st = editorState.stints;
+    st.sort((a, b) => a.lap_start - b.lap_start);
+    st[0].lap_start = 1;
+    for (let i = 1; i < st.length; i++) st[i].lap_start = st[i - 1].lap_end + 1;
+    st[st.length - 1].lap_end = editorState.totalLaps;
+  }
+
+  function renderEditor() {
+    const card = document.getElementById('editor-card');
+    const es = editorState;
+    card.innerHTML = `<h2>What-if: ${es.acronym}</h2>
+      <div id="editor-track"></div>
+      <div id="editor-hint">drag ║ boundaries to move pit stops · click a stint to cycle compound · S=soft M=medium H=hard</div>
+      <div class="btnrow">
+        <button id="btn-add">+ add stop</button>
+        <button id="btn-del">− remove stop</button>
+        <button id="btn-reset">reset to actual</button>
+      </div>
+      <div id="whatif-result"><span class="notice spin">simulating…</span></div>`;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const track = card.querySelector('#editor-track');
+    const W = track.clientWidth || 700;
+    const lapToPx = lap => (lap / es.totalLaps) * W;
+
+    // stint segments
+    for (let i = 0; i < es.stints.length; i++) {
+      const st = es.stints[i];
+      const left = lapToPx(st.lap_start - 1), width = lapToPx(st.lap_end) - left;
+      const seg = document.createElement('div');
+      seg.className = `seg c-${st.compound}`;
+      seg.style.left = left + 'px'; seg.style.width = width + 'px';
+      seg.innerHTML = `<span class="seg-label">${st.compound[0]} ${st.lap_end - st.lap_start + 1}</span>`;
+      seg.onclick = () => {
+        st.compound = COMPOUNDS[(COMPOUNDS.indexOf(st.compound) + 1) % COMPOUNDS.length];
+        renderEditor();
+        scheduleWhatif();
+      };
+      track.appendChild(seg);
+      // lap ticks at boundaries
+      if (i > 0) {
+        const tick = document.createElement('span');
+        tick.className = 'lap-tick';
+        tick.style.left = left + 'px';
+        tick.textContent = 'L' + (st.lap_start - 1);
+        track.appendChild(tick);
+      }
+    }
+
+    // drag handles between stints
+    for (let i = 1; i < es.stints.length; i++) {
+      const h = document.createElement('div');
+      h.className = 'handle';
+      h.style.left = lapToPx(es.stints[i].lap_start - 1) + 'px';
+      track.appendChild(h);
+      h.onpointerdown = (ev) => {
+        ev.preventDefault();
+        h.setPointerCapture(ev.pointerId);
+        const rect = track.getBoundingClientRect();
+        h.onpointermove = (mv) => {
+          let lap = Math.round((mv.clientX - rect.left) / W * es.totalLaps);
+          const lo = es.stints[i - 1].lap_start + 1;       // ≥2-lap stints
+          const hi = es.stints[i].lap_end - 1;
+          lap = Math.max(lo, Math.min(hi, lap));
+          es.stints[i - 1].lap_end = lap;
+          es.stints[i].lap_start = lap + 1;
+          h.style.left = lapToPx(lap) + 'px';
+        };
+        h.onpointerup = () => {
+          h.onpointermove = null; h.onpointerup = null;
+          renderEditor();
+          scheduleWhatif();
+        };
+      };
+    }
+
+    card.querySelector('#btn-add').onclick = () => {
+      const st = es.stints;
+      if (st.length >= 5) return;
+      let idx = 0;
+      for (let i = 1; i < st.length; i++)
+        if (st[i].lap_end - st[i].lap_start > st[idx].lap_end - st[idx].lap_start) idx = i;
+      const s = st[idx];
+      if (s.lap_end - s.lap_start < 8) return;
+      const mid = Math.floor((s.lap_start + s.lap_end) / 2);
+      const next = COMPOUNDS[(COMPOUNDS.indexOf(s.compound) + 1) % COMPOUNDS.length];
+      st.splice(idx + 1, 0, { compound: next, lap_start: mid + 1, lap_end: s.lap_end });
+      s.lap_end = mid;
+      renderEditor(); scheduleWhatif();
+    };
+    card.querySelector('#btn-del').onclick = () => {
+      const st = es.stints;
+      if (st.length <= 2) return;   // two-compound rule needs ≥2 stints
+      const last = st.pop();
+      st[st.length - 1].lap_end = last.lap_end;
+      renderEditor(); scheduleWhatif();
+    };
+    card.querySelector('#btn-reset').onclick = () => {
+      es.stints = JSON.parse(es.original).map(s => ({ compound: s.compound,
+        lap_start: s.lap_start, lap_end: s.lap_end ?? es.totalLaps }));
+      normaliseStints();
+      renderEditor(); scheduleWhatif();
+    };
+
+    scheduleWhatif();
+  }
+
+  function scheduleWhatif() {
+    clearTimeout(whatifTimer);
+    whatifTimer = setTimeout(runWhatif, 450);
+  }
+
+  async function runWhatif() {
+    if (!editorState) return;
+    const seq = ++whatifSeq;
+    const out = document.getElementById('whatif-result');
+    out.innerHTML = '<span class="notice spin">simulating…</span>';
+    try {
+      const res = await fetch('/api/whatif', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_key: currentBriefing.data.session.session_key,
+          driver_number: editorState.driver_number,
+          stints: editorState.stints,
+        }),
+      });
+      if (seq !== whatifSeq) return;   // superseded by a newer edit
+      if (!res.ok) throw new Error((await res.json()).detail || res.status);
+      renderWhatifResult(await res.json());
+    } catch (e) {
+      if (seq === whatifSeq) out.innerHTML = `<span class="notice">simulation failed: ${e.message}</span>`;
+    }
+  }
+
+  function renderWhatifResult(r) {
+    const out = document.getElementById('whatif-result');
+    const es = editorState;
+    const base = r.baseline.find(f => f.driver_number === es.driver_number);
+    const mod = r.modified.find(f => f.driver_number === es.driver_number);
+    if (!base || !mod) { out.innerHTML = '<span class="notice">driver not simulated (retired before anchor lap?)</span>'; return; }
+
+    const dp = r.delta.position ?? 0, dg = r.delta.gap ?? 0;
+    let verdict, cls;
+    if (dp > 0)      { verdict = `▲ GAINS ${dp} PLACE${dp > 1 ? 'S' : ''}`; cls = 'delta-up'; }
+    else if (dp < 0) { verdict = `▼ LOSES ${-dp} PLACE${dp < -1 ? 'S' : ''}`; cls = 'delta-down'; }
+    else if (dg > 0.5)  { verdict = `SAME POSITION, ${dg.toFixed(1)}s FASTER`; cls = 'delta-up'; }
+    else if (dg < -0.5) { verdict = `SAME POSITION, ${(-dg).toFixed(1)}s SLOWER`; cls = 'delta-down'; }
+    else { verdict = 'NO MATERIAL CHANGE'; cls = ''; }
+
+    const top8 = (rows) => rows.slice(0, 8).map(f =>
+      `<td${f.driver_number === es.driver_number ? ' style="color:var(--red);font-weight:700"' : ''}>${f.acronym}</td>`).join('');
+
+    out.innerHTML = `
+      <div class="verdict ${cls}">${es.acronym}: ${verdict}</div>
+      <div class="meta-row"><span>simulated from lap ${r.anchor_lap}</span>
+        <span>modelled: P${base.predicted_position} → P${mod.predicted_position}</span>
+        <span>gap to winner: ${base.predicted_gap}s → ${mod.predicted_gap}s</span></div>
+      <table class="cmp-table">
+        <tr><th>actual strategy (model)</th>${top8(r.baseline)}</tr>
+        <tr><th>your strategy</th>${top8(r.modified)}</tr>
+      </table>
+      <div class="notice" style="font-size:10px">Both rows are model projections from the same lap-${r.anchor_lap} state, so the difference isolates the strategy change. All other drivers run their actual pit stops. Drivers who retired after lap ${r.anchor_lap} are simulated as finishing.</div>`;
+  }
+
+  loadRaces();
+</script>
+</body>
+</html>

@@ -519,6 +519,56 @@ def optimize_strategy(
     )
 
 
+def evaluate_prescribed_strategy(
+    current_lap:      int,
+    total_laps:       int,
+    current_compound: str,
+    current_age:      int,
+    pace_delta:       float,
+    curves:           dict[str, DegCurve],
+    field_baseline:   float,
+    pits:             list[PitPlan],
+    pit_loss:         float = PIT_LOSS,
+) -> DriverStrategy:
+    """
+    Cost a FIXED pit plan with the same lap-time model the optimizer uses,
+    so prescribed (user-edited or historical) strategies are comparable to
+    optimizer output. Pit laps outside (current_lap, total_laps) are dropped.
+    """
+    remaining = total_laps - current_lap
+    if remaining <= 0:
+        return DriverStrategy(0, "", current_lap, current_compound,
+                              current_age, [], 0.0, None, "LOW")
+
+    def stint_t(c: str, start_age: int, length: int) -> float:
+        return sum(_lap_t(c, start_age + i, pace_delta, curves, field_baseline)
+                   for i in range(length))
+
+    plan = sorted((p for p in pits if current_lap < p.lap < total_laps),
+                  key=lambda p: p.lap)
+    stop_cost = pit_loss + STOP_RISK
+
+    total = 0.0
+    lap, compound, age = current_lap, current_compound, current_age
+    for p in plan:
+        stint_len = p.lap - lap
+        total += stint_t(compound, age, stint_len) + stop_cost
+        lap, compound, age = p.lap, p.compound, 0
+    total += stint_t(compound, age, total_laps - lap)
+
+    return DriverStrategy(
+        driver_number=0,
+        acronym="",
+        current_lap=current_lap,
+        current_compound=current_compound,
+        current_age=current_age,
+        pits_remaining=plan,
+        total_time_from_now=round(total, 2),
+        laps_until_must_pit=None,
+        confidence="HIGH" if curves else "LOW",
+    )
+
+
 # ── Undercut calculator ───────────────────────────────────────────────────────
 
 def calc_undercut(
@@ -616,12 +666,17 @@ def simulate_race(
     sc_events:      list[SCEvent],
     pit_loss:       float = PIT_LOSS,
     track_position_weight: float = 0.6,  # 0.75 street / 0.6 normal — tuned on 76-race backtest
+    prescribed_strategies: dict[int, list[PitPlan]] | None = None,
 ) -> list[DriverForecast]:
     """
     track_position_weight: how much current position (gap) influences the
     final predicted order vs pure pace simulation (0=pure pace, 1=pure position).
     At Monaco ~0.8 (almost impossible to overtake without pit stop).
     On normal circuits ~0.4–0.5.
+
+    prescribed_strategies: drivers listed here run the given fixed pit plan
+    (costed via evaluate_prescribed_strategy) instead of the DP optimizer —
+    used for counterfactual/what-if simulation against known stint histories.
     """
     if total_laps <= current_lap:
         return []
@@ -678,17 +733,24 @@ def simulate_race(
         sc_active = any(ev.start_lap <= current_lap <= ev.end_lap + 1 for ev in sc_events)
         effective_pit_loss = pit_loss * 0.45 if sc_active else pit_loss
 
-        strat = optimize_strategy(current_lap, total_laps, compound, age,
-                                  pd, curves, field_baseline, effective_pit_loss,
-                                  needs_compound_change=needs_change)
-        strat.driver_number = num
-        strat.acronym = acronym
+        if prescribed_strategies is not None and num in prescribed_strategies:
+            strat = evaluate_prescribed_strategy(
+                current_lap, total_laps, compound, age, pd, curves,
+                field_baseline, prescribed_strategies[num], effective_pit_loss)
+            strat.driver_number = num
+            strat.acronym = acronym
+        else:
+            strat = optimize_strategy(current_lap, total_laps, compound, age,
+                                      pd, curves, field_baseline, effective_pit_loss,
+                                      needs_compound_change=needs_change)
+            strat.driver_number = num
+            strat.acronym = acronym
 
-        # If SC is active and a stop is still needed, recommend taking it NOW
-        if sc_active and strat.pits_remaining:
-            first = strat.pits_remaining[0]
-            if first.lap > current_lap + 1:
-                strat.pits_remaining[0] = PitPlan(current_lap + 1, first.compound)
+            # If SC is active and a stop is still needed, recommend taking it NOW
+            if sc_active and strat.pits_remaining:
+                first = strat.pits_remaining[0]
+                if first.lap > current_lap + 1:
+                    strat.pits_remaining[0] = PitPlan(current_lap + 1, first.compound)
 
         # Blend current gap (track position) with simulated pace advantage.
         # Pure pace sim overpredicts overtaking — especially at Monaco.
