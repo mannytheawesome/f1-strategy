@@ -132,37 +132,52 @@
   // ── race list ──────────────────────────────────────────────────────────────
   async function loadRaces() {
     try {
-      const res = await fetch('/api/races?year=2026');
-      const data = await res.json();
+      const [racesRes, nextRes] = await Promise.all([
+        fetch('/api/races?year=2026'),
+        fetch('/api/next_meeting?year=2026'),
+      ]);
+      const data = await racesRes.json();
+      const next = (await nextRes.json()).meeting;
       const el = document.getElementById('race-items');
       el.classList.remove('spin');
       el.innerHTML = '';
+      if (next) {
+        const div = document.createElement('div');
+        div.className = 'race-item';
+        div.style.borderLeft = '3px solid var(--green)';
+        div.innerHTML = `<span class="name">${next.country_name}</span>
+          <span class="kind" style="color:var(--green)">UPCOMING · PRE-RACE</span>`;
+        div.onclick = () => { markActive(div); loadPrerace(next.meeting_key); };
+        el.appendChild(div);
+      }
       for (const r of data.races) {
         const div = document.createElement('div');
         div.className = 'race-item';
         const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
         div.innerHTML = `<span class="name">${r.country_name}</span>
           <span class="kind">${kind} · ${(r.date_start || '').slice(5, 10)}</span>`;
-        div.onclick = () => { selectRace(div, r.session_key); };
+        div.onclick = () => { markActive(div); loadBriefing(r.session_key, r.meeting_key); };
         el.appendChild(div);
       }
-      if (!data.races.length) el.textContent = 'No completed races yet.';
+      if (!data.races.length && !next) el.textContent = 'No races yet.';
     } catch (e) {
       document.getElementById('race-items').textContent = 'Failed to load races.';
     }
   }
 
-  function selectRace(itemEl, sessionKey) {
+  function markActive(itemEl) {
     document.querySelectorAll('.race-item').forEach(e => e.classList.remove('active'));
     itemEl.classList.add('active');
-    loadBriefing(sessionKey);
   }
 
   // ── briefing ───────────────────────────────────────────────────────────────
-  async function loadBriefing(sessionKey) {
+  let currentContext = null;   // { sessionKey, meetingKey } for the toggle
+
+  async function loadBriefing(sessionKey, meetingKey) {
     const root = document.getElementById('briefing');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Building briefing… (first load per race can take ~30s while the narrative is written)</div>';
     editorState = null;
+    currentContext = { sessionKey, meetingKey };
     try {
       const res = await fetch(`/api/briefing?session_key=${sessionKey}`);
       if (!res.ok) throw new Error((await res.json()).detail || res.status);
@@ -171,6 +186,23 @@
     } catch (e) {
       root.innerHTML = `<div class="card"><span class="notice">Briefing failed: ${e.message}</span></div>`;
     }
+  }
+
+  function toggleHTML(active) {
+    const ctx = currentContext || {};
+    if (!ctx.meetingKey) return '';
+    return `<div class="btnrow" style="margin-top:8px">
+      <button id="tab-debrief" ${active === 'debrief' ? 'style="border-color:var(--red);color:var(--red)"' : ''} ${ctx.sessionKey ? '' : 'disabled'}>DEBRIEF</button>
+      <button id="tab-prerace" ${active === 'prerace' ? 'style="border-color:var(--red);color:var(--red)"' : ''}>PRE-RACE</button>
+    </div>`;
+  }
+
+  function wireToggle(rootEl) {
+    const d = rootEl.querySelector('#tab-debrief');
+    const p = rootEl.querySelector('#tab-prerace');
+    const ctx = currentContext || {};
+    if (d && ctx.sessionKey) d.onclick = () => loadBriefing(ctx.sessionKey, ctx.meetingKey);
+    if (p && ctx.meetingKey) p.onclick = () => loadPrerace(ctx.meetingKey, ctx.sessionKey);
   }
 
   function renderBriefing(b) {
@@ -190,8 +222,10 @@
         <span>${s.total_laps} laps</span><span>${weather}</span>
         <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}</span>
       </div>
-      ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}`;
+      ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
+      ${toggleHTML('debrief')}`;
     root.appendChild(head);
+    wireToggle(head);
 
     if (n) {
       root.appendChild(proseCard('The race', n.race_story));
@@ -256,6 +290,118 @@
       inner += `<div class="c-${st.compound}" style="width:${w}%" title="${st.compound} L${st.lap_start}-${st.lap_end}"></div>`;
     }
     return `<div class="stintbar">${inner}</div>`;
+  }
+
+  // ── pre-race briefing ──────────────────────────────────────────────────────
+  async function loadPrerace(meetingKey, sessionKey) {
+    const root = document.getElementById('briefing');
+    root.innerHTML = '<div class="card spin" id="loading-overlay">Building race-morning briefing… (first load can take ~30s while the narrative is written)</div>';
+    editorState = null;
+    currentContext = { sessionKey: sessionKey || null, meetingKey };
+    try {
+      const res = await fetch(`/api/prerace_briefing?meeting_key=${meetingKey}`);
+      if (!res.ok) throw new Error((await res.json()).detail || res.status);
+      renderPrerace(await res.json());
+    } catch (e) {
+      root.innerHTML = `<div class="card"><span class="notice">Pre-race briefing failed: ${e.message}</span></div>`;
+    }
+  }
+
+  function renderPrerace(b) {
+    const d = b.data, n = b.narrative, m = d.meeting;
+    const root = document.getElementById('briefing');
+    root.innerHTML = '';
+
+    const inv = d.inventory;
+    const head = document.createElement('div');
+    head.className = 'card';
+    head.innerHTML = `
+      <h3>${n ? n.headline : (m.country_name + ' — Race Morning Briefing')}</h3>
+      <div class="meta-row">
+        <span>${m.country_name} · ${m.circuit}${m.sprint_weekend ? ' · SPRINT WEEKEND' : ''}</span>
+        <span>race: ${(m.race_date || 'TBC').slice(0, 10)}</span>
+        <span>${m.total_laps_assumed} laps assumed</span>
+        <span>SC probability ${(d.sc_probability * 100).toFixed(0)}%</span>
+        <span>pit loss ${d.pit_loss}s (${d.pit_loss_source === 'sprint_measured' ? 'measured in sprint' : 'default'})</span>
+      </div>
+      <div class="meta-row"><span>built from: ${d.sources.map(s => s.name).join(' · ')}</span></div>
+      ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
+      ${toggleHTML('prerace')}`;
+    root.appendChild(head);
+    wireToggle(head);
+
+    // grid
+    const gridCard = document.createElement('div');
+    gridCard.className = 'card';
+    let gRows = '';
+    for (const g of d.grid.slice(0, 10)) {
+      gRows += `<tr><td>${g.position}</td><td><b>${g.acronym}</b></td>
+        <td>${g.team || ''}</td><td>${g.gap ?? ''}</td></tr>`;
+    }
+    gridCard.innerHTML = `<h2>The grid — from ${d.grid_source}</h2>
+      <table class="results"><tr><th>POS</th><th>DRV</th><th>TEAM</th><th>GAP</th></tr>${gRows}</table>`;
+    root.appendChild(gridCard);
+    if (n) root.appendChild(proseCard('Reading the grid', n.grid_story));
+
+    // the trade, calculated
+    const t = d.trade;
+    const tradeCard = document.createElement('div');
+    tradeCard.className = 'card';
+    let pairRows = '';
+    for (const p of t.pairs) {
+      pairRows += `<tr><td><b>${p.softer}</b> vs <b>${p.harder}</b></td>
+        <td>${p.offset_s_per_lap.toFixed(2)}</td><td>${p.deg_gap_s_per_lap.toFixed(3)}</td>
+        <td>${p.breakeven_stint_laps ?? '—'}</td><td>${p.verdict}</td></tr>`;
+    }
+    let lut = '<tr><th>laps to flag</th>' +
+      t.lookup_table.offsets.map(o => `<th>offset ${o.toFixed(2)}</th>`).join('') + '</tr>';
+    t.lookup_table.laps_to_flag.forEach((nLaps, i) => {
+      lut += `<tr><td>N = ${nLaps}</td>` +
+        t.lookup_table.thresholds[i].map(v => `<td>${v.toFixed(3)}</td>`).join('') + '</tr>';
+    });
+    tradeCard.innerHTML = `<h2>The trade, calculated</h2>
+      <div class="meta-row"><span>${t.formula}</span></div>
+      <table class="results" style="margin-bottom:12px">
+        <tr><th>PAIR</th><th>OFFSET s/lap</th><th>DEG GAP s/lap</th><th>BREAK-EVEN</th><th>VERDICT</th></tr>
+        ${pairRows}</table>
+      <div class="meta-row"><span>max tolerable deg gap (s/lap) = 2 × offset / N</span></div>
+      <table class="cmp-table" style="border:1px solid var(--border)">${lut}</table>`;
+    root.appendChild(tradeCard);
+    if (n) root.appendChild(proseCard('The trade', n.the_trade));
+
+    // paper strategies
+    const stratCard = document.createElement('div');
+    stratCard.className = 'card';
+    let sRows = '';
+    for (const s of d.strategies) {
+      const stints = [];
+      let lap = 0;
+      s.compound_sequence.forEach((c, i) => {
+        stints.push({ compound: c, lap_start: lap + 1, lap_end: lap + s.stint_lengths[i] });
+        lap += s.stint_lengths[i];
+      });
+      sRows += `<tr><td><b>${s.compound_sequence.join('-')}</b></td><td>${s.stops}</td>
+        <td>${s.pit_laps.map(l => 'L' + l).join(', ') || '—'}</td>
+        <td>${stintBarHTML(stints, m.total_laps_assumed)}</td>
+        <td>${s.time_delta === 0 ? 'fastest on paper' : '+' + s.time_delta + 's'}</td></tr>`;
+    }
+    stratCard.innerHTML = `<h2>One stop on paper — the candidates</h2>
+      <table class="results"><tr><th>PLAN</th><th>STOPS</th><th>PITS</th><th>SHAPE</th><th>Δ</th></tr>${sRows}</table>
+      ${inv ? `<div class="meta-row" style="margin-top:8px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
+    root.appendChild(stratCard);
+    if (n) root.appendChild(proseCard('Race shape', n.race_shape));
+
+    root.appendChild(degCurveCard(d.deg_curves));
+
+    // watch list
+    const wCard = document.createElement('div');
+    wCard.className = 'card';
+    let wRows = d.unknowns.map(u =>
+      `<tr><td><b>${u.name}</b></td><td>${u.watch}</td></tr>`).join('');
+    wCard.innerHTML = `<h2>Fill in the blanks live</h2>
+      <table class="results"><tr><th>UNKNOWN</th><th>WATCH FOR</th></tr>${wRows}</table>`;
+    root.appendChild(wCard);
+    if (n) root.appendChild(proseCard('The watch list', n.watch_list));
   }
 
   // ── deg curve chart ────────────────────────────────────────────────────────

@@ -184,9 +184,11 @@ def build_briefing_data(session_key: int) -> dict:
     }
 
 
-def generate_narrative(pack: dict) -> dict | None:
+def generate_structured_narrative(pack: dict, system: str, schema: dict,
+                                  task: str) -> dict | None:
     """One-shot Claude generation, structured JSON output. Returns None if
-    no credentials are available or the call fails — caller degrades."""
+    no credentials are available or the call fails — caller degrades.
+    Shared by the post-race and pre-race briefing generators."""
     try:
         import anthropic
         client = anthropic.Anthropic()
@@ -194,12 +196,12 @@ def generate_narrative(pack: dict) -> dict | None:
             model=NARRATIVE_MODEL,
             max_tokens=8000,
             thinking={"type": "adaptive"},
-            system=NARRATIVE_SYSTEM,
-            output_config={"format": {"type": "json_schema", "schema": NARRATIVE_SCHEMA}},
+            system=system,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
             messages=[{
                 "role": "user",
-                "content": ("Write the race briefing for this data pack. Remember: every "
-                            "number must come from the pack.\n\n" + json.dumps(pack)),
+                "content": (task + " Remember: every number must come from the pack.\n\n"
+                            + json.dumps(pack)),
             }],
         )
         if response.stop_reason == "refusal":
@@ -209,6 +211,12 @@ def generate_narrative(pack: dict) -> dict | None:
     except Exception as e:
         print(f"[briefing] narrative generation failed: {e}")
         return None
+
+
+def generate_narrative(pack: dict) -> dict | None:
+    return generate_structured_narrative(
+        pack, NARRATIVE_SYSTEM, NARRATIVE_SCHEMA,
+        "Write the race briefing for this data pack.")
 
 
 def get_briefing(session_key: int, regenerate: bool = False) -> dict:
