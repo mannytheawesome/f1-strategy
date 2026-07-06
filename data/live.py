@@ -112,20 +112,27 @@ _cache_lock = threading.Lock()
 LIVE_TTL = 10      # seconds — re-fetch live session data frequently
 HIST_TTL = 3600    # seconds — historical data never changes
 
-def _cache_get(key: str):
+def _cache_get(key: str, max_age: float | None = None):
+    """Freshness is reader-decided: an entry is served only if it is younger
+    than BOTH the TTL it was stored with and the caller's max_age. This stops
+    a long-TTL writer (e.g. /api/predict fetching race laps with HIST_TTL)
+    from pinning hour-old data onto short-TTL readers (/api/live) during a
+    live session — the bug that froze the live board mid-race."""
     with _cache_lock:
         entry = _cache.get(key)
         if entry is None:
             return None
-        data, expires_at = entry
-        if time.time() > expires_at:
-            del _cache[key]
+        data, fetched_at, stored_ttl = entry
+        limit = stored_ttl if max_age is None else min(stored_ttl, max_age)
+        if time.time() - fetched_at > limit:
+            if time.time() - fetched_at > stored_ttl:
+                del _cache[key]
             return None
         return data
 
 def _cache_set(key: str, data, ttl: float):
     with _cache_lock:
-        _cache[key] = (data, time.time() + ttl)
+        _cache[key] = (data, time.time(), ttl)
 
 def _ttl_for_session(session: dict) -> float:
     """Historical sessions get a long TTL; live sessions get a short one."""
@@ -245,7 +252,7 @@ def _get(endpoint: str, **params) -> list:
 
 
 def _cached_get(cache_key: str, endpoint: str, ttl: float, **params):
-    hit = _cache_get(cache_key)
+    hit = _cache_get(cache_key, max_age=ttl)
     if hit is not None:
         return hit
     try:
