@@ -137,6 +137,30 @@ def openf1_auth_debug():
     return get_auth_diagnostics()
 
 
+@app.get("/api/debug/anthropic_auth")
+def anthropic_auth_debug():
+    """Presence/shape of ANTHROPIC_API_KEY plus a free count_tokens probe to
+    validate it — never returns the key itself."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    out = {
+        "key_set": bool(key),
+        "key_length": len(key),
+        "key_prefix_ok": key.startswith("sk-ant-"),
+        "probe": None,
+    }
+    if key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+            client.messages.count_tokens(
+                model="claude-fable-5",
+                messages=[{"role": "user", "content": "ping"}])
+            out["probe"] = "ok"
+        except Exception as e:
+            out["probe"] = f"failed: {str(e)[:200]}"
+    return out
+
+
 @app.get("/api/live")
 def live_state(session_key: int = None):
     """
