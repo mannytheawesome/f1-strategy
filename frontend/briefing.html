@@ -267,6 +267,57 @@
       root.appendChild(proseCard('The tyres', n.tyre_story));
     }
     root.appendChild(degCurveCard(d.deg_curves));
+
+    // stint pace — the "which tyre was a rock" read
+    if (d.stint_pace && d.stint_pace.field && d.stint_pace.field.length) {
+      const sp = d.stint_pace;
+      const spCard = document.createElement('div');
+      spCard.className = 'card';
+      let fRows = sp.field.map(f =>
+        `<tr><td><b>${f.compound}</b></td><td>${f.new_set ? 'new' : 'used'}</td>
+         <td>${f.median_slope.toFixed(3)} s/lap${Math.abs(f.median_slope) <= sp.fuel_evo_band ? ' <span class="delta-up">flat</span>' : ''}</td>
+         <td>${f.stint_count}</td></tr>`).join('');
+      const flat = sp.stints.filter(r => r.clean_laps >= 8).slice(0, 5);
+      let bRows = flat.map(r =>
+        `<tr><td><b>${r.acronym}</b></td><td>${r.compound}${r.new_set ? '' : ' (used)'}</td>
+         <td>L${r.laps[0]}–${r.laps[1]}</td><td>${r.median.toFixed(3)}</td>
+         <td>${r.slope.toFixed(3)}${r.flat ? ' <span class="delta-up">flat</span>' : ''}</td></tr>`).join('');
+      spCard.innerHTML = `<h2>Stint pace — fuel-corrected deg slopes</h2>
+        <div class="meta-row"><span>slope = s/lap of tyre age with fuel burn removed · inside ±${sp.fuel_evo_band}s/lap counts as flat (fuel+evolution band)</span></div>
+        <table class="results" style="margin-bottom:12px">
+          <tr><th>COMPOUND</th><th>SET</th><th>FIELD MEDIAN SLOPE</th><th>STINTS</th></tr>${fRows}</table>
+        <div class="meta-row"><span>best-managed long stints (≥8 clean laps)</span></div>
+        <table class="results">
+          <tr><th>DRV</th><th>TYRE</th><th>LAPS</th><th>MEDIAN</th><th>SLOPE</th></tr>${bRows}</table>`;
+      root.appendChild(spCard);
+    }
+
+    // the stops, graded
+    if (d.stops_graded && d.stops_graded.length) {
+      const sg = d.stops_graded;
+      const gCard = document.createElement('div');
+      gCard.className = 'card';
+      const gradeColor = g => g === 'inspired' || g === 'good' ? 'var(--green)'
+        : g === 'neutral' ? 'var(--muted)' : 'var(--red)';
+      const row = s =>
+        `<tr><td><b>${s.acronym}</b></td><td>L${s.lap}</td>
+         <td>${s.from} → ${s.to}</td><td>${s.old_tyre_age}</td>
+         <td>${s.under_sc ? 'SC' : ''}</td>
+         <td>${s.gain_s > 0 ? '+' : ''}${s.gain_s.toFixed(1)}s</td>
+         <td style="color:${gradeColor(s.grade)}"><b>${s.grade.toUpperCase()}</b></td></tr>`;
+      const best = sg.slice(0, 5), worst = sg.slice(-5).reverse();
+      gCard.innerHTML = `<h2>The stops, graded</h2>
+        <div class="meta-row"><span>each stop judged over the next ${5} laps: fresh-rubber gain vs staying out on the old set · SC stops bank the discounted pit lane</span></div>
+        <div class="meta-row"><span>best calls</span></div>
+        <table class="results" style="margin-bottom:12px"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${best.map(row).join('')}</table>
+        <div class="meta-row"><span>worst calls</span></div>
+        <table class="results"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${worst.map(row).join('')}</table>`;
+      root.appendChild(gCard);
+    }
+    if (n && n.the_stops) {
+      root.appendChild(proseCard('The stops', n.the_stops));
+    }
+
     if (n) {
       root.appendChild(proseCard('Strategy verdicts', n.strategy_verdicts));
     }
@@ -343,6 +394,51 @@
     root.appendChild(gridCard);
     if (n) root.appendChild(proseCard('Reading the grid', n.grid_story));
 
+    // the real pace order — long runs vs grid slots
+    if (d.long_run_pace && d.long_run_pace.length) {
+      const pCard = document.createElement('div');
+      pCard.className = 'card';
+      let pRows = d.long_run_pace.slice(0, 10).map(r => {
+        const oop = r.out_of_position;
+        const badge = oop == null ? '—'
+          : oop > 0 ? `<span class="delta-up">▲${oop} vs grid</span>`
+          : oop < 0 ? `<span class="delta-down">▼${-oop} vs grid</span>` : '·';
+        return `<tr><td>${r.pace_rank}</td><td><b>${r.acronym}</b></td>
+          <td>${r.pace_delta > 0 ? '+' : ''}${r.pace_delta.toFixed(3)}</td>
+          <td>${r.grid_position ?? '—'}</td><td>${badge}</td>
+          <td>${r.laps} laps · ${r.sessions.join('+')}</td></tr>`;
+      }).join('');
+      pCard.innerHTML = `<h2>The real pace order — long runs, fuel &amp; age corrected</h2>
+        <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable)</span></div>
+        <table class="results"><tr><th>RANK</th><th>DRV</th><th>PACE</th><th>GRID</th><th>OUT OF POSITION</th><th>SAMPLE</th></tr>${pRows}</table>`;
+      root.appendChild(pCard);
+    }
+
+    // where the lap lives — quali sectors & top speed
+    if (d.quali_sectors && d.quali_sectors.length) {
+      const qs = d.quali_sectors;
+      const bests = {
+        s1: Math.min(...qs.filter(r => r.s1).map(r => r.s1)),
+        s2: Math.min(...qs.filter(r => r.s2).map(r => r.s2)),
+        s3: Math.min(...qs.filter(r => r.s3).map(r => r.s3)),
+        sp: Math.max(...qs.filter(r => r.top_speed_kmh).map(r => r.top_speed_kmh)),
+      };
+      const cell = (v, best, fmt) => v == null ? '<td>—</td>'
+        : `<td${v === best ? ' style="color:#b57bff;font-weight:bold"' : ''}>${fmt(v)}</td>`;
+      const sCard = document.createElement('div');
+      sCard.className = 'card';
+      let sRows = qs.map(r =>
+        `<tr><td><b>${r.acronym}</b></td><td>${r.best_lap.toFixed(3)}</td>
+         ${cell(r.s1, bests.s1, v => v.toFixed(3))}${cell(r.s2, bests.s2, v => v.toFixed(3))}${cell(r.s3, bests.s3, v => v.toFixed(3))}
+         <td>${r.theoretical ? r.theoretical.toFixed(3) : '—'}</td>
+         <td>${r.left_on_table ? '+' + r.left_on_table.toFixed(3) : '—'}</td>
+         ${cell(r.top_speed_kmh, bests.sp, v => v + ' km/h')}</tr>`).join('');
+      sCard.innerHTML = `<h2>Where the lap lives — qualifying sectors</h2>
+        <div class="meta-row"><span>purple = field best · "left on table" = best lap minus theoretical best</span></div>
+        <table class="results"><tr><th>DRV</th><th>BEST</th><th>S1</th><th>S2</th><th>S3</th><th>THEORY</th><th>LEFT</th><th>TRAP</th></tr>${sRows}</table>`;
+      root.appendChild(sCard);
+    }
+
     // the trade, calculated
     const t = d.trade;
     const tradeCard = document.createElement('div');
@@ -390,6 +486,28 @@
       ${inv ? `<div class="meta-row" style="margin-top:8px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     root.appendChild(stratCard);
     if (n) root.appendChild(proseCard('Race shape', n.race_shape));
+
+    // grid → flag projection
+    if (d.projection && d.projection.forecasts && d.projection.forecasts.length) {
+      const pj = d.projection;
+      const jCard = document.createElement('div');
+      jCard.className = 'card';
+      let jRows = pj.forecasts.map(f => {
+        const move = f.current_position - f.predicted_position;
+        const badge = move > 0 ? `<span class="delta-up">▲${move}</span>`
+          : move < 0 ? `<span class="delta-down">▼${-move}</span>` : '·';
+        return `<tr><td>${f.predicted_position}</td><td><b>${f.acronym}</b></td>
+          <td>${f.current_position}</td><td>${badge}</td>
+          <td>${(f.win_probability * 100).toFixed(0)}%</td>
+          <td>${(f.podium_probability * 100).toFixed(0)}%</td>
+          <td>P${f.position_range[0]}–P${f.position_range[1]}</td></tr>`;
+      }).join('');
+      jCard.innerHTML = `<h2>Grid → flag — the model's projection</h2>
+        <div class="meta-row"><span>full race sim + Monte Carlo · assumes everyone starts on ${pj.start_compound_assumption} · grid spread ${pj.grid_spread_assumption_s}s/slot · range = P5–P95</span></div>
+        <table class="results"><tr><th>PROJ</th><th>DRV</th><th>GRID</th><th>Δ</th><th>WIN</th><th>PODIUM</th><th>RANGE</th></tr>${jRows}</table>`;
+      root.appendChild(jCard);
+    }
+    if (n && n.projection) root.appendChild(proseCard('The projection', n.projection));
 
     root.appendChild(degCurveCard(d.deg_curves));
 

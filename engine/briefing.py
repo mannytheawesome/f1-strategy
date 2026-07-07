@@ -21,7 +21,12 @@ from data.live import (
 )
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, curves_to_dict, SCEvent,
+    FUEL_RATE,
 )
+
+# Bumped whenever the data-pack shape changes; cached briefings with an older
+# version are rebuilt (and their narrative regenerated) on next request.
+PACK_VERSION = 2
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -49,16 +54,127 @@ NARRATIVE_SCHEMA = {
     "properties": {
         "headline":          {"type": "string", "description": "Punchy 4-8 word title for the briefing"},
         "race_story":        {"type": "string", "description": "250-400 words: how the race was won and lost — key strategy calls, position changes, SC influence"},
-        "tyre_story":        {"type": "string", "description": "150-250 words: what the degradation numbers say — compound comparison, who managed tyres well/badly"},
-        "strategy_verdicts": {"type": "string", "description": "150-250 words: the best and worst strategy calls of the race, judged against the deg/pace data"},
+        "tyre_story":        {"type": "string", "description": "150-250 words: what the degradation numbers say — compound comparison, use the stint_pace table to name who managed tyres well/badly and whether used sets matched new ones"},
+        "the_stops":         {"type": "string", "description": "120-220 words: the pit calls, judged from the stops_graded table — name the best-timed and worst-timed stops with their measured gains/losses in seconds, and credit SC windfalls"},
+        "strategy_verdicts": {"type": "string", "description": "150-250 words: the best and worst overall strategy calls of the race, judged against the deg/pace data"},
     },
-    "required": ["headline", "race_story", "tyre_story", "strategy_verdicts"],
+    "required": ["headline", "race_story", "tyre_story", "the_stops", "strategy_verdicts"],
     "additionalProperties": False,
 }
 
 
 def _cache_path(session_key: int) -> str:
     return os.path.join(BRIEFING_DIR, f"briefing_{session_key}.json")
+
+
+GRADE_LABELS = [(3.0, "inspired"), (1.0, "good"), (-1.0, "neutral"),
+                (-3.0, "costly")]  # below the last threshold: "howler"
+STOP_WINDOW = 5  # laps over which a stop's timing is judged
+
+
+def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
+                 sc_events: list, pit_loss: float, total_laps: int) -> list[dict]:
+    """Judge every actual pit stop over the following STOP_WINDOW laps:
+    the tyre-time saved by pitting now (fresh rubber) vs staying out on the
+    old set — both worlds pay one pit loss inside the window, so the delta is
+    purely curve-vs-curve. Stops taken under SC additionally bank the
+    discounted pit lane (0.55 x pit loss vs a green-flag alternative)."""
+    out = []
+    for num, stints in stints_by_driver.items():
+        ordered = sorted(stints, key=lambda s: s.get("lap_start") or 0)
+        for prev, nxt in zip(ordered, ordered[1:]):
+            stop_lap = (nxt.get("lap_start") or 1) - 1
+            old_c, new_c = prev.get("compound"), nxt.get("compound")
+            oc, nc = curves.get(old_c), curves.get(new_c)
+            if not oc or not nc or not oc.baseline or not nc.baseline:
+                continue
+            age_at_stop = ((prev.get("tyre_age_at_start") or 0)
+                           + stop_lap - (prev.get("lap_start") or 1) + 1)
+            window = min(STOP_WINDOW, max(1, total_laps - stop_lap))
+            stay_out = sum(oc.lap_time(age_at_stop + i) for i in range(1, window + 1))
+            pit_now = sum(nc.lap_time(i) for i in range(1, window + 1))
+            gain = stay_out - pit_now
+            under_sc = any(e.start_lap <= stop_lap <= e.end_lap + 1 for e in sc_events)
+            if under_sc:
+                gain += pit_loss * 0.55
+            label = "howler"
+            for threshold, name in GRADE_LABELS:
+                if gain >= threshold:
+                    label = name
+                    break
+            out.append({
+                "acronym":      acronyms.get(num, str(num)),
+                "driver_number": num,
+                "lap":          stop_lap,
+                "from":         old_c, "to": new_c,
+                "old_tyre_age": age_at_stop,
+                "under_sc":     under_sc,
+                "gain_s":       round(gain, 2),
+                "grade":        label,
+            })
+    out.sort(key=lambda s: -s["gain_s"])
+    return out
+
+
+def _stint_pace_table(all_laps: list, stints_by_driver: dict, acronyms: dict,
+                      sc_events: list, total_laps: int) -> dict:
+    """Per-stint fuel-corrected pace: median lap and deg slope (s/lap of age)
+    with the fuel effect removed, plus a field-level new-vs-used comparison
+    per compound — the 'is the medium a rock' read."""
+    sc_laps = set()
+    for e in sc_events:
+        sc_laps.update(range(e.start_lap, e.end_lap + 2))
+    laps_by_driver: dict[int, list] = {}
+    for l in all_laps:
+        t = l.get("lap_duration")
+        if (t and 55 < t < 200 and not l.get("is_pit_out_lap")
+                and l["lap_number"] not in sc_laps):
+            laps_by_driver.setdefault(l["driver_number"], []).append(l)
+
+    rows = []
+    compound_agg: dict[tuple, list] = {}
+    for num, stints in stints_by_driver.items():
+        for s in sorted(stints, key=lambda x: x.get("lap_start") or 0):
+            ls, le = s.get("lap_start") or 1, s.get("lap_end") or total_laps
+            in_stint = [l for l in laps_by_driver.get(num, [])
+                        if ls < l["lap_number"] <= le]  # excl. out-lap
+            if len(in_stint) < 5:
+                continue
+            # fuel-corrected: add back the fuel-burn gain so slope = wear only
+            pts = [(l["lap_number"] - ls,
+                    l["lap_duration"] + FUEL_RATE * l["lap_number"])
+                   for l in in_stint]
+            n = len(pts)
+            mean_x = sum(p[0] for p in pts) / n
+            mean_y = sum(p[1] for p in pts) / n
+            denom = sum((p[0] - mean_x) ** 2 for p in pts)
+            slope = (sum((p[0] - mean_x) * (p[1] - mean_y) for p in pts) / denom
+                     if denom else 0.0)
+            new_set = (s.get("tyre_age_at_start") or 0) == 0
+            row = {
+                "acronym":   acronyms.get(num, str(num)),
+                "compound":  s.get("compound"),
+                "new_set":   new_set,
+                "laps":      [ls, le],
+                "clean_laps": n,
+                "median":    round(statistics.median(l["lap_duration"] for l in in_stint), 3),
+                "slope":     round(slope, 4),
+                "flat":      abs(slope) <= FUEL_RATE * 1.5,  # inside the fuel+evo band
+            }
+            rows.append(row)
+            compound_agg.setdefault((s.get("compound"), new_set), []).append(slope)
+
+    field = []
+    for (compound, new_set), slopes in sorted(compound_agg.items(),
+                                              key=lambda kv: (kv[0][0] or "", not kv[0][1])):
+        field.append({
+            "compound":     compound,
+            "new_set":      new_set,
+            "stint_count":  len(slopes),
+            "median_slope": round(statistics.median(slopes), 4),
+        })
+    rows.sort(key=lambda r: r["slope"])
+    return {"fuel_evo_band": round(FUEL_RATE * 1.5, 3), "stints": rows, "field": field}
 
 
 def build_briefing_data(session_key: int) -> dict:
@@ -163,6 +279,9 @@ def build_briefing_data(session_key: int) -> dict:
         "sc_count":          len(sc_events),
     }
 
+    acronyms = {r["driver_number"]: r["acronym"] for r in results}
+    pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
+
     return {
         "session": {
             "session_key":  session_key,
@@ -174,13 +293,17 @@ def build_briefing_data(session_key: int) -> dict:
             "total_laps":   total_laps,
         },
         "weather":     get_weather_summary(session_key, HIST_TTL),
-        "pit_loss":    get_avg_pit_loss(session_key, HIST_TTL),
+        "pit_loss":    pit_loss,
         "sc_events":   [{"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.type}
                         for e in sc_events],
         "sc_source":   sc_source,
         "deg_curves":  curves_to_dict(curves),
         "results":     results,
         "stats":       stats,
+        "stops_graded": _grade_stops(stints_by_driver, acronyms, curves,
+                                     sc_events, pit_loss, total_laps),
+        "stint_pace":  _stint_pace_table(all_laps, stints_by_driver, acronyms,
+                                         sc_events, total_laps),
     }
 
 
@@ -223,13 +346,17 @@ def get_briefing(session_key: int, regenerate: bool = False) -> dict:
     path = _cache_path(session_key)
     if not regenerate and os.path.exists(path):
         with open(path) as f:
-            return json.load(f)
+            cached = json.load(f)
+        if cached.get("pack_version") == PACK_VERSION:
+            return cached
+        # pack shape changed since this was cached — rebuild below
 
     pack = build_briefing_data(session_key)
     narrative = generate_narrative(pack)
 
     briefing = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pack_version": PACK_VERSION,
         "narrative_model": NARRATIVE_MODEL if narrative else None,
         "narrative": narrative,
         "data": pack,
