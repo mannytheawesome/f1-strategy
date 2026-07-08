@@ -220,7 +220,7 @@
       <div class="meta-row">
         <span>${s.country_name} · ${s.circuit}</span><span>${(s.date_start || '').slice(0, 10)}</span>
         <span>${s.total_laps} laps</span><span>${weather}</span>
-        <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}</span>
+        <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}${st.vsc_count ? ' · VSC: ' + st.vsc_count : ''}</span>
       </div>
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
       ${toggleHTML('debrief')}`;
@@ -302,7 +302,7 @@
       const row = s =>
         `<tr><td><b>${s.acronym}</b></td><td>L${s.lap}</td>
          <td>${s.from} → ${s.to}</td><td>${s.old_tyre_age}</td>
-         <td>${s.under_sc ? 'SC' : ''}</td>
+         <td>${s.neutralised || ''}</td>
          <td>${s.gain_s > 0 ? '+' : ''}${s.gain_s.toFixed(1)}s</td>
          <td style="color:${gradeColor(s.grade)}"><b>${s.grade.toUpperCase()}</b></td></tr>`;
       const best = sg.slice(0, 5), worst = sg.slice(-5).reverse();

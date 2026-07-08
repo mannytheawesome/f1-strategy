@@ -26,7 +26,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 3
+PACK_VERSION = 4
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -94,8 +94,14 @@ def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
             stay_out = sum(oc.lap_time(age_at_stop + i) for i in range(1, window + 1))
             pit_now = sum(nc.lap_time(i) for i in range(1, window + 1))
             gain = stay_out - pit_now
-            under_sc = any(e.start_lap <= stop_lap <= e.end_lap + 1 for e in sc_events)
-            if under_sc:
+            # Neutralisation windfall differs by kind: full SC saves ~55% of
+            # the pit loss (field bunched + slowed), VSC only ~35% (delta pace)
+            ev = next((e for e in sc_events
+                       if e.start_lap <= stop_lap <= e.end_lap + 1), None)
+            neutralised = ev.type if ev else None
+            if neutralised == "VSC":
+                gain += pit_loss * 0.35
+            elif neutralised:
                 gain += pit_loss * 0.55
             label = "howler"
             for threshold, name in GRADE_LABELS:
@@ -108,7 +114,8 @@ def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
                 "lap":          stop_lap,
                 "from":         old_c, "to": new_c,
                 "old_tyre_age": age_at_stop,
-                "under_sc":     under_sc,
+                "neutralised":  neutralised,   # null | 'SC' | 'VSC'
+                "under_sc":     neutralised is not None,
                 "gain_s":       round(gain, 2),
                 "grade":        label,
             })
@@ -277,7 +284,8 @@ def build_briefing_data(session_key: int) -> dict:
                               if fastest else None),
         "modal_stop_count":  statistics.mode(stop_counts) if stop_counts else None,
         "retirements":       [r["acronym"] for r in results if r["retired"]],
-        "sc_count":          len(sc_events),
+        "sc_count":          sum(1 for e in sc_events if e.type != "VSC"),
+        "vsc_count":         sum(1 for e in sc_events if e.type == "VSC"),
     }
 
     acronyms = {r["driver_number"]: r["acronym"] for r in results}

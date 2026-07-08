@@ -162,13 +162,23 @@ def detect_sc(laps_raw: list[dict]) -> list[SCEvent]:
     if not sc_laps:
         return []
 
+    # Severity classifies the neutralisation: a full SC drags the field to
+    # ~150%+ of green pace, a VSC delta is a milder ~135-145%
+    race_median = statistics.median(all_times)
+
+    def classify(start: int, end: int) -> str:
+        ev_times = [t for ln in range(start, end + 1) for t in by_lap.get(ln, [])]
+        if not ev_times:
+            return "SC"
+        return "SC" if statistics.median(ev_times) > race_median * 1.5 else "VSC"
+
     events, start, prev = [], sc_laps[0], sc_laps[0]
     for ln in sc_laps[1:]:
         if ln > prev + 2:
-            events.append(SCEvent(start, prev, "SC"))
+            events.append(SCEvent(start, prev, classify(start, prev)))
             start = ln
         prev = ln
-    events.append(SCEvent(start, prev, "SC"))
+    events.append(SCEvent(start, prev, classify(start, prev)))
     return events
 
 
@@ -728,11 +738,18 @@ def simulate_race(
         dry_used = {c for c in compounds_used if c in DRY}
         needs_change = len(dry_used) < 2
 
-        # Active SC: pit lane loss is roughly halved (field bunched, slow laps).
-        # If an SC is running on the current lap, evaluate strategy with the
-        # discounted pit loss — makes "pit now under SC" win when it should.
-        sc_active = any(ev.start_lap <= current_lap <= ev.end_lap + 1 for ev in sc_events)
-        effective_pit_loss = pit_loss * 0.45 if sc_active else pit_loss
+        # Active neutralisation discounts the pit lane — but not equally:
+        # a full SC bunches the field and slows it hardest (~55% of the loss
+        # saved); a VSC only holds everyone to a delta (~35% saved).
+        active_ev = next((ev for ev in sc_events
+                          if ev.start_lap <= current_lap <= ev.end_lap + 1), None)
+        sc_active = active_ev is not None
+        if active_ev is None:
+            effective_pit_loss = pit_loss
+        elif active_ev.type == "VSC":
+            effective_pit_loss = pit_loss * 0.65
+        else:
+            effective_pit_loss = pit_loss * 0.45
 
         if prescribed_strategies is not None and num in prescribed_strategies:
             strat = evaluate_prescribed_strategy(
