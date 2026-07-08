@@ -548,9 +548,16 @@
     for (const [k, v] of entries) {
       ctx.strokeStyle = colour[k]; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(x(0), y(v.baseline)); ctx.lineTo(x(maxAge), y(v.baseline + v.deg_rate * maxAge)); ctx.stroke();
+    }
+    // fixed legend stack — never collides, whatever the curves do
+    let ly = 22;
+    for (const [k, v] of entries) {
+      ctx.strokeStyle = colour[k]; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(pad + 4, ly - 3); ctx.lineTo(pad + 22, ly - 3); ctx.stroke();
       ctx.fillStyle = colour[k];
       ctx.fillText(`${k} ${v.baseline.toFixed(1)}s +${v.deg_rate.toFixed(3)}/lap (${v.confidence})`,
-                   pad + 4, y(v.baseline + v.deg_rate * maxAge) - 6);
+                   pad + 28, ly);
+      ly += 14;
     }
     return c;
   }
