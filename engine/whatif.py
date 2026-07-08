@@ -24,7 +24,8 @@ from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, simulate_race,
     PitPlan, SCEvent, forecast_to_dict, DRY,
 )
-from data.live import get_sc_laps_from_race_control, get_avg_pit_loss, get_quali_times
+from data.live import (get_sc_laps_from_race_control, get_avg_pit_loss,
+                       get_quali_times, get_yellow_laps)
 from engine.tyre_inventory import compute_inventory, COMPOUNDS
 
 STREET_CIRCUITS = ["monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"]
@@ -229,7 +230,8 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
         sc_events = detect_sc(all_laps)
     quali_times = get_quali_times(session.get("meeting_key")) if session.get("meeting_key") else {}
     pace_model = build_pace_model(all_laps, sc_events, drivers_raw, curves,
-                                  stints_raw, quali_times=quali_times or None)
+                                  stints_raw, quali_times=quali_times or None,
+                                  exclude_laps=get_yellow_laps(session_key, HIST_TTL))
     pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
     track_pos_weight = 0.75 if any(c in circuit.lower() for c in STREET_CIRCUITS) else 0.6
 

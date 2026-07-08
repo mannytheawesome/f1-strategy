@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 2
+PACK_VERSION = 3
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -93,10 +93,13 @@ def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
             drivers = get_drivers(s["session_key"], HIST_TTL)
         except Exception:
             continue
+        from data.live import get_yellow_laps
+        yellows = get_yellow_laps(s["session_key"], HIST_TTL)
         laps_by_driver: dict[int, dict[int, float]] = {}
         for l in laps:
             t = l.get("lap_duration")
-            if t and 55 < t < 200 and not l.get("is_pit_out_lap"):
+            if (t and 55 < t < 200 and not l.get("is_pit_out_lap")
+                    and l["lap_number"] not in yellows):
                 laps_by_driver.setdefault(l["driver_number"], {})[l["lap_number"]] = t
         for st in stints:
             num = st["driver_number"]

@@ -384,6 +384,27 @@ def get_sc_laps_from_race_control(session_key: int, ttl: float = HIST_TTL) -> li
     return events
 
 
+def get_yellow_laps(session_key: int, ttl: float = HIST_TTL) -> set[int]:
+    """
+    Lap numbers run under a TRACK-WIDE yellow or double yellow — those laps
+    are slow through no fault of the tyre and should be dropped from pace and
+    degradation samples. Local (sector-scope) yellows are left in: a lift
+    through one sector barely moves a full lap time, and dropping them would
+    throw away too much data.
+    """
+    try:
+        messages = get_race_control(session_key, ttl)
+    except Exception:
+        return set()
+    laps: set[int] = set()
+    for m in messages:
+        if (m.get("scope") == "Track"
+                and m.get("flag") in ("YELLOW", "DOUBLE YELLOW")
+                and m.get("lap_number")):
+            laps.add(m["lap_number"])
+    return laps
+
+
 def get_avg_pit_loss(session_key: int, ttl: float = HIST_TTL) -> float:
     """
     Compute the actual average pit stop time for this session from measured data.

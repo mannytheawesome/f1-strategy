@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from data.live import (
     get_session, get_laps, get_stints, get_drivers, build_state,
     get_sc_laps_from_race_control, get_avg_pit_loss, get_weather_summary,
-    get_quali_times, _get, HIST_TTL,
+    get_quali_times, get_yellow_laps, _get, HIST_TTL,
 )
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, curves_to_dict, SCEvent,
@@ -26,7 +26,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 4
+PACK_VERSION = 5
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -124,11 +124,12 @@ def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
 
 
 def _stint_pace_table(all_laps: list, stints_by_driver: dict, acronyms: dict,
-                      sc_events: list, total_laps: int) -> dict:
+                      sc_events: list, total_laps: int,
+                      extra_exclude: set | None = None) -> dict:
     """Per-stint fuel-corrected pace: median lap and deg slope (s/lap of age)
     with the fuel effect removed, plus a field-level new-vs-used comparison
     per compound — the 'is the medium a rock' read."""
-    sc_laps = set()
+    sc_laps = set(extra_exclude or ())
     for e in sc_events:
         sc_laps.update(range(e.start_lap, e.end_lap + 2))
     laps_by_driver: dict[int, list] = {}
@@ -227,8 +228,10 @@ def build_briefing_data(session_key: int) -> dict:
         sc_source = "heuristic"
 
     quali_times = get_quali_times(meeting_key) if meeting_key else {}
+    yellow_laps = get_yellow_laps(session_key, HIST_TTL)
     pace_model = build_pace_model(all_laps, sc_events, drivers_raw, curves,
-                                  stints_raw, quali_times=quali_times or None)
+                                  stints_raw, quali_times=quali_times or None,
+                                  exclude_laps=yellow_laps)
 
     state = build_state(session_key, include_locations=False, session=session)
     stints_by_driver: dict[int, list[dict]] = {}
@@ -323,7 +326,8 @@ def build_briefing_data(session_key: int) -> dict:
         "stops_graded": _grade_stops(stints_by_driver, acronyms, curves,
                                      sc_events, pit_loss, total_laps),
         "stint_pace":  _stint_pace_table(all_laps, stints_by_driver, acronyms,
-                                         sc_events, total_laps),
+                                         sc_events, total_laps,
+                                         extra_exclude=yellow_laps),
     }
 
 

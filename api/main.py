@@ -649,8 +649,10 @@ def predict(session_key: int = None, lap: int = None):
         # Use actual measured pit loss if available
         pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
 
+        from data.live import get_yellow_laps
         pace_model = build_pace_model(laps_to_now, sc_events, drivers_raw, curves,
-                                      stints_raw, quali_times=quali_times or None)
+                                      stints_raw, quali_times=quali_times or None,
+                                      exclude_laps=get_yellow_laps(session_key, HIST_TTL))
 
         # Current driver state
         state = build_state(session_key, include_locations=False,
@@ -816,8 +818,20 @@ def race_list(year: int = 2026):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+def _regen_allowed(regenerate: bool, token: str | None) -> bool:
+    """The site is public; regenerate=true triggers a paid LLM call, so when
+    ADMIN_TOKEN is configured it must be supplied. Automatic (re)generation
+    for uncached/stale briefings is unaffected — it's bounded by the number
+    of real races, not by visitors."""
+    if not regenerate:
+        return False
+    admin = os.environ.get("ADMIN_TOKEN")
+    return (not admin) or token == admin
+
+
 @app.get("/api/prerace_briefing")
-def prerace_briefing(meeting_key: int, total_laps: int = None, regenerate: bool = False):
+def prerace_briefing(meeting_key: int, total_laps: int = None,
+                     regenerate: bool = False, token: str = None):
     """
     Race-morning strategy briefing for a meeting, built ONLY from sessions
     that ran before the grand prix (FPs, sprint, qualifying). Regenerates
@@ -825,7 +839,8 @@ def prerace_briefing(meeting_key: int, total_laps: int = None, regenerate: bool 
     """
     from engine.prerace import get_prerace_briefing
     try:
-        return get_prerace_briefing(meeting_key, total_laps, regenerate=regenerate)
+        return get_prerace_briefing(meeting_key, total_laps,
+                                    regenerate=_regen_allowed(regenerate, token))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -880,7 +895,7 @@ def next_meeting(year: int = 2026):
 
 
 @app.get("/api/briefing")
-def briefing(session_key: int, regenerate: bool = False):
+def briefing(session_key: int, regenerate: bool = False, token: str = None):
     """
     Full race briefing: structured data pack (results, stints, deg curves,
     SC events, notable stats) plus LLM-written narrative sections. Generated
@@ -888,7 +903,7 @@ def briefing(session_key: int, regenerate: bool = False):
     """
     from engine.briefing import get_briefing
     try:
-        return get_briefing(session_key, regenerate=regenerate)
+        return get_briefing(session_key, regenerate=_regen_allowed(regenerate, token))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

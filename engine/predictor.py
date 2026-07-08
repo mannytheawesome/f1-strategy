@@ -318,6 +318,7 @@ def build_pace_model(
     curves:      dict[str, DegCurve],
     stints_raw:  list[dict],
     quali_times: dict[int, float] | None = None,
+    exclude_laps: set[int] | None = None,
 ) -> dict[int, DriverPace]:
     """
     Age- and fuel-corrected pace delta per driver.
@@ -325,8 +326,12 @@ def build_pace_model(
     as a prior — weighted equivalent to 10 race laps — so that early in the
     race, when few clean laps are available, the model relies on qualifying
     pace rather than noisy heavy-fuel data.
+    exclude_laps: extra lap numbers to drop from the sample (e.g. laps run
+    under a track-wide yellow, which are slow through no fault of the tyre).
     """
     sc_laps: set[int] = {ln for ev in sc_events for ln in range(ev.start_lap, ev.end_lap + 2)}
+    if exclude_laps:
+        sc_laps |= exclude_laps
 
     stint_map: dict[tuple, dict] = {}
     for s in stints_raw:
