@@ -414,6 +414,41 @@
       root.appendChild(pCard);
     }
 
+    // long-run boards — one per practice/sprint session
+    for (const tb of (d.long_run_tables || [])) {
+      if (!tb.drivers.length) continue;
+      const maxLaps = Math.max(...tb.drivers.map(r => r.laps.length));
+      const minute = Math.floor(Math.min(...tb.drivers.map(r => r.avg)) / 60);
+      const strip = t => {
+        const m = Math.floor(t / 60);
+        const rest = (t - m * 60).toFixed(3).padStart(6, '0');
+        return m === minute ? rest : `${m}:${rest}`;   // minute shown only when it differs
+      };
+      const lrCard = document.createElement('div');
+      lrCard.className = 'card';
+      let head2 = tb.drivers.map(r =>
+        `<th style="background:#${r.team_colour.replace('#','')};color:#000;padding:3px 6px">${r.acronym} (${r.compound})</th>`).join('');
+      let body = '';
+      for (let i = 0; i < maxLaps; i++) {
+        body += '<tr>' + tb.drivers.map(r => {
+          const c = r.laps[i];
+          if (!c) return '<td style="background:#161616"></td>';
+          return c.x ? '<td style="color:var(--muted);text-align:center">X</td>'
+                     : `<td style="text-align:center">${strip(c.t)}</td>`;
+        }).join('') + '</tr>';
+      }
+      const avgRow = tb.drivers.map(r =>
+        `<td style="color:var(--green);font-weight:700;text-align:center">${strip(r.avg)}</td>`).join('');
+      lrCard.innerHTML = `<h2>Long runs — ${tb.session_name}</h2>
+        <div class="meta-row"><span>each driver's longest run · times shown without the ${minute}-minute prefix · X = out-lap, traffic spike (>5% over run median) or track-wide yellow — excluded from the average</span></div>
+        <div style="overflow-x:auto"><table class="results" style="min-width:${tb.drivers.length * 74}px">
+          <tr>${head2}</tr>${body}
+          <tr><td colspan="${tb.drivers.length}" style="text-align:center;color:var(--green);font-weight:700;border-top:1px solid var(--border)">AVERAGE STINT PACE</td></tr>
+          <tr>${avgRow}</tr>
+        </table></div>`;
+      root.appendChild(lrCard);
+    }
+
     // where the lap lives — quali sectors & top speed
     if (d.quali_sectors && d.quali_sectors.length) {
       const qs = d.quali_sectors;

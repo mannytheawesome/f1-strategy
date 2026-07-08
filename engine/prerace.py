@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 3
+PACK_VERSION = 4
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -134,6 +134,79 @@ def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
     for i, r in enumerate(rows, 1):
         r["pace_rank"] = i
     return rows
+
+
+def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
+    """Lap-by-lap long-run boards, one per session — the classic 'Long Runs
+    FP2' table: each driver's longest stint (>=6 laps), every lap shown,
+    outliers/out-laps marked excluded, and the clean average at the bottom."""
+    from data.live import get_yellow_laps
+    tables = []
+    for s in source_sessions:
+        stype = s.get("session_type", "").lower()
+        name = s.get("session_name", "")
+        is_sprint_race = stype == "race" and "sprint" in name.lower()
+        if stype != "practice" and not is_sprint_race:
+            continue
+        try:
+            laps = get_laps(s["session_key"], HIST_TTL)
+            stints = get_stints(s["session_key"], HIST_TTL)
+            drivers = get_drivers(s["session_key"], HIST_TTL)
+        except Exception:
+            continue
+        yellows = get_yellow_laps(s["session_key"], HIST_TTL)
+        laps_by_driver: dict[int, dict[int, dict]] = {}
+        for l in laps:
+            if l.get("lap_duration"):
+                laps_by_driver.setdefault(l["driver_number"], {})[l["lap_number"]] = l
+
+        rows = []
+        for st in stints:
+            num = st["driver_number"]
+            ls, le = st.get("lap_start") or 1, st.get("lap_end") or 0
+            if le - ls + 1 < 6:
+                continue
+            dl = laps_by_driver.get(num, {})
+            stint_laps = [(ln, dl[ln]) for ln in range(ls + 1, le + 1) if ln in dl]  # skip out-lap
+            times = [l["lap_duration"] for _, l in stint_laps
+                     if 55 < l["lap_duration"] < 200]
+            if len(times) < 5:
+                continue
+            med = statistics.median(times)
+            cells, clean = [], []
+            for ln, l in stint_laps:
+                t = l["lap_duration"]
+                excluded = (not 55 < t < 200 or l.get("is_pit_out_lap")
+                            or ln in yellows or t > med * 1.05)
+                cells.append({"t": round(t, 3), "x": bool(excluded)})
+                if not excluded:
+                    clean.append(t)
+            if len(clean) < 4:
+                continue
+            rows.append({
+                "driver_number": num,
+                "acronym": drivers.get(num, {}).get("name_acronym", str(num)),
+                "team_colour": drivers.get(num, {}).get("team_colour") or "888888",
+                "compound": (st.get("compound") or "?")[0],
+                "laps": cells,
+                "avg": round(sum(clean) / len(clean), 3),
+                "clean_laps": len(clean),
+            })
+        if not rows:
+            continue
+        # one run per driver: keep their longest (most clean laps)
+        best_by_driver: dict[int, dict] = {}
+        for r in rows:
+            cur = best_by_driver.get(r["driver_number"])
+            if cur is None or r["clean_laps"] > cur["clean_laps"]:
+                best_by_driver[r["driver_number"]] = r
+        table_rows = sorted(best_by_driver.values(), key=lambda r: r["avg"])[:10]
+        tables.append({
+            "session_key": s["session_key"],
+            "session_name": name,
+            "drivers": table_rows,
+        })
+    return tables
 
 
 def _quali_speed_sectors(quali_key: int) -> list[dict]:
@@ -439,6 +512,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "pit_loss_source": "sprint_measured" if sprint_key else "default",
         "sc_probability": sc_prob,
         "long_run_pace": pace_rows,
+        "long_run_tables": _long_run_tables(sources),
         "quali_sectors": sectors,
         "projection": projection,
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
