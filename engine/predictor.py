@@ -98,6 +98,7 @@ class SCEvent:
 class PitPlan:
     lap:      int
     compound: str
+    tyre_age: int = 0   # age of the set being fitted (0 = new, >0 = used/scrubbed)
 
 
 @dataclass
@@ -553,7 +554,7 @@ def evaluate_prescribed_strategy(
     for p in plan:
         stint_len = p.lap - lap
         total += stint_t(compound, age, stint_len) + stop_cost
-        lap, compound, age = p.lap, p.compound, 0
+        lap, compound, age = p.lap, p.compound, p.tyre_age  # used sets start older
     total += stint_t(compound, age, total_laps - lap)
 
     return DriverStrategy(

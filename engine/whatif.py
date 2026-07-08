@@ -18,27 +18,90 @@ Known simplification: drivers who retired after the anchor lap are simulated
 as finishing (the counterfactual can't know about future DNFs).
 """
 
-from data.live import build_state, get_session, get_laps, get_stints, get_drivers, HIST_TTL
+from data.live import (build_state, get_session, get_laps, get_stints,
+                       get_drivers, _get, HIST_TTL)
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, simulate_race,
     PitPlan, SCEvent, forecast_to_dict, DRY,
 )
 from data.live import get_sc_laps_from_race_control, get_avg_pit_loss, get_quali_times
+from engine.tyre_inventory import compute_inventory, COMPOUNDS
 
 STREET_CIRCUITS = ["monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"]
+
+USED_SET_DEFAULT_AGE = 3   # typical scrub (one quali/practice run) when age unknown
 
 
 def _pit_plans_from_stints(stints: list[dict]) -> list[PitPlan]:
     """A pit happens on the last lap of each stint except the final one.
     OpenF1 stints carry lap_start = first lap on the new tyre, so the pit
     lap (in optimizer convention: last lap completed on the OLD tyre) is
-    lap_start - 1 of the following stint."""
+    lap_start - 1 of the following stint. tyre_age_at_start rides along so
+    used sets are costed from their true starting age."""
     ordered = sorted(stints, key=lambda s: s.get("lap_start") or 0)
-    return [PitPlan(lap=(s.get("lap_start") or 1) - 1, compound=s.get("compound") or "MEDIUM")
+    return [PitPlan(lap=(s.get("lap_start") or 1) - 1,
+                    compound=s.get("compound") or "MEDIUM",
+                    tyre_age=s.get("tyre_age_at_start") or 0)
             for s in ordered[1:]]
 
 
-def _validate_edited(stints: list[dict], total_laps: int) -> str | None:
+def _race_start_sets(session: dict, session_key: int,
+                     drivers_raw: dict) -> dict[int, dict]:
+    """Per-driver tyre sets available at race start: weekend allocation minus
+    new sets opened in the sessions run BEFORE this race. Each pre-race set
+    opened is afterwards available as a used set. (Slight overcount vs the
+    real rules, which also force sets to be returned during the weekend.)"""
+    meeting_key = session.get("meeting_key")
+    if not meeting_key:
+        return {}
+    try:
+        all_sessions = sorted(_get("sessions", meeting_key=meeting_key),
+                              key=lambda s: s.get("date_start", ""))
+    except Exception:
+        return {}
+    prior = [s for s in all_sessions
+             if s.get("date_start", "") < session.get("date_start", "")
+             and s["session_key"] != session_key]
+    is_sprint = any("sprint" in s.get("session_name", "").lower()
+                    and "qualifying" not in s.get("session_name", "").lower()
+                    for s in all_sessions)
+    stints_by_session = []
+    for s in prior:
+        try:
+            stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+        except Exception:
+            pass
+    invs = compute_inventory(stints_by_session, drivers_raw, is_sprint)
+    return {
+        i.driver_number: {
+            c: {"new": i.remaining(c), "used": i.used.get(c, 0)}
+            for c in COMPOUNDS
+        }
+        for i in invs
+    }
+
+
+def _reconcile_sets_with_race(sets_by_driver: dict[int, dict],
+                              stints_by_driver: dict[int, list[dict]]) -> None:
+    """The pre-race reconstruction can undercount (OpenF1 stint/age data has
+    gaps, and real allocations vary) — but sets fitted in the actual race are
+    proof they existed. Raise each availability floor so every driver's real
+    strategy always validates; edits are then judged against at least reality."""
+    for num, sets in sets_by_driver.items():
+        actual: dict[tuple, int] = {}
+        for s in stints_by_driver.get(num, []):
+            compound = s.get("compound")
+            if compound not in sets:
+                continue
+            is_new = (s.get("tyre_age_at_start") or 0) == 0
+            actual[(compound, is_new)] = actual.get((compound, is_new), 0) + 1
+        for (compound, is_new), count in actual.items():
+            key = "new" if is_new else "used"
+            sets[compound][key] = max(sets[compound][key], count)
+
+
+def _validate_edited(stints: list[dict], total_laps: int,
+                     sets_available: dict | None) -> str | None:
     if not stints:
         return "empty stint plan"
     ordered = sorted(stints, key=lambda s: s["lap_start"])
@@ -57,31 +120,56 @@ def _validate_edited(stints: list[dict], total_laps: int) -> str | None:
         return f"plan covers {prev_end} laps, race is {total_laps}"
     if len({s["compound"] for s in ordered}) < 2:
         return "F1 rules require at least two different dry compounds"
+
+    # Tyre inventory: the plan can only fit sets the driver actually had
+    if sets_available:
+        need: dict[tuple, int] = {}
+        for s in ordered:
+            is_new = (s.get("tyre_age") or 0) == 0
+            need[(s["compound"], is_new)] = need.get((s["compound"], is_new), 0) + 1
+        for (compound, is_new), count in need.items():
+            have = sets_available.get(compound, {})
+            avail = have.get("new" if is_new else "used", 0)
+            if count > avail:
+                kind = "new" if is_new else "used"
+                return (f"plan needs {count} {kind} {compound} set(s); only "
+                        f"{have.get('new', 0)} new + {have.get('used', 0)} used "
+                        f"{compound} available at race start")
     return None
 
 
 def _divergence_lap(edited: list[dict], actual_stints: list[dict], total_laps: int) -> int:
     """First lap at which the edited world differs from history. Everything
     strictly before this lap is identical, so the replay state there is a
-    valid shared starting point for both simulations."""
+    valid shared starting point for both simulations. A change of set state
+    (new vs used) diverges just like a compound change does."""
     ordered_edit = sorted(edited, key=lambda s: s["lap_start"])
     ordered_act = sorted(actual_stints, key=lambda s: s.get("lap_start") or 0)
 
-    if ordered_act and ordered_edit[0]["compound"] != (ordered_act[0].get("compound") or "MEDIUM"):
-        return 1
+    if ordered_act:
+        act_first = ordered_act[0]
+        if (ordered_edit[0]["compound"] != (act_first.get("compound") or "MEDIUM")
+                or (ordered_edit[0].get("tyre_age") or 0) != (act_first.get("tyre_age_at_start") or 0)):
+            return 1
 
-    edit_pits = _pit_plans_from_stints(ordered_edit)
+    edit_pits = _edited_pit_plans(ordered_edit)
     act_pits = _pit_plans_from_stints(ordered_act)
 
     # Anchor strictly BEFORE the earliest differing pit lap, so the sim
     # (which only applies pits with lap > current_lap) still executes it
     for e, a in zip(edit_pits, act_pits):
-        if e.lap != a.lap or e.compound != a.compound:
+        if e.lap != a.lap or e.compound != a.compound or e.tyre_age != a.tyre_age:
             return max(1, min(e.lap, a.lap) - 1)
     if len(edit_pits) != len(act_pits):
         extra = edit_pits[len(act_pits):] or act_pits[len(edit_pits):]
         return max(1, extra[0].lap - 1)
     return max(1, total_laps - 1)  # identical plans — nothing to diverge on
+
+
+def _edited_pit_plans(ordered_edit: list[dict]) -> list[PitPlan]:
+    return [PitPlan(lap=s["lap_start"] - 1, compound=s["compound"],
+                    tyre_age=s.get("tyre_age") or 0)
+            for s in ordered_edit[1:]]
 
 
 def _serialise(drivers_sorted) -> list[dict]:
@@ -114,16 +202,20 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
     if total_laps < 10:
         raise ValueError("session has too few laps to simulate")
 
-    err = _validate_edited(edited_stints, total_laps)
-    if err:
-        raise ValueError(err)
-
     stints_by_driver: dict[int, list[dict]] = {}
     for s in stints_raw:
         stints_by_driver.setdefault(s["driver_number"], []).append(s)
 
     if driver_number not in stints_by_driver:
         raise ValueError(f"driver {driver_number} not in session")
+
+    all_sets = _race_start_sets(session, session_key, drivers_raw)
+    _reconcile_sets_with_race(all_sets, stints_by_driver)
+    driver_sets = all_sets.get(driver_number)
+
+    err = _validate_edited(edited_stints, total_laps, driver_sets)
+    if err:
+        raise ValueError(err)
 
     anchor = _divergence_lap(edited_stints, stints_by_driver[driver_number], total_laps)
     anchor = min(anchor, total_laps - 2)
@@ -157,12 +249,14 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
     for d in serialised_mod:
         if d["driver_number"] == driver_number:
             d["compound"] = edit_current["compound"]
-            d["tyre_age"] = max(0, anchor - edit_current["lap_start"])
+            # laps run in this stint so far, on top of the set's fitted age
+            d["tyre_age"] = max(0, anchor - edit_current["lap_start"]) \
+                + (edit_current.get("tyre_age") or 0)
 
     actual_plans = {num: _pit_plans_from_stints(sts)
                     for num, sts in stints_by_driver.items()}
     edited_plans = dict(actual_plans)
-    edited_plans[driver_number] = _pit_plans_from_stints(
+    edited_plans[driver_number] = _edited_pit_plans(
         sorted(edited_stints, key=lambda s: s["lap_start"]))
 
     common = dict(current_lap=anchor, total_laps=total_laps, curves=curves,
@@ -190,6 +284,8 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
         "total_laps": total_laps,
         "circuit": circuit,
         "pit_loss_used": pit_loss,
+        "tyre_sets_available": driver_sets,
+        "used_set_default_age": USED_SET_DEFAULT_AGE,
         "baseline": [forecast_to_dict(f) for f in baseline],
         "modified": [forecast_to_dict(f) for f in modified],
         "actual": actual_result,

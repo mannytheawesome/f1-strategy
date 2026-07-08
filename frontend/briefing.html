@@ -566,8 +566,10 @@
       driver_number: driverNumber,
       acronym: r.acronym,
       totalLaps: d.session.total_laps,
+      sets: r.sets_at_start || null,
       stints: r.stints.map(s => ({ compound: s.compound, lap_start: s.lap_start,
-                                   lap_end: s.lap_end ?? d.session.total_laps })),
+                                   lap_end: s.lap_end ?? d.session.total_laps,
+                                   tyre_age: s.tyre_age || 0 })),
       original: JSON.stringify(r.stints),
     };
     // normalise to contiguous full-race coverage
@@ -586,9 +588,14 @@
   function renderEditor() {
     const card = document.getElementById('editor-card');
     const es = editorState;
+    const garage = es.sets
+      ? 'garage at race start: ' + COMPOUNDS.map(c =>
+          `${c} ${es.sets[c]?.new ?? 0}N+${es.sets[c]?.used ?? 0}U`).join(' · ')
+      : 'set availability unknown for this race';
     card.innerHTML = `<h2>What-if: ${es.acronym}</h2>
       <div id="editor-track"></div>
-      <div id="editor-hint">drag ║ boundaries to move pit stops · click a stint to cycle compound · S=soft M=medium H=hard</div>
+      <div id="editor-hint">drag ║ boundaries to move pit stops · click a stint to cycle compound · click the N/U corner badge to toggle new/used set</div>
+      <div class="meta-row"><span>${garage}</span></div>
       <div class="btnrow">
         <button id="btn-add">+ add stop</button>
         <button id="btn-del">− remove stop</button>
@@ -608,9 +615,25 @@
       const seg = document.createElement('div');
       seg.className = `seg c-${st.compound}`;
       seg.style.left = left + 'px'; seg.style.width = width + 'px';
-      seg.innerHTML = `<span class="seg-label">${st.compound[0]} ${st.lap_end - st.lap_start + 1}</span>`;
+      const isUsed = (st.tyre_age || 0) > 0;
+      seg.innerHTML = `<span class="seg-label">${st.compound[0]} ${st.lap_end - st.lap_start + 1}${isUsed ? ' (U' + st.tyre_age + ')' : ''}</span>
+        <span class="seg-age" title="toggle new/used set" style="position:absolute;top:1px;right:3px;font-size:9px;padding:0 3px;border:1px solid rgba(0,0,0,.35);border-radius:2px;cursor:pointer;background:rgba(255,255,255,.25)">${isUsed ? 'U' : 'N'}</span>`;
       seg.onclick = () => {
         st.compound = COMPOUNDS[(COMPOUNDS.indexOf(st.compound) + 1) % COMPOUNDS.length];
+        renderEditor();
+        scheduleWhatif();
+      };
+      seg.querySelector('.seg-age').onclick = (ev) => {
+        ev.stopPropagation();
+        if ((st.tyre_age || 0) > 0) {
+          st.tyre_age = 0;
+        } else {
+          // reuse the real fitted age when this matches the original stint,
+          // otherwise assume a typical 3-lap scrub
+          const orig = JSON.parse(es.original)[i];
+          st.tyre_age = (orig && orig.compound === st.compound && orig.tyre_age > 0)
+            ? orig.tyre_age : 3;
+        }
         renderEditor();
         scheduleWhatif();
       };
@@ -662,7 +685,7 @@
       if (s.lap_end - s.lap_start < 8) return;
       const mid = Math.floor((s.lap_start + s.lap_end) / 2);
       const next = COMPOUNDS[(COMPOUNDS.indexOf(s.compound) + 1) % COMPOUNDS.length];
-      st.splice(idx + 1, 0, { compound: next, lap_start: mid + 1, lap_end: s.lap_end });
+      st.splice(idx + 1, 0, { compound: next, lap_start: mid + 1, lap_end: s.lap_end, tyre_age: 0 });
       s.lap_end = mid;
       renderEditor(); scheduleWhatif();
     };
@@ -675,7 +698,8 @@
     };
     card.querySelector('#btn-reset').onclick = () => {
       es.stints = JSON.parse(es.original).map(s => ({ compound: s.compound,
-        lap_start: s.lap_start, lap_end: s.lap_end ?? es.totalLaps }));
+        lap_start: s.lap_start, lap_end: s.lap_end ?? es.totalLaps,
+        tyre_age: s.tyre_age || 0 }));
       normaliseStints();
       renderEditor(); scheduleWhatif();
     };

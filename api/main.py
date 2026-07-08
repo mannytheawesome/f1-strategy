@@ -753,6 +753,7 @@ class WhatIfStint(BaseModel):
     compound: str
     lap_start: int
     lap_end: int
+    tyre_age: int = 0   # fitted-set age: 0 = new, >0 = used/scrubbed
 
 
 class WhatIfRequest(BaseModel):

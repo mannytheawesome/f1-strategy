@@ -26,7 +26,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 2
+PACK_VERSION = 3
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -240,7 +240,8 @@ def build_briefing_data(session_key: int) -> dict:
         stints = [
             {"compound": s.get("compound"), "lap_start": s.get("lap_start"),
              "lap_end": s.get("lap_end"),
-             "length": ((s.get("lap_end") or total_laps) - (s.get("lap_start") or 1) + 1)}
+             "length": ((s.get("lap_end") or total_laps) - (s.get("lap_start") or 1) + 1),
+             "tyre_age": s.get("tyre_age_at_start") or 0}
             for s in sorted(stints_by_driver.get(d.driver_number, []),
                             key=lambda s: s.get("lap_start") or 0)
         ]
@@ -281,6 +282,17 @@ def build_briefing_data(session_key: int) -> dict:
 
     acronyms = {r["driver_number"]: r["acronym"] for r in results}
     pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
+
+    # Tyre sets each driver still had at race start (for the what-if editor)
+    try:
+        from engine.whatif import _race_start_sets, _reconcile_sets_with_race
+        sets_at_start = _race_start_sets(session, session_key, drivers_raw)
+        _reconcile_sets_with_race(sets_at_start, stints_by_driver)
+        for r in results:
+            r["sets_at_start"] = sets_at_start.get(r["driver_number"])
+    except Exception:
+        for r in results:
+            r["sets_at_start"] = None
 
     return {
         "session": {
