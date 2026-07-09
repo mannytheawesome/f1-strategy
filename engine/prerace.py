@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 4
+PACK_VERSION = 5
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS

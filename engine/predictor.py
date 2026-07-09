@@ -431,6 +431,30 @@ def _hardness(compound: str) -> int:
     return {"SOFT": 0, "MEDIUM": 1, "HARD": 2}.get(compound, 1)
 
 
+# Tyres wear faster on a heavy car. The fitted deg_rate is a race-average, so
+# the coupling is CENTRED: full tank wears ~15% over the average, empty tank
+# ~15% under (with 0.3 coupling). Race totals stay calibrated to the backtest;
+# only stint ORDER becomes price-relevant — a soft sprint on fumes is now
+# cheaper than the same laps on full tanks, matching how teams actually use it.
+FUEL_WEAR_COUPLING = 0.3
+
+
+def _stint_time(compound: str, start_age: int, length: int, abs_start: int,
+                total_laps: int, pace_delta: float,
+                curves: dict[str, DegCurve], field_baseline: float) -> float:
+    curve = curves.get(compound)
+    total = 0.0
+    for i in range(length):
+        fuel_frac = max(0.0, 1.0 - (abs_start + i) / max(1, total_laps))
+        wear = 1.0 + FUEL_WEAR_COUPLING * (fuel_frac - 0.5)
+        if curve and curve.baseline > 0:
+            total += curve.baseline + curve.deg_rate * (start_age + i) * wear + pace_delta
+        else:
+            total += (field_baseline + COMPOUND_DELTA.get(compound, 0)
+                      + 0.03 * (start_age + i) * wear + pace_delta)
+    return total
+
+
 # ── Strategy optimizer (DP) ───────────────────────────────────────────────────
 
 def optimize_strategy(
@@ -450,16 +474,16 @@ def optimize_strategy(
         return DriverStrategy(0, "", current_lap, current_compound,
                               current_age, [], 0.0, None, "LOW")
 
-    def stint_t(c: str, start_age: int, length: int) -> float:
-        return sum(_lap_t(c, start_age + i, pace_delta, curves, field_baseline)
-                   for i in range(length))
+    def stint_t(c: str, start_age: int, length: int, abs_start: int) -> float:
+        return _stint_time(c, start_age, length, abs_start, total_laps,
+                           pace_delta, curves, field_baseline)
 
     best = float("inf")
     best_pits: list[PitPlan] = []
 
     # 0-stop — only legal if the driver has already used two dry compounds
     if not needs_compound_change:
-        t = stint_t(current_compound, current_age, remaining)
+        t = stint_t(current_compound, current_age, remaining, current_lap)
         if t < best:
             best, best_pits = t, []
 
@@ -473,7 +497,8 @@ def optimize_strategy(
                 continue
             if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
                 continue
-            t = stint_t(current_compound, current_age, pit) + stop_cost + stint_t(c2, 0, remaining - pit)
+            t = (stint_t(current_compound, current_age, pit, current_lap)
+                 + stop_cost + stint_t(c2, 0, remaining - pit, current_lap + pit))
             if t < best:
                 best, best_pits = t, [PitPlan(current_lap + pit, c2)]
 
@@ -489,9 +514,9 @@ def optimize_strategy(
                         continue
                     if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
                         continue
-                    t = (stint_t(current_compound, current_age, p1) + stop_cost
-                         + stint_t(c2, 0, p2) + stop_cost
-                         + stint_t(c3, 0, r3))
+                    t = (stint_t(current_compound, current_age, p1, current_lap) + stop_cost
+                         + stint_t(c2, 0, p2, current_lap + p1) + stop_cost
+                         + stint_t(c3, 0, r3, current_lap + p1 + p2))
                     if t < best:
                         best = t
                         best_pits = [PitPlan(current_lap + p1, c2),
@@ -503,8 +528,8 @@ def optimize_strategy(
         alt = "SOFT" if current_compound != "SOFT" else "MEDIUM"
         splash = min(3, max(1, remaining - 1))
         pit_at = remaining - splash
-        t = (stint_t(current_compound, current_age, pit_at) + stop_cost
-             + stint_t(alt, 0, splash))
+        t = (stint_t(current_compound, current_age, pit_at, current_lap) + stop_cost
+             + stint_t(alt, 0, splash, current_lap + pit_at))
         best = t
         best_pits = [PitPlan(current_lap + pit_at, alt)]
 
@@ -556,9 +581,9 @@ def evaluate_prescribed_strategy(
         return DriverStrategy(0, "", current_lap, current_compound,
                               current_age, [], 0.0, None, "LOW")
 
-    def stint_t(c: str, start_age: int, length: int) -> float:
-        return sum(_lap_t(c, start_age + i, pace_delta, curves, field_baseline)
-                   for i in range(length))
+    def stint_t(c: str, start_age: int, length: int, abs_start: int) -> float:
+        return _stint_time(c, start_age, length, abs_start, total_laps,
+                           pace_delta, curves, field_baseline)
 
     plan = sorted((p for p in pits if current_lap < p.lap < total_laps),
                   key=lambda p: p.lap)
@@ -568,9 +593,9 @@ def evaluate_prescribed_strategy(
     lap, compound, age = current_lap, current_compound, current_age
     for p in plan:
         stint_len = p.lap - lap
-        total += stint_t(compound, age, stint_len) + stop_cost
+        total += stint_t(compound, age, stint_len, lap) + stop_cost
         lap, compound, age = p.lap, p.compound, p.tyre_age  # used sets start older
-    total += stint_t(compound, age, total_laps - lap)
+    total += stint_t(compound, age, total_laps - lap, lap)
 
     return DriverStrategy(
         driver_number=0,
