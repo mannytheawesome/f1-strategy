@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 6
+PACK_VERSION = 7
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -419,27 +419,43 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         if d.position
     ][:20]
 
-    # ── paper strategies from each start compound ────────────────────────────
+    # ── paper strategies: best plan at EACH stop count ───────────────────────
+    # A single-car minimum-time optimum is a coarse integer and tends to
+    # under-stop vs real races (race-average deg is depressed by tyre
+    # management). So rather than show one "answer", show the best 1-, 2- and
+    # 3-stop plans side by side with time deltas — the reader sees that the
+    # multi-stop options are usually within a few seconds, which is exactly
+    # why teams run them once traffic and undercut are in play.
     baselines = [c.baseline for c in curves.values() if c.baseline > 0]
     field_baseline = statistics.median(baselines) if baselines else 90.0
     pit_loss = get_avg_pit_loss(sprint_key, HIST_TTL) if sprint_key else PIT_LOSS
     strategies = []
-    for start_c in DRY:
-        if start_c not in curves or not curves[start_c].baseline:
+    for stops in (1, 2, 3):
+        best = None
+        for start_c in DRY:
+            if start_c not in curves or not curves[start_c].baseline:
+                continue
+            strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
+                                      field_baseline, pit_loss,
+                                      needs_compound_change=True,
+                                      force_stops=stops)
+            if len(strat.pits_remaining) != stops:
+                continue   # no legal plan at this stop count
+            if best is None or strat.total_time_from_now < best[1]:
+                best = (start_c, strat.total_time_from_now, strat.pits_remaining)
+        if best is None:
             continue
-        strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
-                                  field_baseline, pit_loss,
-                                  needs_compound_change=True)
-        seq = [start_c] + [p.compound for p in strat.pits_remaining]
-        pit_laps = [p.lap for p in strat.pits_remaining]
+        start_c, tot, pits = best
+        seq = [start_c] + [p.compound for p in pits]
+        pit_laps = [p.lap for p in pits]
         bounds = [0] + pit_laps + [total_laps]
         strategies.append({
             "start_compound": start_c,
-            "stops": len(pit_laps),
+            "stops": stops,
             "compound_sequence": seq,
             "pit_laps": pit_laps,
             "stint_lengths": [bounds[i + 1] - bounds[i] for i in range(len(seq))],
-            "total_time": strat.total_time_from_now,
+            "total_time": tot,
         })
     strategies.sort(key=lambda s: s["total_time"])
     for s in strategies:

@@ -493,6 +493,7 @@ def optimize_strategy(
     field_baseline:   float,
     pit_loss:         float = PIT_LOSS,
     needs_compound_change: bool = False,   # F1 rule: must use 2 dry compounds
+    force_stops:      int | None = None,   # constrain to exactly N stops
 ) -> DriverStrategy:
 
     remaining = total_laps - current_lap
@@ -504,11 +505,14 @@ def optimize_strategy(
         return _stint_time(c, start_age, length, abs_start, total_laps,
                            pace_delta, curves, field_baseline)
 
+    def allow(n: int) -> bool:
+        return force_stops is None or force_stops == n
+
     best = float("inf")
     best_pits: list[PitPlan] = []
 
     # 0-stop — only legal if the driver has already used two dry compounds
-    if not needs_compound_change:
+    if not needs_compound_change and allow(0):
         t = stint_t(current_compound, current_age, remaining, current_lap)
         if t < best:
             best, best_pits = t, []
@@ -517,7 +521,7 @@ def optimize_strategy(
     stop_cost = pit_loss + STOP_RISK
 
     # 1-stop
-    for pit in range(MIN_STINT, remaining - MIN_STINT + 1):
+    for pit in range(MIN_STINT, remaining - MIN_STINT + 1) if allow(1) else []:
         for c2 in DRY:
             if c2 == current_compound and (needs_compound_change or current_age < 5):
                 continue
@@ -529,7 +533,7 @@ def optimize_strategy(
                 best, best_pits = t, [PitPlan(current_lap + pit, c2)]
 
     # 2-stop
-    for p1 in range(MIN_STINT, remaining - 2*MIN_STINT + 1, 2):
+    for p1 in (range(MIN_STINT, remaining - 2*MIN_STINT + 1, 2) if allow(2) else []):
         for p2 in range(MIN_STINT, remaining - p1 - MIN_STINT + 1, 2):
             r3 = remaining - p1 - p2
             if r3 < MIN_STINT:
@@ -551,7 +555,7 @@ def optimize_strategy(
     # 3-stop — only worth searching on longer, high-deg races. Coarse step (3)
     # keeps the quadruple loop tractable; the cliff penalty is what makes these
     # plans win when a 2-stop would drag a tyre well past its life.
-    if remaining >= 4 * MIN_STINT:
+    if remaining >= 4 * MIN_STINT and allow(3):
         step = 3
         for p1 in range(MIN_STINT, remaining - 3 * MIN_STINT + 1, step):
             for p2 in range(MIN_STINT, remaining - p1 - 2 * MIN_STINT + 1, step):
