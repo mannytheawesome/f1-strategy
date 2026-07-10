@@ -438,20 +438,46 @@ def _hardness(compound: str) -> int:
 # cheaper than the same laps on full tanks, matching how teams actually use it.
 FUEL_WEAR_COUPLING = 0.3
 
+# Tyre cliff: real degradation is roughly linear up to a compound's usable
+# life, then accelerates as the tyre "falls off". A purely linear model
+# underprices long stints, which on high-deg tracks (Barcelona, ~0.25s/lap)
+# biases the optimizer to too few stops. Past MAX_LIFE we add a quadratic
+# penalty so a 35-lap medium on a 20-lap tyre is correctly punished and the
+# DP finds the 2-3 stop plans teams actually run. On low-deg tracks the cliff
+# is never reached within a stint, so nothing changes there.
+CLIFF_ACCEL = 0.045   # s/lap added per lap-squared beyond the cliff
+
+
+def _cliff_life(compound: str, deg_rate: float) -> int:
+    """Usable life before the cliff, in laps of tyre age. Bounded by the
+    per-compound MAX_LIFE and (for high-deg surfaces) by where linear rise
+    alone reaches the cliff threshold — whichever is sooner."""
+    from engine.degradation import CLIFF_SECONDS, MAX_LIFE
+    hard_cap = MAX_LIFE.get(compound, 40)
+    if deg_rate and deg_rate > 0:
+        linear_cap = CLIFF_SECONDS.get(compound, 2.0) / deg_rate + 6
+        return int(min(hard_cap, linear_cap))
+    return hard_cap
+
 
 def _stint_time(compound: str, start_age: int, length: int, abs_start: int,
                 total_laps: int, pace_delta: float,
                 curves: dict[str, DegCurve], field_baseline: float) -> float:
     curve = curves.get(compound)
+    deg = curve.deg_rate if (curve and curve.baseline > 0) else 0.03
+    base = (curve.baseline if (curve and curve.baseline > 0)
+            else field_baseline + COMPOUND_DELTA.get(compound, 0))
+    cliff = _cliff_life(compound, deg)
     total = 0.0
     for i in range(length):
+        age = start_age + i
         fuel_frac = max(0.0, 1.0 - (abs_start + i) / max(1, total_laps))
         wear = 1.0 + FUEL_WEAR_COUPLING * (fuel_frac - 0.5)
-        if curve and curve.baseline > 0:
-            total += curve.baseline + curve.deg_rate * (start_age + i) * wear + pace_delta
-        else:
-            total += (field_baseline + COMPOUND_DELTA.get(compound, 0)
-                      + 0.03 * (start_age + i) * wear + pace_delta)
+        lap_t = base + deg * age * wear + pace_delta
+        if age > cliff:
+            over = age - cliff
+            lap_t += CLIFF_ACCEL * over * over   # superlinear fall-off
+        total += lap_t
     return total
 
 
@@ -521,6 +547,44 @@ def optimize_strategy(
                         best = t
                         best_pits = [PitPlan(current_lap + p1, c2),
                                      PitPlan(current_lap + p1 + p2, c3)]
+
+    # 3-stop — only worth searching on longer, high-deg races. Coarse step (3)
+    # keeps the quadruple loop tractable; the cliff penalty is what makes these
+    # plans win when a 2-stop would drag a tyre well past its life.
+    if remaining >= 4 * MIN_STINT:
+        step = 3
+        for p1 in range(MIN_STINT, remaining - 3 * MIN_STINT + 1, step):
+            for p2 in range(MIN_STINT, remaining - p1 - 2 * MIN_STINT + 1, step):
+                for p3 in range(MIN_STINT, remaining - p1 - p2 - MIN_STINT + 1, step):
+                    r4 = remaining - p1 - p2 - p3
+                    if r4 < MIN_STINT:
+                        continue
+                    # sensible compound families only: don't brute all 27 — the
+                    # start compound is fixed, then run harder-then-splash logic
+                    for c2 in DRY:
+                        for c3 in DRY:
+                            for c4 in DRY:
+                                seq = [current_compound, c2, c3, c4]
+                                if needs_compound_change and len(set(seq)) < 2:
+                                    continue
+                                # no mid-race downgrade to a softer tyre unless
+                                # that stint is short enough to be a late splash
+                                seq_lens = [p2, p3, r4]
+                                bad = any(
+                                    _hardness(seq[j]) < _hardness(seq[j - 1])
+                                    and seq_lens[j - 1] > SOFT_SPLASH_MAX
+                                    for j in range(1, 4))
+                                if bad:
+                                    continue
+                                t = (stint_t(current_compound, current_age, p1, current_lap) + stop_cost
+                                     + stint_t(c2, 0, p2, current_lap + p1) + stop_cost
+                                     + stint_t(c3, 0, p3, current_lap + p1 + p2) + stop_cost
+                                     + stint_t(c4, 0, r4, current_lap + p1 + p2 + p3))
+                                if t < best:
+                                    best = t
+                                    best_pits = [PitPlan(current_lap + p1, c2),
+                                                 PitPlan(current_lap + p1 + p2, c3),
+                                                 PitPlan(current_lap + p1 + p2 + p3, c4)]
 
     # Fallback: compound change still required but no legal plan found
     # (too few laps left for MIN_STINT windows) — force a late splash stop
