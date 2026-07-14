@@ -336,6 +336,27 @@
       margin-bottom: 10px;
       font-size: 11px;
     }
+
+    /* Rows must match the header's grid width (not the visible viewport)
+       so horizontal scrolling keeps columns aligned on narrow screens */
+    .board-row { right: auto; width: max-content; min-width: 100%; }
+
+    /* ── mobile ── */
+    @media (max-width: 760px) {
+      header { flex-wrap: wrap; gap: 4px; padding: 8px 10px; }
+      .layout { flex-direction: column; padding: 8px; gap: 10px; }
+      #left-panel {
+        flex: 1 1 auto; width: 100%;
+        flex-direction: row; flex-wrap: wrap;
+      }
+      .panel-box { flex: 1 1 300px; min-width: 0; box-sizing: border-box; }
+      #strategy-canvas, #track-canvas { max-width: 100%; }
+      .table-wrap { width: 100%; }
+      .board-wrap { -webkit-overflow-scrolling: touch; }
+      #controls { flex-wrap: wrap; }
+      #controls input { max-width: 140px; }
+      #replay-bar { flex-wrap: wrap; gap: 6px; }
+    }
   </style>
 </head>
 <body>
@@ -645,6 +666,7 @@
   // Poll every 2s — only fires during live sessions
   setInterval(fetchSectors, 2000);
   setInterval(fetchIntervals, 2000);
+  setInterval(fetchLocations, 2000);
 
   function computeOverallBest(drivers) {
     overallBest = { s1: null, s2: null, s3: null };
@@ -1165,35 +1187,92 @@
     }
   }
 
+  // ── track map: interpolated dots ─────────────────────────────────────────
+  // Positions arrive in bursts (full /api/live every 5s, light /api/locations
+  // every 2s during live sessions). Dots don't jump to each new fix — a
+  // requestAnimationFrame loop eases them toward their latest target, so
+  // movement reads as continuous motion instead of teleporting.
+  const trackDots = {};      // driver_number → {x, y, tx, ty, colour, acronym}
+  let lastDotFrame = 0;
+
+  function setDotTargets(list) {
+    const seen = new Set();
+    for (const d of list) {
+      if (d.track_x == null || d.track_y == null) continue;
+      if (!d.track_x && !d.track_y) continue;   // (0,0) = no telemetry yet
+      seen.add(d.driver_number);
+      let dot = trackDots[d.driver_number];
+      if (!dot) {
+        dot = trackDots[d.driver_number] = {
+          x: d.track_x, y: d.track_y,
+          colour: '#' + (d.team_colour || 'ffffff').replace('#', ''),
+          acronym: d.acronym || '',
+        };
+      }
+      dot.tx = d.track_x; dot.ty = d.track_y;
+      if (d.team_colour) dot.colour = '#' + String(d.team_colour).replace('#', '');
+      if (d.acronym) dot.acronym = d.acronym;
+    }
+    return seen;
+  }
+
   function drawTrackMap(drivers, resolvedSessionKey) {
     fetchTrackLayout(resolvedSessionKey);   // fire-and-forget; uses cached result once loaded
+    // Full update: refresh targets + metadata, prune retired/vanished drivers
+    const seen = setDotTargets(drivers.filter(d => !d.retired));
+    for (const k of Object.keys(trackDots)) {
+      if (!seen.has(parseInt(k))) delete trackDots[k];
+    }
+    paintTrack(1);   // hidden/backgrounded tabs still get a fresh static frame
+  }
 
+  async function fetchLocations() {
+    if (replayMode || !isLiveSession) return;
+    try {
+      const url = sessionKey ? `/api/locations?session_key=${sessionKey}` : '/api/locations';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      setDotTargets(data.locations.map(l => ({
+        driver_number: l.driver_number, track_x: l.x, track_y: l.y,
+      })));
+    } catch (e) { /* transient — next poll retries */ }
+  }
+
+  function paintTrack(k) {
+    // k = easing factor for this paint: 1 snaps dots straight to target,
+    // fractional values (from the animation loop) glide them
     const canvas = document.getElementById('track-canvas');
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    const PAD = 16;
-
-    const located = drivers.filter(d => d.track_x != null && d.track_y != null);
     const loadingEl = document.getElementById('track-loading');
-    if (located.length === 0) {
-      loadingEl.textContent = 'Fetching positions…';
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height, PAD = 16;
+
+    const dots = Object.values(trackDots);
+    if (!dots.length) {
+      if (loadingEl) loadingEl.textContent = 'Fetching positions…';
       return;
     }
 
-    // Fall back to a per-frame bounding box if the track outline isn't
-    // ready yet (e.g. fewer than 3 laps completed so far).
-    const toCanvas = trackToCanvas || computeTrackTransform(
-      located.map(d => ({x: d.track_x, y: d.track_y})), W, H, PAD);
+    for (const d of dots) {
+      d.x += (d.tx - d.x) * k;
+      d.y += (d.ty - d.y) * k;
+    }
 
-    loadingEl.textContent = trackToCanvas
-      ? `${located.length} drivers located`
-      : `${located.length} drivers located (outline pending)`;
+    // Fall back to a bounding box over current targets if the fixed track
+    // outline isn't ready yet (fewer than 3 laps completed so far)
+    const toCanvas = trackToCanvas || computeTrackTransform(
+      dots.map(d => ({ x: d.tx, y: d.ty })), W, H, PAD);
+    if (loadingEl) {
+      loadingEl.textContent = trackToCanvas
+        ? `${dots.length} drivers located`
+        : `${dots.length} drivers located (outline pending)`;
+    }
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, W, H);
 
-    // draw track outline backdrop
     if (trackToCanvas && trackLayoutPoints && trackLayoutPoints.length >= 10) {
       ctx.beginPath();
       trackLayoutPoints.forEach((p, i) => {
@@ -1206,21 +1285,26 @@
       ctx.stroke();
     }
 
-    // draw each driver as a dot + label
-    for (const d of located) {
-      const [cx, cy] = toCanvas(d.track_x, d.track_y);
-      const colour = '#' + (d.team_colour || 'ffffff').replace('#', '');
-
+    for (const d of dots) {
+      const [cx, cy] = toCanvas(d.x, d.y);
       ctx.beginPath();
       ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-      ctx.fillStyle = colour;
+      ctx.fillStyle = d.colour;
       ctx.fill();
-
       ctx.font = 'bold 7px Courier New';
       ctx.fillStyle = '#ffffff';
       ctx.fillText(d.acronym, cx + 7, cy + 3);
     }
   }
+
+  function renderTrackFrame(ts) {
+    requestAnimationFrame(renderTrackFrame);
+    if (document.hidden) return;   // rAF pauses in background; data updates still snap-paint
+    const dt = Math.min(0.1, Math.max(0.001, (ts - lastDotFrame) / 1000));
+    lastDotFrame = ts;
+    paintTrack(Math.min(1, dt * 2.5));   // ease ~92% of the way in ~1s
+  }
+  requestAnimationFrame(renderTrackFrame);
 
   // ── Strategy chart ──────────────────────────────────────────────────────
   // Strategies are fixed at race start — only fetch once per session load

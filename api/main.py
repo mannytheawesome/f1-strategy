@@ -187,6 +187,40 @@ def live_state(session_key: int = None):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/api/locations")
+def live_locations(session_key: int = None):
+    """
+    Lightweight driver-position feed for the track map. Polled every ~2s by
+    the frontend during live sessions — far cheaper than /api/live (one
+    upstream call, tiny payload) and cached 1.5s so N viewers share it.
+    """
+    try:
+        if session_key is None:
+            session = get_latest_session()
+            session_key = session["session_key"]
+        else:
+            session = get_session(session_key)
+        cache_key = f"locations_feed:{session_key}"
+        cached = _cache_get(cache_key, max_age=1.5)
+        if cached is not None:
+            return cached
+        from data.live import get_latest_locations
+        locs = get_latest_locations(session)
+        out = {
+            "session_key": session_key,
+            "locations": [
+                {"driver_number": n, "x": l.get("x"), "y": l.get("y")}
+                for n, l in locs.items()
+                if l.get("x") is not None and l.get("y") is not None
+                and (l.get("x") or l.get("y"))
+            ],
+        }
+        _cache_set(cache_key, out, 1.5)
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/api/track_layout")
 def track_layout(session_key: int = None):
     """

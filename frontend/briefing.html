@@ -104,6 +104,31 @@
     #loading-overlay { color: var(--muted); padding: 30px; text-align: center; }
     .spin { animation: pulse 1.2s infinite; }
     @keyframes pulse { 50% { opacity: 0.35; } }
+
+    /* Dragging pit-stop handles must not scroll the page on touch devices */
+    #editor-track, .handle, .seg { touch-action: none; }
+
+    /* Wide tables scroll inside their card rather than stretching the page */
+    .card { overflow-x: auto; }
+
+    /* ── mobile ── */
+    @media (max-width: 760px) {
+      header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+      .layout { flex-direction: column; padding: 8px; gap: 10px; }
+      #race-list { flex: 1 1 auto; width: 100%; box-sizing: border-box; }
+      #race-items {
+        display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .race-item {
+        flex: 0 0 auto; flex-direction: column; align-items: flex-start;
+        gap: 2px; border: 1px solid var(--border); min-width: 110px;
+      }
+      .race-item.active { border-left: 3px solid var(--red); }
+      #briefing { width: 100%; }
+      canvas { max-width: 100%; height: auto; }
+      .prose { font-size: 13px; }
+    }
   </style>
 </head>
 <body>
