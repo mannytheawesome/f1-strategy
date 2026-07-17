@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 8
+PACK_VERSION = 9
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -68,7 +68,7 @@ PRERACE_SCHEMA = {
         "grid_story": {"type": "string", "description": "120-200 words: what the grid means strategically — who is out of position, where the pace really is"},
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
         "race_shape": {"type": "string", "description": "180-280 words: expected stop count, the paper strategies and what breaks them, how the Safety Car probability and pit loss change the calculus"},
-        "the_doors":  {"type": "string", "description": "150-250 words: the reversible bets on the table. Use the doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap to say how hard it is to recover places here — cite it as the pace edge needed to pass. Frame each as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
+        "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
         "watch_list": {"type": "string", "description": "80-160 words: the 2-4 unknowns that get filled in during the first stint, and exactly what to watch for each"},
     },
