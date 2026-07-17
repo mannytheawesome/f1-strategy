@@ -618,7 +618,8 @@
         <table class="results"><tr><th>CAR</th><th>KEEP GRID</th><th>PIT-LANE START</th><th>COST</th></tr>${cardRows}</table>
         <div class="meta-row" style="margin-top:8px"><span>projected movers — gaining: ${g || '—'} · losing: ${l || '—'}</span></div>
         ${ov ? `<div class="meta-row" style="margin-top:6px"><span>overtaking here: ~${ov.pass_threshold_s_per_lap}s/lap of race pace needed to clear a car (${ov.difficulty}) — recovering places is ${ov.difficulty === 'hard' ? 'expensive' : 'workable'}</span></div>` : ''}
-        ${dr.sc_refund ? `<div class="meta-row" style="margin-top:6px"><span>early-SC refund: ~${(dr.sc_refund.p_sc_in_window * 100).toFixed(0)}% chance of a Safety Car in the first ${dr.sc_refund.early_window_laps} laps, worth ~${dr.sc_refund.full_refund_s}s off a pit-lane start if it falls</span></div>` : ''}`;
+        ${dr.sc_refund ? `<div class="meta-row" style="margin-top:6px"><span>early-SC refund: ~${(dr.sc_refund.p_sc_in_window * 100).toFixed(0)}% chance of a Safety Car in the first ${dr.sc_refund.early_window_laps} laps, worth ~${dr.sc_refund.full_refund_s}s off a pit-lane start if it falls</span></div>` : ''}
+        ${d.weather_outlook && d.weather_outlook.rain_risk !== 'low' ? `<div class="meta-row" style="margin-top:6px"><span>⛅ rain risk ${d.weather_outlook.rain_risk.toUpperCase()} — ${d.weather_outlook.implication}</span></div>` : ''}`;
       root.appendChild(dCard);
     }
     if (n && n.the_doors) root.appendChild(proseCard('The doors', n.the_doors));

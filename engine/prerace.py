@@ -470,6 +470,52 @@ def _door_cards(grid: list[dict], pace_rows: list[dict], curves: dict,
     }
 
 
+WET_PRONE_CIRCUITS = {"spa", "francorchamps", "interlagos", "sao paulo", "suzuka",
+                      "zandvoort", "hungaroring", "shanghai"}
+
+
+def _weather_outlook(sources: list[dict], circuit: str) -> dict:
+    """A rain PRIOR, not a forecast (OpenF1 only exposes observed weather). Flags
+    a wet-prone circuit and whether any practice/quali session actually saw rain,
+    and spells out what a wet race does to the door economics — it compresses the
+    field and collapses the pace edge needed to overtake, so grid position matters
+    far less and a setup gamble from the back gets cheaper."""
+    cl = circuit.lower()
+    wet_prone = any(w in cl for w in WET_PRONE_CIRCUITS)
+    rain_in_practice = False
+    temps = []
+    for s in sources:
+        try:
+            w = get_weather_summary(s["session_key"], HIST_TTL)
+        except Exception:
+            continue
+        if not w:
+            continue
+        if w.get("rainfall"):
+            rain_in_practice = True
+        if w.get("track_temp_avg"):
+            temps.append(w["track_temp_avg"])
+    risk = "high" if rain_in_practice else "elevated" if wet_prone else "low"
+    return {
+        "rain_risk": risk,
+        "rain_seen_in_practice": rain_in_practice,
+        "wet_prone_circuit": wet_prone,
+        "track_temp_range_c": [round(min(temps), 1), round(max(temps), 1)] if temps else None,
+        "note": (
+            "Rain already fell this weekend — treat the dry-run pace order as provisional."
+            if rain_in_practice else
+            f"{circuit} has a high historical wet-race rate; keep rain live as a risk."
+            if wet_prone else
+            "No wet signal — dry running expected."),
+        "implication": (
+            "A wet race compresses the field and collapses the pace edge needed to "
+            "overtake, so grid position matters far less and a gamble from the back "
+            "gets cheaper — the door costs above are dry-weather numbers."
+            if risk != "low" else
+            "Dry expected, so the door costs above hold their value."),
+    }
+
+
 def _meeting_sessions(meeting_key: int) -> list[dict]:
     return sorted(
         _cached_get(f"meeting_sessions:{meeting_key}", "sessions", HIST_TTL,
@@ -712,6 +758,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "projection": projection,
         "doors": doors,
         "overtaking": overtaking,
+        "weather_outlook": _weather_outlook(sources, circuit),
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
         "inventory": inventory_summary,
         "unknowns": [
