@@ -294,7 +294,23 @@ def get_drivers(session_key: int, ttl: float = HIST_TTL) -> dict[int, dict]:
 
 
 def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
-    return _cached_get(f"stints:{session_key}", "stints", ttl, session_key=session_key)
+    """Stint rows, sanitised: live sessions emit rows with null fields
+    (tyre_age_at_start, lap_start, compound) before OpenF1 backfills them,
+    and downstream arithmetic assumes ints. Coerce once here so every
+    consumer — engine, briefings, what-if — stays null-safe."""
+    rows = _cached_get(f"stints:{session_key}", "stints", ttl, session_key=session_key)
+    out = []
+    for s in rows:
+        if s.get("lap_start") is None:
+            continue   # a stint with no start lap isn't usable yet
+        if (s.get("tyre_age_at_start") is None or s.get("stint_number") is None
+                or s.get("compound") is None):
+            s = {**s,
+                 "tyre_age_at_start": s.get("tyre_age_at_start") or 0,
+                 "stint_number": s.get("stint_number") or 0,
+                 "compound": s.get("compound") or "UNKNOWN"}
+        out.append(s)
+    return out
 
 
 def get_laps(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
@@ -674,12 +690,15 @@ def build_state(session_key: int, include_locations: bool = True, session: dict 
         num = s["driver_number"]
         if num not in state:
             continue
+        # Live-session stint rows arrive with null fields (tyre_age_at_start,
+        # lap_start, even compound) before OpenF1 backfills them — .get()
+        # defaults don't catch explicit nulls, so coerce with `or`.
         state[num].stints.append(Stint(
             driver_number=num,
-            stint_number=s["stint_number"],
-            compound=s["compound"],
-            tyre_age_at_start=s.get("tyre_age_at_start", 0),
-            lap_start=s["lap_start"],
+            stint_number=s.get("stint_number") or 0,
+            compound=s.get("compound") or "UNKNOWN",
+            tyre_age_at_start=s.get("tyre_age_at_start") or 0,
+            lap_start=s.get("lap_start") or 1,
             lap_end=s.get("lap_end"),
         ))
 
