@@ -20,6 +20,32 @@ TOKEN_URL = "https://api.openf1.org/token"
 # Supply OPENF1_USERNAME + OPENF1_PASSWORD in Railway env vars to enable live
 # access. We exchange credentials for an OAuth2 bearer token and refresh it
 # automatically before it expires. Never log or expose these values.
+
+
+def _load_dotenv():
+    """Populate os.environ from a repo-root .env if present, without adding a
+    dependency. Real environment variables always win, so Railway's env vars
+    are never overridden. This lets local monitor relaunches pick up creds from
+    a gitignored .env instead of relying on whatever shell exported them."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, ".env")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip().strip('"').strip("'")
+                os.environ.setdefault(key, val)
+    except OSError:
+        pass
+
+
+_load_dotenv()
+
 OPENF1_USERNAME = os.environ.get("OPENF1_USERNAME", "")
 OPENF1_PASSWORD = os.environ.get("OPENF1_PASSWORD", "")
 
