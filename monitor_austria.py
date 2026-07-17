@@ -39,10 +39,7 @@ POLL_S = 30
 
 def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    line = f"[{ts}] {msg}"
-    print(line, flush=True)
-    with open(LOG, "a") as f:
-        f.write(line + "\n")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 def utc(s: str) -> datetime:

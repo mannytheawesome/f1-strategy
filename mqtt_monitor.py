@@ -30,7 +30,7 @@ MQTT_PORT = 8883
 TOKEN_REFRESH_MARGIN_S = 300  # refresh 5 min before the 1hr token expires
 
 TOPICS = ["v1/sessions", "v1/drivers", "v1/stints", "v1/laps",
-          "v1/position", "v1/intervals", "v1/location"]
+          "v1/position", "v1/intervals", "v1/location", "v1/race_control"]
 
 
 class MQTTSessionMonitor:
@@ -91,6 +91,8 @@ class MQTTSessionMonitor:
             self._write(msg.topic, rec)
             if msg.topic == "v1/laps":
                 self._track_lap_progress(rec)
+            elif msg.topic == "v1/race_control":
+                self._track_race_control(rec)
 
     def _track_lap_progress(self, rec: dict):
         n, ln = rec.get("driver_number"), rec.get("lap_number")
@@ -102,6 +104,27 @@ class MQTTSessionMonitor:
             active = sum(1 for v in self._last_lap.values() if v > 0)
             self.log(f"lap {max_lap}, {active}/{len(self._last_lap)} active (mqtt)")
             self._last_logged_max_lap = max_lap
+
+    def _track_race_control(self, rec: dict):
+        # OpenF1 race_control records carry flag ('RED'/'YELLOW'/'GREEN'/...),
+        # category ('Flag'/'SafetyCar'/...) and a free-text message. Surface
+        # session-state changes loudly — a RED FLAG otherwise only shows up as
+        # the lap log going silent, which is indistinguishable from a data gap.
+        flag = (rec.get("flag") or "").upper()
+        cat = (rec.get("category") or "")
+        txt = (rec.get("message") or "").strip()
+        if flag == "RED":
+            self.log(f"🔴 RED FLAG — session stopped | {txt}")
+        elif cat == "SafetyCar":
+            self.log(f"🟠 SAFETY CAR | {txt}")
+        elif flag in ("YELLOW", "DOUBLE YELLOW"):
+            self.log(f"🟡 {flag} FLAG | scope={rec.get('scope')} sector={rec.get('sector')} | {txt}")
+        elif flag in ("GREEN", "CLEAR"):
+            self.log(f"🟢 {flag} — track clear | {txt}")
+        elif flag == "CHEQUERED":
+            self.log(f"🏁 CHEQUERED FLAG | {txt}")
+        elif txt:
+            self.log(f"  RC: {txt}")
 
     def _get_fresh_token(self) -> str:
         token, ttl = _fetch_oauth_token()
