@@ -236,12 +236,21 @@ class DriverState:
 _stale: dict = {}
 
 
+# Endpoints where an OpenF1 404 means "no rows for this filter yet" rather
+# than a real error — the first minutes of a live session 404 on these until
+# the first data lands, and that must render as an empty board, not a 502.
+_EMPTY_ON_404 = {"laps", "stints", "position", "intervals", "location",
+                 "race_control", "pit", "weather", "drivers"}
+
+
 def _get(endpoint: str, **params) -> list:
     last_err = None
     for attempt in range(2):
         try:
             r = requests.get(f"{BASE}/{endpoint}", params=params,
                              headers=_auth_headers(), timeout=30)
+            if r.status_code == 404 and endpoint in _EMPTY_ON_404:
+                return []
             r.raise_for_status()
             return r.json()
         except Exception as e:

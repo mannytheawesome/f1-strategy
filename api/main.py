@@ -161,6 +161,38 @@ def anthropic_auth_debug():
     return out
 
 
+def _resolve_default_session() -> tuple[dict, dict | None]:
+    """OpenF1's 'latest' pointer flips to the NEXT session as soon as a race
+    week starts, days before it has any data — which used to 502 the live
+    page all week. If the latest session hasn't started yet, fall back to the
+    most recent completed session and report the upcoming one separately."""
+    session = get_latest_session()
+    from datetime import datetime, timezone
+    from dateutil.parser import parse as parse_dt
+    start = session.get("date_start")
+    if start:
+        start_dt = parse_dt(start)
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        if start_dt > datetime.now(timezone.utc):
+            upcoming = {"session_name": session.get("session_name"),
+                        "country_name": session.get("country_name"),
+                        "circuit": session.get("circuit_short_name"),
+                        "date_start": start}
+            cached = _cache_get("fallback_session", max_age=300)
+            if cached is not None:
+                return cached, upcoming
+            now_iso = datetime.now(timezone.utc).isoformat()
+            done = [s for s in _get("sessions", year=session.get("year"))
+                    if (s.get("date_end") or "9999") < now_iso]
+            done.sort(key=lambda s: s.get("date_start", ""))
+            if done:
+                fallback = done[-1]
+                _cache_set("fallback_session", fallback, 300)
+                return fallback, upcoming
+    return session, None
+
+
 @app.get("/api/live")
 def live_state(session_key: int = None):
     """
@@ -168,8 +200,9 @@ def live_state(session_key: int = None):
     Call this every 5s from the frontend.
     """
     try:
+        upcoming = None
         if session_key is None:
-            session = get_latest_session()
+            session, upcoming = _resolve_default_session()
             session_key = session["session_key"]
         else:
             session = get_session(session_key)
@@ -182,7 +215,8 @@ def live_state(session_key: int = None):
         serialised = [_serialise_driver(d) for d in drivers]
         for d in serialised:
             d.update(preds.get(d["driver_number"], {}))
-        return {"session": session, "session_mode": _session_mode(session), "drivers": serialised}
+        return {"session": session, "session_mode": _session_mode(session),
+                "drivers": serialised, "upcoming": upcoming}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

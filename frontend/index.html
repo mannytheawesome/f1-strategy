@@ -692,10 +692,13 @@
 
   function render(data) {
     const s = data.session;
+    const up = data.upcoming;
     document.getElementById('session-label').textContent =
-      `${s.country_name} — ${s.session_name} (${s.year})`;
-    document.getElementById('status').textContent =
-      `Updated ${new Date().toLocaleTimeString()}`;
+      `${s.country_name} — ${s.session_name} (${s.year})` +
+      (up ? `  ·  NEXT: ${up.country_name} ${up.session_name} ${(up.date_start || '').slice(5, 16).replace('T', ' ')} UTC` : '');
+    document.getElementById('status').textContent = data.drivers.length
+      ? `Updated ${new Date().toLocaleTimeString()}`
+      : 'Session live — waiting for first timing data…';
 
     // Determine if this is a live (currently running) session
     if (s.date_end) {
