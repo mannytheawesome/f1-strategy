@@ -569,6 +569,36 @@
     }
     if (n && n.projection) root.appendChild(proseCard('The projection', n.projection));
 
+    // the doors — what a grid slot is worth + overtaking difficulty
+    if (d.doors && d.doors.cards && d.doors.cards.length) {
+      const dr = d.doors, ov = d.overtaking;
+      const dCard = document.createElement('div');
+      dCard.className = 'card';
+      const cardRows = dr.cards.map(c => {
+        const kg = c.keep_grid, pl = c.pit_lane_start, cost = c.cost_positions;
+        const costCell = cost == null ? '—'
+          : cost >= 2 ? `<span class="delta-down">▼${cost.toFixed(1)}</span>`
+          : cost <= 0.5 ? `<span class="delta-up">~${cost.toFixed(1)} · free option</span>`
+          : `${cost.toFixed(1)}`;
+        const pod = x => `<span style="opacity:.6">(${(x * 100).toFixed(0)}% pod)</span>`;
+        return `<tr><td><b>${c.acronym}</b> P${c.grid_position}</td>
+          <td>P${kg.expected_finish} ${pod(kg.podium)}</td>
+          <td>${pl ? `P${pl.expected_finish} ${pod(pl.podium)}` : '—'}</td>
+          <td>${costCell}</td></tr>`;
+      }).join('');
+      const fmt = (arr, up) => arr.slice(0, 3).map(m =>
+        `${m.acronym} <span class="delta-${up ? 'up' : 'down'}">${up ? '▲' : '▼'}${Math.abs(m.delta_vs_grid)}</span>`).join(' · ');
+      const g = fmt(dr.expected_movers.gainers, true);
+      const l = fmt(dr.expected_movers.losers, false);
+      dCard.innerHTML = `<h2>The doors — what a grid slot is worth</h2>
+        <div class="meta-row"><span>expected finish keeping the grid slot vs a pit-lane start · cost = positions surrendered for a reversible, bounded-downside bet</span></div>
+        <table class="results"><tr><th>CAR</th><th>KEEP GRID</th><th>PIT-LANE START</th><th>COST</th></tr>${cardRows}</table>
+        <div class="meta-row" style="margin-top:8px"><span>projected movers — gaining: ${g || '—'} · losing: ${l || '—'}</span></div>
+        ${ov ? `<div class="meta-row" style="margin-top:6px"><span>overtaking here: ~${ov.pass_threshold_s_per_lap}s/lap of race pace needed to clear a car (${ov.difficulty}) — recovering places is ${ov.difficulty === 'hard' ? 'expensive' : 'workable'}</span></div>` : ''}`;
+      root.appendChild(dCard);
+    }
+    if (n && n.the_doors) root.appendChild(proseCard('The doors', n.the_doors));
+
     root.appendChild(degCurveCard(d.deg_curves));
 
     // watch list

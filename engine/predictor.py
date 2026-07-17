@@ -139,6 +139,7 @@ class DriverForecast:
     podium_probability: float = 0.0
     points_probability: float = 0.0
     position_range:     tuple[int, int] = (0, 0)   # P5-P95 of simulated finishes
+    mean_finish:        float = 0.0                # expected finishing position
 
 
 # ── SC detection ─────────────────────────────────────────────────────────────
@@ -996,6 +997,7 @@ def run_monte_carlo(
         fc.podium_probability = round(sum(1 for p in positions if p <= 3) / n, 3)
         fc.points_probability = round(sum(1 for p in positions if p <= 10) / n, 3)
         fc.position_range     = (positions[int(n * 0.05)], positions[int(n * 0.95) - 1])
+        fc.mean_finish        = round(sum(positions) / n, 2)
 
 
 # ── Serialisation ─────────────────────────────────────────────────────────────
@@ -1028,6 +1030,7 @@ def forecast_to_dict(fc: DriverForecast) -> dict:
         "podium_probability": fc.podium_probability,
         "points_probability": fc.points_probability,
         "position_range":     list(fc.position_range),
+        "mean_finish":        fc.mean_finish,
     }
 
 

@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY,
 )
 
-PACK_VERSION = 7
+PACK_VERSION = 8
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -68,10 +68,11 @@ PRERACE_SCHEMA = {
         "grid_story": {"type": "string", "description": "120-200 words: what the grid means strategically — who is out of position, where the pace really is"},
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
         "race_shape": {"type": "string", "description": "180-280 words: expected stop count, the paper strategies and what breaks them, how the Safety Car probability and pit loss change the calculus"},
+        "the_doors":  {"type": "string", "description": "150-250 words: the reversible bets on the table. Use the doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap to say how hard it is to recover places here — cite it as the pace edge needed to pass. Frame each as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
         "watch_list": {"type": "string", "description": "80-160 words: the 2-4 unknowns that get filled in during the first stint, and exactly what to watch for each"},
     },
-    "required": ["headline", "grid_story", "the_trade", "race_shape", "projection", "watch_list"],
+    "required": ["headline", "grid_story", "the_trade", "race_shape", "the_doors", "projection", "watch_list"],
     "additionalProperties": False,
 }
 
@@ -258,15 +259,15 @@ def _quali_speed_sectors(quali_key: int) -> list[dict]:
 GRID_SPREAD_S = 1.0   # assumed first-lap spread per grid slot for projection
 
 
-def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
-                  strategies: list[dict], total_laps: int, pit_loss: float,
-                  circuit: str) -> dict | None:
-    """Run the race model from lap 0: grid order + long-run pace + deg curves,
-    optimizer free to choose each car's strategy. Monte Carlo supplies win and
-    podium probabilities. The grid is spread at GRID_SPREAD_S per slot to give
-    the track-position anchor something to hold on to."""
+def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
+                    strategies: list[dict], total_laps: int, pit_loss: float,
+                    circuit: str) -> list:
+    """Run the race model from lap 0 for a given grid order and return the full
+    field of DriverForecast objects (Monte Carlo already applied). The grid is
+    spread at GRID_SPREAD_S per slot to give the track-position anchor something
+    to hold on to. Returns [] if the inputs are insufficient."""
     if not grid or not strategies:
-        return None
+        return []
     pace_by_num = {r["driver_number"]: r for r in pace_rows}
     start_c = strategies[0]["start_compound"]
     serialised, pace_model = [], {}
@@ -289,13 +290,155 @@ def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
             pace_delta=pr["pace_delta"] if pr else 0.0,
             laps_counted=pr["laps"] if pr else 0)
     is_street = any(c in circuit.lower() for c in STREET_CIRCUITS)
-    forecasts = simulate_race(serialised, 0, total_laps, curves, pace_model, [],
-                              pit_loss=pit_loss,
-                              track_position_weight=0.75 if is_street else 0.6)
+    return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
+                         pit_loss=pit_loss,
+                         track_position_weight=0.75 if is_street else 0.6)
+
+
+def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
+                  strategies: list[dict], total_laps: int, pit_loss: float,
+                  circuit: str) -> dict | None:
+    """Lap-0 projection for the display: top-10 forecasts with win/podium odds."""
+    forecasts = _run_projection(grid, pace_rows, curves, strategies,
+                                total_laps, pit_loss, circuit)
+    if not forecasts:
+        return None
     return {
         "grid_spread_assumption_s": GRID_SPREAD_S,
-        "start_compound_assumption": start_c,
+        "start_compound_assumption": strategies[0]["start_compound"],
         "forecasts": [forecast_to_dict(f) for f in forecasts[:10]],
+    }
+
+
+BATTLE_WINDOW_LAPS = 5   # laps a wheel-to-wheel fight realistically lasts before
+                         # tyre delta / DRS train / traffic resolves it
+
+
+def _overtaking_cost(total_laps: int, circuit: str) -> dict:
+    """Model-implied overtaking difficulty: the sustained race-pace edge (s/lap)
+    a following car needs to convert a 1s gap into a pass within a short battle
+    window. Derived analytically from the sim's track-position blend — for two
+    equal-strategy cars the trailing car's projected finish drops below the
+    leader's once its per-lap pace advantage d satisfies gap < (1-w)*d*window,
+    i.e. d > gap / ((1-w) * window). Street circuits (higher w) resist hardest.
+    This is a model quantity, not an empirical DRS measurement."""
+    is_street = any(c in circuit.lower() for c in STREET_CIRCUITS)
+    w = 0.75 if is_street else 0.6
+    gap = 1.0
+    threshold = gap / ((1 - w) * BATTLE_WINDOW_LAPS)
+    return {
+        "track_position_weight": w,
+        "battle_window_laps": BATTLE_WINDOW_LAPS,
+        "gap_assumed_s": gap,
+        "pass_threshold_s_per_lap": round(threshold, 2),
+        "difficulty": "hard" if is_street else "moderate",
+        "note": (f"Model-implied: a following car needs about {threshold:.2f} s/lap "
+                 f"of sustained race pace to convert a {gap:.0f}s gap into a pass "
+                 f"within ~{BATTLE_WINDOW_LAPS} laps here (track-position weight "
+                 f"{w}). Higher means harder to overtake."),
+    }
+
+
+def _grid_with_move(grid: list[dict], acronym: str, new_position: int) -> list[dict] | None:
+    """Return a copy of the grid with `acronym` relocated to `new_position`
+    (1-indexed) and every slot renumbered — used to model counterfactual starts
+    such as a pit-lane / back-of-grid penalty."""
+    target = next((dict(g) for g in grid if g["acronym"] == acronym), None)
+    if target is None:
+        return None
+    others = [dict(g) for g in grid if g["acronym"] != acronym]
+    pos = max(1, min(new_position, len(grid)))
+    ordered = others[:pos - 1] + [target] + others[pos - 1:]
+    for i, g in enumerate(ordered, 1):
+        g["position"] = i
+    return ordered
+
+
+def _door_cards(grid: list[dict], pace_rows: list[dict], curves: dict,
+                strategies: list[dict], total_laps: int, pit_loss: float,
+                circuit: str) -> dict | None:
+    """The newsletter's 'doors': quantify the cost of a starting position. From
+    the base projection, surface who the model expects to move (pace out of line
+    with grid slot), then run counterfactual pit-lane starts for the front-runner
+    and the fastest out-of-position car to price the reversible 'start from the
+    back for setup freedom' bet."""
+    base = _run_projection(grid, pace_rows, curves, strategies,
+                           total_laps, pit_loss, circuit)
+    if not base:
+        return None
+    by_acr = {f.acronym: f for f in base}
+
+    movers = []
+    for g in grid:
+        f = by_acr.get(g["acronym"])
+        if not f or not f.mean_finish:
+            continue
+        movers.append({
+            "acronym": g["acronym"],
+            "grid_position": g["position"],
+            "expected_finish": f.mean_finish,
+            "delta_vs_grid": round(g["position"] - f.mean_finish, 1),  # + = gains places
+        })
+    gainers = sorted((m for m in movers if m["delta_vs_grid"] > 0.5),
+                     key=lambda m: -m["delta_vs_grid"])
+    losers = sorted((m for m in movers if m["delta_vs_grid"] < -0.5),
+                    key=lambda m: m["delta_vs_grid"])
+
+    # Door subjects: the front-runner (what a pit-lane start would cost) and the
+    # fastest out-of-position car (its recovery ceiling from the grid).
+    subjects = []
+    if grid:
+        subjects.append(grid[0]["acronym"])
+    if gainers and gainers[0]["acronym"] not in subjects:
+        subjects.append(gainers[0]["acronym"])
+
+    back = len(grid)  # pit-lane start ≈ behind the last grid slot
+    cards = []
+    for acr in subjects:
+        bf = by_acr.get(acr)
+        gpos = next((g["position"] for g in grid if g["acronym"] == acr), None)
+        if bf is None or gpos is None:
+            continue
+        moved = _grid_with_move(grid, acr, back)
+        cf = None
+        if moved:
+            cf_forecasts = _run_projection(moved, pace_rows, curves, strategies,
+                                           total_laps, pit_loss, circuit)
+            cf = next((f for f in cf_forecasts if f.acronym == acr), None)
+        card = {
+            "acronym": acr,
+            "grid_position": gpos,
+            "keep_grid": {
+                "start": gpos,
+                "expected_finish": bf.mean_finish,
+                "range_p05_p95": list(bf.position_range),
+                "win": bf.win_probability,
+                "podium": bf.podium_probability,
+                "points": bf.points_probability,
+            },
+            "pit_lane_start": None,
+            "cost_positions": None,
+            "reversible": True,   # bounded downside, setup freedom as upside — a 2-way door
+        }
+        if cf is not None:
+            card["pit_lane_start"] = {
+                "start": back,
+                "expected_finish": cf.mean_finish,
+                "range_p05_p95": list(cf.position_range),
+                "win": cf.win_probability,
+                "podium": cf.podium_probability,
+                "points": cf.points_probability,
+            }
+            card["cost_positions"] = round(cf.mean_finish - bf.mean_finish, 1)
+        cards.append(card)
+
+    return {
+        "expected_movers": {"gainers": gainers[:5], "losers": losers[:5]},
+        "cards": cards,
+        "note": ("expected_movers ranks cars by projected places gained/lost vs "
+                 "their grid slot. Each card prices a pit-lane start against "
+                 "keeping the grid slot; cost_positions is the expected finishing "
+                 "positions surrendered for that reversible bet."),
     }
 
 
@@ -507,6 +650,14 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     except Exception:
         pass
 
+    doors = None
+    try:
+        doors = _door_cards(grid, pace_rows, curves, strategies,
+                            total_laps, pit_loss, circuit)
+    except Exception:
+        pass
+    overtaking = _overtaking_cost(total_laps, circuit)
+
     return {
         "meeting": {
             "meeting_key":  meeting_key,
@@ -531,6 +682,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "long_run_tables": _long_run_tables(sources),
         "quali_sectors": sectors,
         "projection": projection,
+        "doors": doors,
+        "overtaking": overtaking,
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
         "inventory": inventory_summary,
         "unknowns": [
