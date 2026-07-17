@@ -474,6 +474,54 @@ WET_PRONE_CIRCUITS = {"spa", "francorchamps", "interlagos", "sao paulo", "suzuka
                       "zandvoort", "hungaroring", "shanghai"}
 
 
+BACK_GRID_THRESHOLD = 11   # "back half" — where recovery drives start
+
+
+def _recovery_prior(circuit: str, meeting_key, max_races: int = 3) -> dict | None:
+    """The newsletter's empirical grounding ('82 penalty starts, mapped'). How
+    did cars starting in the back half actually finish at THIS circuit in recent
+    years? Grounds the door-card projections in history. Best-effort and bounded
+    to a few past races; the caller swallows failures so a rate-limit just drops
+    the section rather than breaking the briefing."""
+    try:
+        races = _cached_get(f"circuit_races:{circuit}", "sessions", HIST_TTL,
+                            circuit_short_name=circuit, session_type="Race")
+    except Exception:
+        return None
+    races = [r for r in races if r.get("meeting_key") != meeting_key and r.get("session_key")]
+    races.sort(key=lambda s: s.get("date_start", ""), reverse=True)
+
+    samples, years = [], []
+    for r in races[:max_races]:
+        try:
+            st = build_state(r["session_key"], include_locations=False, session=r)
+        except Exception:
+            continue
+        years.append(r.get("year"))
+        for d in st.values():
+            if d.grid_position and d.position and not d.retired \
+                    and d.grid_position >= BACK_GRID_THRESHOLD:
+                samples.append((d.grid_position, d.position, d.acronym, r.get("year")))
+    if not samples:
+        return None
+
+    best = max(samples, key=lambda x: x[0] - x[1])
+    return {
+        "circuit": circuit,
+        "races_sampled": [y for y in years if y],
+        "sample_size": len(samples),
+        "back_grid_threshold": BACK_GRID_THRESHOLD,
+        "avg_finish_from_back": round(sum(f for _, f, _, _ in samples) / len(samples), 1),
+        "avg_positions_gained": round(sum(g - f for g, f, _, _ in samples) / len(samples), 1),
+        "best_recovery": {"acronym": best[2], "year": best[3],
+                          "grid": best[0], "finish": best[1], "gained": best[0] - best[1]},
+        "note": (f"History at {circuit}: cars starting P{BACK_GRID_THRESHOLD}+ finished "
+                 f"on average around P{round(sum(f for _,f,_,_ in samples)/len(samples),1)} "
+                 f"across {len(set(y for y in years if y))} recent race(s) — the empirical "
+                 f"check on the model's recovery projections."),
+    }
+
+
 def _weather_outlook(sources: list[dict], circuit: str) -> dict:
     """A rain PRIOR, not a forecast (OpenF1 only exposes observed weather). Flags
     a wet-prone circuit and whether any practice/quali session actually saw rain,
@@ -732,6 +780,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         pass
     overtaking = _overtaking_cost(total_laps, circuit)
 
+    recovery_prior = None
+    try:
+        recovery_prior = _recovery_prior(circuit, meeting_key)
+    except Exception:
+        pass
+
     return {
         "meeting": {
             "meeting_key":  meeting_key,
@@ -759,6 +813,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "doors": doors,
         "overtaking": overtaking,
         "weather_outlook": _weather_outlook(sources, circuit),
+        "recovery_prior": recovery_prior,
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
         "inventory": inventory_summary,
         "unknowns": [
