@@ -339,6 +339,32 @@ def _overtaking_cost(total_laps: int, circuit: str) -> dict:
     }
 
 
+EARLY_SC_LAPS = 12   # "early" = roughly the first stint window where a stop
+                     # taken under neutralisation is cheapest
+
+
+def _sc_refund(total_laps: int, circuit: str, pit_loss: float) -> dict:
+    """The newsletter's 'does an early yellow refund the penalty?' A full Safety
+    Car saves ~55% of a green-flag pit loss (matches simulate_race's 0.45 SC pit
+    multiplier), and bunching the field also claws back time lost starting out of
+    position. Prices the expected refund from the per-circuit SC rate over the
+    opening laps — the upside that makes a pit-lane/penalty start a better bet
+    than the raw grid-slot cost suggests."""
+    early = min(EARLY_SC_LAPS, total_laps)
+    p_early = sc_probability([], 0, early, circuit)
+    refund_s = round(0.55 * pit_loss, 1)   # a stop taken under SC vs at green-flag speed
+    return {
+        "early_window_laps": early,
+        "p_sc_in_window": p_early,
+        "full_refund_s": refund_s,
+        "expected_refund_s": round(p_early * refund_s, 1),
+        "note": (f"Model-implied: ~{p_early*100:.0f}% chance of a Safety Car in the "
+                 f"first {early} laps here. If it falls, a stop taken under it is "
+                 f"worth about {refund_s}s versus green — the early-yellow refund "
+                 f"that partly offsets a penalty/pit-lane start."),
+    }
+
+
 def _grid_with_move(grid: list[dict], acronym: str, new_position: int) -> list[dict] | None:
     """Return a copy of the grid with `acronym` relocated to `new_position`
     (1-indexed) and every slot renumbered — used to model counterfactual starts
@@ -435,10 +461,12 @@ def _door_cards(grid: list[dict], pace_rows: list[dict], curves: dict,
     return {
         "expected_movers": {"gainers": gainers[:5], "losers": losers[:5]},
         "cards": cards,
+        "sc_refund": _sc_refund(total_laps, circuit, pit_loss),
         "note": ("expected_movers ranks cars by projected places gained/lost vs "
                  "their grid slot. Each card prices a pit-lane start against "
                  "keeping the grid slot; cost_positions is the expected finishing "
-                 "positions surrendered for that reversible bet."),
+                 "positions surrendered for that reversible bet. sc_refund is the "
+                 "early-Safety-Car discount on that cost."),
     }
 
 

@@ -346,6 +346,29 @@
     if (n) {
       root.appendChild(proseCard('Strategy verdicts', n.strategy_verdicts));
     }
+
+    // prior check — grade the race-morning briefing against the result
+    const sc = d.prerace_scorecard;
+    if (sc) {
+      const scCard = document.createElement('div');
+      scCard.className = 'card';
+      const win = sc.winner, pod = sc.podium, mv = sc.mover_calls;
+      const yn = ok => ok ? '<span class="delta-up">✓</span>' : '<span class="delta-down">✗</span>';
+      const moverRows = (mv.detail || []).map(x =>
+        `<tr><td><b>${x.acronym}</b></td><td>P${x.grid} → P${x.finish}</td>
+          <td>called ${x.called}</td><td>${yn(x.correct)}</td></tr>`).join('');
+      scCard.innerHTML = `<h2>Prior check — how the race-morning call held up</h2>
+        <div class="meta-row"><span>the lap-0 projection graded against the result · lower MAE = sharper</span></div>
+        <div class="meta-row" style="margin-top:6px">
+          <span>projection error: <b>${sc.projection_mae}</b> positions (MAE, ${sc.drivers_scored} cars)</span>
+          <span>winner: ${win.projected} → ${win.actual} ${yn(win.hit)}</span>
+          <span>podium: ${pod.hits}/3 (${pod.projected.join('·')} → ${pod.actual.join('·')})</span>
+          <span>door/mover calls: ${mv.correct}/${mv.total}</span>
+        </div>
+        ${moverRows ? `<table class="results" style="margin-top:8px"><tr><th>DRV</th><th>GRID→FIN</th><th>CALL</th><th></th></tr>${moverRows}</table>` : ''}`;
+      root.appendChild(scCard);
+    }
+    if (n && n.prior_check) root.appendChild(proseCard('Prior check', n.prior_check));
   }
 
   function proseCard(title, text) {
@@ -594,7 +617,8 @@
         <div class="meta-row"><span>expected finish keeping the grid slot vs a pit-lane start · cost = positions surrendered for a reversible, bounded-downside bet</span></div>
         <table class="results"><tr><th>CAR</th><th>KEEP GRID</th><th>PIT-LANE START</th><th>COST</th></tr>${cardRows}</table>
         <div class="meta-row" style="margin-top:8px"><span>projected movers — gaining: ${g || '—'} · losing: ${l || '—'}</span></div>
-        ${ov ? `<div class="meta-row" style="margin-top:6px"><span>overtaking here: ~${ov.pass_threshold_s_per_lap}s/lap of race pace needed to clear a car (${ov.difficulty}) — recovering places is ${ov.difficulty === 'hard' ? 'expensive' : 'workable'}</span></div>` : ''}`;
+        ${ov ? `<div class="meta-row" style="margin-top:6px"><span>overtaking here: ~${ov.pass_threshold_s_per_lap}s/lap of race pace needed to clear a car (${ov.difficulty}) — recovering places is ${ov.difficulty === 'hard' ? 'expensive' : 'workable'}</span></div>` : ''}
+        ${dr.sc_refund ? `<div class="meta-row" style="margin-top:6px"><span>early-SC refund: ~${(dr.sc_refund.p_sc_in_window * 100).toFixed(0)}% chance of a Safety Car in the first ${dr.sc_refund.early_window_laps} laps, worth ~${dr.sc_refund.full_refund_s}s off a pit-lane start if it falls</span></div>` : ''}`;
       root.appendChild(dCard);
     }
     if (n && n.the_doors) root.appendChild(proseCard('The doors', n.the_doors));

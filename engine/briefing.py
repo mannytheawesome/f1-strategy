@@ -47,7 +47,10 @@ don't make it.
 vs the field median (negative = faster).
 - British-motorsport register, present tense for analysis, past tense for events.
 - No bullet-point dumps: write flowing analytical prose with occasional short punchy \
-sentences for emphasis."""
+sentences for emphasis.
+- prior_check: if prerace_scorecard is null in the data pack, return an EMPTY STRING \
+for prior_check — never invent a grade. When present, be honest: credit the hits and \
+own the misses using its numbers."""
 
 NARRATIVE_SCHEMA = {
     "type": "object",
@@ -57,6 +60,7 @@ NARRATIVE_SCHEMA = {
         "tyre_story":        {"type": "string", "description": "150-250 words: what the degradation numbers say — compound comparison, use the stint_pace table to name who managed tyres well/badly and whether used sets matched new ones"},
         "the_stops":         {"type": "string", "description": "120-220 words: the pit calls, judged from the stops_graded table — name the best-timed and worst-timed stops with their measured gains/losses in seconds, and credit SC windfalls"},
         "strategy_verdicts": {"type": "string", "description": "150-250 words: the best and worst overall strategy calls of the race, judged against the deg/pace data"},
+        "prior_check":       {"type": "string", "description": "100-180 words grading the race-morning briefing against the result, using prerace_scorecard: the projection MAE, whether the projected winner/podium landed, and whether the door/out-of-position (mover) calls held. Honest scorekeeping — credit hits, own misses. EMPTY STRING if prerace_scorecard is null."},
     },
     "required": ["headline", "race_story", "tyre_story", "the_stops", "strategy_verdicts"],
     "additionalProperties": False,
@@ -183,6 +187,73 @@ def _stint_pace_table(all_laps: list, stints_by_driver: dict, acronyms: dict,
         })
     rows.sort(key=lambda r: r["slope"])
     return {"fuel_evo_band": round(FUEL_RATE * 1.5, 3), "stints": rows, "field": field}
+
+
+def _prerace_scorecard(meeting_key, results: list[dict]) -> dict | None:
+    """Grade the race-morning briefing against the result — the newsletter's
+    'experiment, published at last'. Reads the cached pre-race pack for this
+    meeting (written when its pre-race briefing was generated) and scores the
+    lap-0 projection and the door/mover calls versus the actual finishing order.
+    Returns None if there is no pre-race pack to grade. Path is built inline to
+    avoid a circular import with engine.prerace."""
+    if not meeting_key:
+        return None
+    path = os.path.join(BRIEFING_DIR, f"prerace_{meeting_key}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            pre = json.load(f)
+    except Exception:
+        return None
+    data = pre.get("data") or {}
+    proj = ((data.get("projection") or {}).get("forecasts")) or []
+    if not proj:
+        return None
+
+    actual = {r["acronym"]: r["position"] for r in results
+              if r.get("position") and not r.get("retired")}
+    pred = {f["acronym"]: f["predicted_position"] for f in proj if f.get("acronym")}
+    common = [a for a in pred if a in actual]
+    if not common:
+        return None
+
+    mae = round(sum(abs(pred[a] - actual[a]) for a in common) / len(common), 2)
+    proj_order = [f["acronym"] for f in sorted(proj, key=lambda f: f["predicted_position"])]
+    actual_order = sorted(actual, key=actual.get)
+    proj_podium, actual_podium = proj_order[:3], actual_order[:3]
+
+    # directional grade of the door / out-of-position calls
+    grid = {r["acronym"]: r.get("grid_position") for r in results}
+    movers = ((data.get("doors") or {}).get("expected_movers")) or {}
+    calls = hits = 0
+    detail = []
+    for m in (movers.get("gainers") or [])[:3] + (movers.get("losers") or [])[:3]:
+        a, g, fin = m.get("acronym"), grid.get(m.get("acronym")), actual.get(m.get("acronym"))
+        if a is None or g is None or fin is None:
+            continue
+        predicted_gain = m.get("delta_vs_grid", 0) > 0
+        ok = predicted_gain == (fin < g)
+        calls += 1
+        hits += 1 if ok else 0
+        detail.append({"acronym": a, "grid": g, "finish": fin,
+                       "called": "gain" if predicted_gain else "lose", "correct": ok})
+
+    return {
+        "meeting_key":     meeting_key,
+        "drivers_scored":  len(common),
+        "projection_mae":  mae,
+        "winner":          {"projected": proj_order[0] if proj_order else None,
+                            "actual": actual_order[0] if actual_order else None,
+                            "hit": bool(proj_order) and proj_order[0] == actual_order[0]},
+        "podium":          {"projected": proj_podium, "actual": actual_podium,
+                            "hits": len(set(proj_podium) & set(actual_podium))},
+        "mover_calls":     {"correct": hits, "total": calls, "detail": detail},
+        "note": ("Race-morning projection graded against the result: projection_mae "
+                 "is mean absolute finishing-position error; mover_calls scores "
+                 "whether the door/out-of-position calls moved in the predicted "
+                 "direction."),
+    }
 
 
 def build_briefing_data(session_key: int) -> dict:
@@ -316,6 +387,7 @@ def build_briefing_data(session_key: int) -> dict:
             "total_laps":   total_laps,
         },
         "weather":     get_weather_summary(session_key, HIST_TTL),
+        "prerace_scorecard": _prerace_scorecard(meeting_key, results),
         "pit_loss":    pit_loss,
         "sc_events":   [{"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.type}
                         for e in sc_events],
