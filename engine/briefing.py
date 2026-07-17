@@ -191,22 +191,38 @@ def _stint_pace_table(all_laps: list, stints_by_driver: dict, acronyms: dict,
 
 def _prerace_scorecard(meeting_key, results: list[dict]) -> dict | None:
     """Grade the race-morning briefing against the result — the newsletter's
-    'experiment, published at last'. Reads the cached pre-race pack for this
-    meeting (written when its pre-race briefing was generated) and scores the
-    lap-0 projection and the door/mover calls versus the actual finishing order.
-    Returns None if there is no pre-race pack to grade. Path is built inline to
-    avoid a circular import with engine.prerace."""
+    'experiment, published at last'. Scores the lap-0 projection and the
+    door/mover calls versus the actual finishing order. Uses the cached pre-race
+    pack if present; otherwise builds a data-only pack on demand (free — no LLM)
+    and caches it, so past races grade themselves without a manual backfill and
+    survive cache resets. Returns None if no projection can be produced. Lazy
+    import of engine.prerace avoids a circular dependency."""
     if not meeting_key:
         return None
     path = os.path.join(BRIEFING_DIR, f"prerace_{meeting_key}.json")
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path) as f:
-            pre = json.load(f)
-    except Exception:
-        return None
-    data = pre.get("data") or {}
+    data = None
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                data = json.load(f).get("data") or None
+        except Exception:
+            data = None
+    if data is None:
+        # No cached pre-race pack — build a data-only one (no narrative, no LLM
+        # cost) and cache it for next time. Best-effort: a rate-limit just means
+        # this race stays ungraded rather than breaking the debrief.
+        try:
+            from engine.prerace import build_prerace_data, PACK_VERSION as _PV
+            data = build_prerace_data(meeting_key)
+            try:
+                with open(path, "w") as f:
+                    json.dump({"generated_at": "scorecard-autofill", "pack_version": _PV,
+                               "source_keys": [s["session_key"] for s in data.get("sources", [])],
+                               "narrative": None, "data": data}, f)
+            except OSError:
+                pass
+        except Exception:
+            return None
     proj = ((data.get("projection") or {}).get("forecasts")) or []
     if not proj:
         return None
