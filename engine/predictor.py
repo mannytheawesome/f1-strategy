@@ -461,15 +461,18 @@ def _cliff_life(compound: str, deg_rate: float) -> int:
     return hard_cap
 
 
-def _stint_time(compound: str, start_age: int, length: int, abs_start: int,
-                total_laps: int, pace_delta: float,
-                curves: dict[str, DegCurve], field_baseline: float) -> float:
+def _stint_lap_times(compound: str, start_age: int, length: int, abs_start: int,
+                     total_laps: int, pace_delta: float,
+                     curves: dict[str, DegCurve], field_baseline: float) -> list[float]:
+    """Per-lap modelled lap times for one stint. _stint_time is just the sum of
+    this; exposing the series lets callers draw a lap-by-lap race trace without
+    changing any of the tuned strategy maths."""
     curve = curves.get(compound)
     deg = curve.deg_rate if (curve and curve.baseline > 0) else 0.03
     base = (curve.baseline if (curve and curve.baseline > 0)
             else field_baseline + COMPOUND_DELTA.get(compound, 0))
     cliff = _cliff_life(compound, deg)
-    total = 0.0
+    out = []
     for i in range(length):
         age = start_age + i
         fuel_frac = max(0.0, 1.0 - (abs_start + i) / max(1, total_laps))
@@ -478,8 +481,46 @@ def _stint_time(compound: str, start_age: int, length: int, abs_start: int,
         if age > cliff:
             over = age - cliff
             lap_t += CLIFF_ACCEL * over * over   # superlinear fall-off
-        total += lap_t
-    return total
+        out.append(lap_t)
+    return out
+
+
+def _stint_time(compound: str, start_age: int, length: int, abs_start: int,
+                total_laps: int, pace_delta: float,
+                curves: dict[str, DegCurve], field_baseline: float) -> float:
+    return sum(_stint_lap_times(compound, start_age, length, abs_start,
+                                total_laps, pace_delta, curves, field_baseline))
+
+
+def strategy_lap_trace(strategy, current_lap: int, total_laps: int,
+                       curves: dict[str, DegCurve], field_baseline: float,
+                       pace_delta: float, pit_loss: float) -> list[dict]:
+    """Cumulative modelled race time per lap, from current_lap to the flag, for
+    a given pit plan — the raw material for a race trace. Pit loss lands as a
+    step at each stop lap. Purely derived from the existing lap model, so it
+    changes no prediction behaviour."""
+    trace: list[dict] = []
+    cum = 0.0
+    lap = current_lap
+    compound = strategy.current_compound
+    age = strategy.current_age
+    stops = sorted(strategy.pits_remaining, key=lambda p: p.lap)
+    boundaries = [p.lap for p in stops] + [total_laps]
+    for idx, end_lap in enumerate(boundaries):
+        length = max(0, end_lap - lap)
+        if length:
+            for i, t in enumerate(_stint_lap_times(compound, age, length, lap,
+                                                   total_laps, pace_delta,
+                                                   curves, field_baseline), 1):
+                cum += t
+                trace.append({"lap": lap + i, "cumulative": round(cum, 2),
+                              "compound": compound})
+        lap = end_lap
+        if idx < len(stops):
+            cum += pit_loss            # the stop shows as a step in the trace
+            compound = stops[idx].compound
+            age = 0
+    return trace
 
 
 # ── Strategy optimizer (DP) ───────────────────────────────────────────────────

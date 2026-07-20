@@ -22,8 +22,9 @@ from data.live import (build_state, get_session, get_laps, get_stints,
                        get_drivers, _get, HIST_TTL)
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, simulate_race,
-    PitPlan, SCEvent, forecast_to_dict, DRY,
+    PitPlan, SCEvent, forecast_to_dict, DRY, strategy_lap_trace,
 )
+import statistics
 from data.live import (get_sc_laps_from_race_control, get_avg_pit_loss,
                        get_quali_times, get_yellow_laps)
 from engine.tyre_inventory import compute_inventory, COMPOUNDS
@@ -279,6 +280,25 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
     base_fc = next((f for f in baseline if f.driver_number == driver_number), None)
     mod_fc = next((f for f in modified if f.driver_number == driver_number), None)
 
+    # Per-lap race trace for the edited driver: the actual strategy vs the edited
+    # one, both from the anchor lap. The frontend detrends by reference_lap_time
+    # so pit stops read as steps (RSS "offset from average pace" style).
+    trace = None
+    if base_fc and mod_fc:
+        baselines = [c.baseline for c in curves.values() if c.baseline > 0]
+        field_baseline = statistics.median(baselines) if baselines else 90.0
+        pace = pace_model.get(driver_number)
+        pd = pace.pace_delta if pace else 0.0
+        trace = {
+            "anchor_lap": anchor,
+            "total_laps": total_laps,
+            "reference_lap_time": round(field_baseline, 3),
+            "baseline": strategy_lap_trace(base_fc.strategy, anchor, total_laps,
+                                           curves, field_baseline, pd, pit_loss),
+            "modified": strategy_lap_trace(mod_fc.strategy, anchor, total_laps,
+                                           curves, field_baseline, pd, pit_loss),
+        }
+
     return {
         "session_key": session_key,
         "driver_number": driver_number,
@@ -290,6 +310,7 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
         "used_set_default_age": USED_SET_DEFAULT_AGE,
         "baseline": [forecast_to_dict(f) for f in baseline],
         "modified": [forecast_to_dict(f) for f in modified],
+        "trace": trace,
         "actual": actual_result,
         "delta": {
             "position": (base_fc.predicted_position - mod_fc.predicted_position)
