@@ -25,6 +25,7 @@ from engine.predictor import (
     PitPlan, SCEvent, forecast_to_dict, DRY, strategy_lap_trace,
 )
 import statistics
+from types import SimpleNamespace
 from data.live import (get_sc_laps_from_race_control, get_avg_pit_loss,
                        get_quali_times, get_yellow_laps)
 from engine.tyre_inventory import compute_inventory, COMPOUNDS
@@ -306,23 +307,41 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
                 field.append({"driver_number": f.driver_number, "acronym": f.acronym,
                               "final": pts[-1]["cumulative"], "points": pts})
 
-        # pace-fix sweep on the edited strategy (lower pace_delta = faster car).
-        # Race-time rank = how many OTHER drivers finish on less cumulative time.
+        # pace-fix sweep (lower pace_delta = faster car), race-time-ranked against
+        # the field: how many OTHER drivers finish on less cumulative time.
         others_final = sorted(t["final"] for t in field if t["driver_number"] != driver_number)
-        scenarios = []
-        for fix in (0.0, 0.3, 0.5):
-            pts = _trace(mod_fc.strategy, pd - fix)
-            if not pts:
-                continue
-            final = pts[-1]["cumulative"]
-            rank = 1 + sum(1 for c in others_final if c < final)
-            scenarios.append({
-                "pace_fix": fix,
-                "label": "no fix" if fix == 0 else f"+{fix:g}s/lap",
-                "final_cumulative": round(final, 1),
-                "race_time_rank": rank,
-                "points": pts,
-            })
+
+        def _sweep(strategy, with_points):
+            out = []
+            for fix in (0.0, 0.3, 0.5):
+                pts = _trace(strategy, pd - fix)
+                if not pts:
+                    continue
+                final = pts[-1]["cumulative"]
+                item = {"pace_fix": fix, "label": "no fix" if fix == 0 else f"+{fix:g}s/lap",
+                        "final_cumulative": round(final, 1),
+                        "race_time_rank": 1 + sum(1 for c in others_final if c < final)}
+                if with_points:
+                    item["points"] = pts
+                out.append(item)
+            return out
+
+        # the two tyre orders (RSS's second axis): the edited compound sequence
+        # and its reverse, same stop laps. The drawn scenarios use the edited
+        # order; tyre_orders compares both so the reader sees which order wins.
+        edited_pits = sorted(mod_fc.strategy.pits_remaining, key=lambda p: p.lap)
+        edited_seq = [mod_fc.strategy.current_compound] + [p.compound for p in edited_pits]
+        order_label = lambda seq: "-".join((c or "?")[0] for c in seq)
+        scenarios = _sweep(mod_fc.strategy, with_points=True)
+        tyre_orders = [{"order": order_label(edited_seq), "sequence": edited_seq,
+                        "scenarios": _sweep(mod_fc.strategy, with_points=False)}]
+        rev_seq = edited_seq[::-1]
+        if len(set(edited_seq)) > 1 and rev_seq != edited_seq:
+            rev_strat = SimpleNamespace(
+                current_compound=rev_seq[0], current_age=mod_fc.strategy.current_age,
+                pits_remaining=[PitPlan(p.lap, rev_seq[i + 1]) for i, p in enumerate(edited_pits)])
+            tyre_orders.append({"order": order_label(rev_seq), "sequence": rev_seq,
+                                "scenarios": _sweep(rev_strat, with_points=False)})
 
         trace = {
             "anchor_lap": anchor,
@@ -333,6 +352,7 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
             "modified": _trace(mod_fc.strategy, pd),
             "field": field,
             "scenarios": scenarios,
+            "tyre_orders": tyre_orders,
             "sc_bands": [{"start": e.start_lap, "end": e.end_lap, "type": e.type}
                          for e in sc_events],
         }

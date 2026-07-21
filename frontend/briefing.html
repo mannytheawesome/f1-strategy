@@ -911,6 +911,23 @@
     </svg>`;
   }
 
+  function whatifOrderTable(trace) {
+    const orders = trace.tyre_orders || [];
+    if (orders.length < 2) return '';
+    const fixes = orders[0].scenarios.map(s => s.label);
+    // per pace-fix column, the better order is the one on less race time
+    const best = fixes.map((_, ci) => {
+      let bi = 0, bv = Infinity;
+      orders.forEach((o, oi) => { const v = o.scenarios[ci].final_cumulative; if (v < bv) { bv = v; bi = oi; } });
+      return bi;
+    });
+    const head = `<tr><th>TYRE ORDER</th>${fixes.map(f => `<th>${f}</th>`).join('')}</tr>`;
+    const rows = orders.map((o, oi) => `<tr><td><b>${o.order}</b></td>${o.scenarios.map((s, ci) =>
+      `<td${best[ci] === oi ? ' style="color:#ffd700;font-weight:700"' : ''}>P${s.race_time_rank}</td>`).join('')}</tr>`).join('');
+    return `<div class="meta-row" style="font-size:10px;margin-top:4px"><span>tyre order × pace fix — race-time rank · <span style="color:#ffd700">gold</span> = better order</span></div>
+      <table class="results" style="font-size:10px">${head}${rows}</table>`;
+  }
+
   function renderWhatifResult(r) {
     const out = document.getElementById('whatif-result');
     const es = editorState;
@@ -935,7 +952,8 @@
         <span>modelled: P${base.predicted_position} → P${mod.predicted_position}</span>
         <span>gap to winner: ${base.predicted_gap}s → ${mod.predicted_gap}s</span></div>
       ${r.trace ? `<div style="margin:10px 0">${whatifTraceSVG(r.trace)}
-        <div class="meta-row" style="font-size:10px"><span>race time vs an average-pace car from the divergence lap · <b style="color:#2f6fed">blue</b> = ${es.acronym} actual · <b>grey</b> = the field · <b style="color:#e8002d">red</b>/<b style="color:#ff8c00">amber</b>/<b style="color:#2ea44f">green</b> = edited plan with a 0/0.3/0.5s pace fix (P = race-time order) · gold bands = SC/VSC · lower = faster</span></div></div>` : ''}
+        <div class="meta-row" style="font-size:10px"><span>race time vs an average-pace car from the divergence lap · <b style="color:#2f6fed">blue</b> = ${es.acronym} actual · <b>grey</b> = the field · <b style="color:#e8002d">red</b>/<b style="color:#ff8c00">amber</b>/<b style="color:#2ea44f">green</b> = edited plan with a 0/0.3/0.5s pace fix (P = race-time order) · gold bands = SC/VSC · lower = faster</span></div>
+        ${whatifOrderTable(r.trace)}</div>` : ''}
       <table class="cmp-table">
         <tr><th>actual strategy (model)</th>${top8(r.baseline)}</tr>
         <tr><th>your strategy</th>${top8(r.modified)}</tr>
