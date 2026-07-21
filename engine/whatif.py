@@ -280,23 +280,61 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
     base_fc = next((f for f in baseline if f.driver_number == driver_number), None)
     mod_fc = next((f for f in modified if f.driver_number == driver_number), None)
 
-    # Per-lap race trace for the edited driver: the actual strategy vs the edited
-    # one, both from the anchor lap. The frontend detrends by reference_lap_time
-    # so pit stops read as steps (RSS "offset from average pace" style).
+    # Race trace, RSS-style: the edited driver's actual vs edited strategy, the
+    # whole field underneath for context, SC/VSC bands, and a pace-fix sweep on
+    # the edited strategy (car-setup "what if we found 0.3s"). All derived from
+    # the existing lap model — the detrend by reference_lap_time makes pit stops
+    # read as steps ("offset from average pace").
     trace = None
     if base_fc and mod_fc:
         baselines = [c.baseline for c in curves.values() if c.baseline > 0]
         field_baseline = statistics.median(baselines) if baselines else 90.0
         pace = pace_model.get(driver_number)
         pd = pace.pace_delta if pace else 0.0
+
+        def _trace(strategy, pace_delta):
+            return strategy_lap_trace(strategy, anchor, total_laps, curves,
+                                      field_baseline, pace_delta, pit_loss)
+
+        # field underlay: every driver on their actual strategy
+        field = []
+        for f in baseline:
+            fpd = (pace_model.get(f.driver_number).pace_delta
+                   if pace_model.get(f.driver_number) else 0.0)
+            pts = _trace(f.strategy, fpd)
+            if pts:
+                field.append({"driver_number": f.driver_number, "acronym": f.acronym,
+                              "final": pts[-1]["cumulative"], "points": pts})
+
+        # pace-fix sweep on the edited strategy (lower pace_delta = faster car).
+        # Race-time rank = how many OTHER drivers finish on less cumulative time.
+        others_final = sorted(t["final"] for t in field if t["driver_number"] != driver_number)
+        scenarios = []
+        for fix in (0.0, 0.3, 0.5):
+            pts = _trace(mod_fc.strategy, pd - fix)
+            if not pts:
+                continue
+            final = pts[-1]["cumulative"]
+            rank = 1 + sum(1 for c in others_final if c < final)
+            scenarios.append({
+                "pace_fix": fix,
+                "label": "no fix" if fix == 0 else f"+{fix:g}s/lap",
+                "final_cumulative": round(final, 1),
+                "race_time_rank": rank,
+                "points": pts,
+            })
+
         trace = {
             "anchor_lap": anchor,
             "total_laps": total_laps,
             "reference_lap_time": round(field_baseline, 3),
-            "baseline": strategy_lap_trace(base_fc.strategy, anchor, total_laps,
-                                           curves, field_baseline, pd, pit_loss),
-            "modified": strategy_lap_trace(mod_fc.strategy, anchor, total_laps,
-                                           curves, field_baseline, pd, pit_loss),
+            "subject_number": driver_number,
+            "baseline": _trace(base_fc.strategy, pd),
+            "modified": _trace(mod_fc.strategy, pd),
+            "field": field,
+            "scenarios": scenarios,
+            "sc_bands": [{"start": e.start_lap, "end": e.end_lap, "type": e.type}
+                         for e in sc_events],
         }
 
     return {
