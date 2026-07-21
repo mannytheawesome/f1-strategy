@@ -26,7 +26,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 7
+PACK_VERSION = 8
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -281,7 +281,12 @@ def build_briefing_data(session_key: int) -> dict:
     all_laps    = get_laps(session_key, HIST_TTL)
     stints_raw  = get_stints(session_key, HIST_TTL)
     drivers_raw = get_drivers(session_key, HIST_TTL)
-    total_laps  = max((l["lap_number"] for l in all_laps), default=0)
+    # Last *timed* lap = the race distance. Ignoring untimed laps drops the
+    # post-flag in-lap (lap_duration=None) that OpenF1 logs beyond the chequered
+    # flag, which otherwise inflates the distance by a lap and spawns a phantom
+    # stint on that lap.
+    total_laps  = max((l["lap_number"] for l in all_laps if l.get("lap_duration")),
+                      default=0)
     if total_laps < 10:
         raise ValueError("race has too little data for a briefing (not finished yet?)")
 
@@ -323,6 +328,8 @@ def build_briefing_data(session_key: int) -> dict:
     state = build_state(session_key, include_locations=False, session=session)
     stints_by_driver: dict[int, list[dict]] = {}
     for s in stints_raw:
+        if (s.get("lap_start") or 0) > total_laps:
+            continue   # phantom stint logged on a post-flag in-lap
         stints_by_driver.setdefault(s["driver_number"], []).append(s)
 
     fastest = None
