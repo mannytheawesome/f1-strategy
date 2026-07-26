@@ -524,6 +524,8 @@
     sessionKey = val ? parseInt(val) : null;
     strategyFetched = false;
     predictLastLap = -1;
+    trackNoData = false;
+    locEmptyPolls = 0;
     fetchData().then(() => {
       if (currentMode === 'FP' || currentMode === 'QUALI') fetchLeftPanel(currentMode);
       else fetchAndDrawStrategies(true);
@@ -1196,6 +1198,8 @@
   // requestAnimationFrame loop eases them toward their latest target, so
   // movement reads as continuous motion instead of teleporting.
   const trackDots = {};      // driver_number → {x, y, tx, ty, colour, acronym}
+  let trackNoData = false;   // true once we conclude positions won't arrive (stop "Fetching…")
+  let locEmptyPolls = 0;     // consecutive empty /api/locations responses
   let lastDotFrame = 0;
 
   function setDotTargets(list) {
@@ -1238,14 +1242,15 @@
       const data = await res.json();
       const locs = data.locations || [];
       if (!locs.length) {
-        // no dots yet: don't leave the panel stuck on "Fetching positions…"
-        const el = document.getElementById('track-loading');
-        if (el && !Object.keys(trackDots).length) {
-          el.textContent = isLiveSession ? 'Fetching positions…'
-                                         : 'No track-position data for this session';
-        }
+        // No positions. Give it a short grace period, then conclude they won't
+        // arrive so paintTrack stops resetting the label to "Fetching…" every
+        // frame. Live sessions only expose position over MQTT (not this REST
+        // feed), so a live race legitimately gets no dots here.
+        if (!Object.keys(trackDots).length && ++locEmptyPolls >= 3) trackNoData = true;
         return;
       }
+      locEmptyPolls = 0;
+      trackNoData = false;
       setDotTargets(locs.map(l => ({
         driver_number: l.driver_number, track_x: l.x, track_y: l.y,
       })));
@@ -1263,7 +1268,10 @@
 
     const dots = Object.values(trackDots);
     if (!dots.length) {
-      if (loadingEl) loadingEl.textContent = 'Fetching positions…';
+      if (loadingEl) loadingEl.textContent = trackNoData
+        ? (isLiveSession ? 'Live track map unavailable (positions not published)'
+                         : 'No track-position data for this session')
+        : 'Fetching positions…';
       return;
     }
 
