@@ -1230,13 +1230,23 @@
   }
 
   async function fetchLocations() {
-    if (replayMode || !isLiveSession) return;
+    if (replayMode) return;   // finished sessions still expose a final snapshot
     try {
       const url = sessionKey ? `/api/locations?session_key=${sessionKey}` : '/api/locations';
       const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
-      setDotTargets(data.locations.map(l => ({
+      const locs = data.locations || [];
+      if (!locs.length) {
+        // no dots yet: don't leave the panel stuck on "Fetching positions…"
+        const el = document.getElementById('track-loading');
+        if (el && !Object.keys(trackDots).length) {
+          el.textContent = isLiveSession ? 'Fetching positions…'
+                                         : 'No track-position data for this session';
+        }
+        return;
+      }
+      setDotTargets(locs.map(l => ({
         driver_number: l.driver_number, track_x: l.x, track_y: l.y,
       })));
     } catch (e) { /* transient — next poll retries */ }
@@ -1316,8 +1326,6 @@
 
   async function fetchAndDrawStrategies(forceRefetch = false) {
     if (!forceRefetch && strategyFetched && strategySessionKey === sessionKey) return;
-    strategySessionKey = sessionKey;
-    strategyFetched = true;
 
     // For replay, use lap 1 as the basis (strategy set at race start)
     const lap = 5; // use lap 5 — past safety car / formation lap chaos
@@ -1326,16 +1334,23 @@
       : `/api/strategies?lap=${lap}`;
     try {
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) return;             // leave unfetched so a later poll retries
       const data = await res.json();
       drawStrategyChart(data);
-    } catch(e) {}
+      // only lock in once we've actually drawn — a transient failure must retry
+      strategyFetched = true;
+      strategySessionKey = sessionKey;
+    } catch(e) { /* transient — allow retry */ }
   }
 
   function drawStrategyChart(data) {
     const canvas = document.getElementById('strategy-canvas');
     const strats = data.strategies || [];
-    if (!strats.length) return;
+    if (!strats.length) {
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      document.getElementById('strategy-ref').textContent = 'No strategy data for this session';
+      return;
+    }
 
     const totalLaps = data.total_laps || 70;
     const currentLap = data.lap || 0;
@@ -1464,7 +1479,13 @@
     if (replayMode) return;
     countdown--;
     document.getElementById('countdown').textContent = countdown;
-    if (countdown <= 0) { countdown = 5; fetchData(); }
+    if (countdown <= 0) {
+      countdown = 5;
+      fetchData().then(() => {
+        // retry the (once-only) strategy draw until it lands — self-gates once drawn
+        if (currentMode !== 'FP' && currentMode !== 'QUALI') fetchAndDrawStrategies();
+      });
+    }
   }, 1000);
 
   // ── Replay mode ─────────────────────────────────────────────────────────
