@@ -808,6 +808,43 @@ def _parse_gap(gap, lap_time_estimate: float) -> float:
 
 # ── Full race simulation ──────────────────────────────────────────────────────
 
+def _cumulative_gaps(active_drivers: list[dict], field_baseline: float) -> dict[int, float]:
+    """Chain intervals down the running order into gaps-to-leader (seconds).
+
+    gap_to_leader saturates at '+1 LAP' for lapped drivers, which would give
+    every lapped driver the same gap — chaining the per-driver interval preserves
+    their true relative spacing. direct is exact for unlapped drivers; for lapped
+    drivers it saturates at N×lap_time, acting as a lower bound. The chained
+    interval misses lap boundaries, so we take the max of both.
+    """
+    gaps: dict[int, float] = {}
+    running = 0.0
+    for i, d in enumerate(active_drivers):
+        if i > 0:
+            chained = running + _parse_gap(d.get("interval"), field_baseline)
+            direct  = _parse_gap(d.get("gap_to_leader"), field_baseline)
+            running = max(chained, direct)
+        gaps[d["driver_number"]] = running
+    return gaps
+
+
+def _neutralised_pit_loss(sc_events: list[SCEvent], current_lap: int,
+                          pit_loss: float) -> tuple[Optional[SCEvent], float]:
+    """Discount the pit-lane time loss while a neutralisation is active.
+
+    A full SC bunches the field and slows it hardest (~55% of the loss saved);
+    a VSC only holds everyone to a delta (~35% saved). Returns the active event
+    (or None) and the effective pit loss to cost stops against.
+    """
+    active_ev = next((ev for ev in sc_events
+                      if ev.start_lap <= current_lap <= ev.end_lap + 1), None)
+    if active_ev is None:
+        return None, pit_loss
+    if active_ev.type == "VSC":
+        return active_ev, pit_loss * 0.65
+    return active_ev, pit_loss * 0.45
+
+
 def simulate_race(
     drivers_sorted: list[dict],
     current_lap:    int,
@@ -835,22 +872,13 @@ def simulate_race(
     baselines = [c.baseline for c in curves.values() if c.baseline > 0]
     field_baseline = statistics.median(baselines) if baselines else 85.0
 
-    # Build cumulative gaps by chaining intervals down the running order.
-    # gap_to_leader saturates at '+1 LAP' for lapped drivers, which would give
-    # every lapped driver the same gap — interval chaining preserves their
-    # true relative spacing.
+    # Cumulative gaps by chaining intervals down the running order.
     active = [d for d in drivers_sorted if not d.get("retired")]
-    cumulative_gaps: dict[int, float] = {}
-    running = 0.0
-    for i, d in enumerate(active):
-        if i > 0:
-            chained = running + _parse_gap(d.get("interval"), field_baseline)
-            direct  = _parse_gap(d.get("gap_to_leader"), field_baseline)
-            # direct is exact for unlapped drivers; for lapped drivers it
-            # saturates at N×lap_time which acts as a lower bound. The
-            # chained interval misses lap boundaries. Take the max of both.
-            running = max(chained, direct)
-        cumulative_gaps[d["driver_number"]] = running
+    cumulative_gaps = _cumulative_gaps(active, field_baseline)
+
+    # Neutralisation state is the same for every driver this lap — compute once.
+    active_ev, effective_pit_loss = _neutralised_pit_loss(sc_events, current_lap, pit_loss)
+    sc_active = active_ev is not None
 
     scored: list[tuple[float, DriverForecast]] = []
 
@@ -877,19 +905,6 @@ def simulate_race(
         compounds_used = driver.get("compounds_used") or [compound]
         dry_used = {c for c in compounds_used if c in DRY}
         needs_change = len(dry_used) < 2
-
-        # Active neutralisation discounts the pit lane — but not equally:
-        # a full SC bunches the field and slows it hardest (~55% of the loss
-        # saved); a VSC only holds everyone to a delta (~35% saved).
-        active_ev = next((ev for ev in sc_events
-                          if ev.start_lap <= current_lap <= ev.end_lap + 1), None)
-        sc_active = active_ev is not None
-        if active_ev is None:
-            effective_pit_loss = pit_loss
-        elif active_ev.type == "VSC":
-            effective_pit_loss = pit_loss * 0.65
-        else:
-            effective_pit_loss = pit_loss * 0.45
 
         if prescribed_strategies is not None and num in prescribed_strategies:
             strat = evaluate_prescribed_strategy(
