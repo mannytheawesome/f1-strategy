@@ -1,0 +1,205 @@
+"""Session analysis: FP stint breakdown, quali ranking, tyre inventory, and
+the FP-derived pre-race strategy forecast."""
+
+from fastapi import APIRouter, HTTPException
+
+from data.live import (
+    get_session, get_laps, get_stints, get_drivers, get_weather_summary,
+    _get, _cached_get, HIST_TTL,
+)
+from engine.fp_analysis import analyse_fp, _field_compound_summary
+from engine.quali_analysis import analyse_quali
+from engine.tyre_inventory import compute_inventory
+from engine.predictor import (
+    sc_probability, build_deg_curves, curves_to_dict, optimize_strategy, DRY,
+)
+from api.helpers import _session_mode
+
+router = APIRouter()
+
+
+@router.get("/api/fp_analysis")
+def fp_analysis(session_key: int):
+    try:
+        session      = get_session(session_key)
+        session_name = session.get("session_name", "")
+        laps_raw     = get_laps(session_key, HIST_TTL)
+        stints_raw   = get_stints(session_key, HIST_TTL)
+        drv_raw      = get_drivers(session_key, HIST_TTL)
+        summaries    = analyse_fp(laps_raw, stints_raw, drv_raw, session_name=session_name)
+        weather      = get_weather_summary(session_key, HIST_TTL)
+        return {
+            "session": session,
+            "session_mode": _session_mode(session),
+            "drivers": [s.to_dict() for s in summaries],
+            "compound_field_summary": _field_compound_summary(summaries),
+            "weather": weather,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/pre_race_strategy")
+def pre_race_strategy(session_key: int, total_laps: int = 71):
+    """
+    Pre-race strategy forecast from FP data.
+    Builds deg curves from all available FP sessions for this meeting and
+    returns the top 1-stop and 2-stop strategies across all starting compounds,
+    so teams/analysts can plan before the race starts.
+
+    total_laps: circuit lap count (defaults to 71 for Austria / Red Bull Ring).
+    """
+    try:
+        session     = get_session(session_key)
+        meeting_key = session.get("meeting_key")
+        circuit     = session.get("circuit_short_name", "")
+
+        # Gather all FP sessions in this meeting
+        all_sessions_raw = sorted(
+            _get("sessions", meeting_key=meeting_key),
+            key=lambda s: s.get("date_start", "")
+        )
+        fp_sessions = [s for s in all_sessions_raw
+                       if s.get("session_type", "").lower() == "practice"]
+        fp_names = ["FP1", "FP2", "FP3"]
+
+        fp_data = []
+        for i, fp_s in enumerate(fp_sessions[:3]):
+            try:
+                fp_data.append((
+                    fp_names[i],
+                    get_laps(fp_s["session_key"], HIST_TTL),
+                    get_stints(fp_s["session_key"], HIST_TTL),
+                ))
+            except Exception:
+                pass
+
+        if not fp_data:
+            raise HTTPException(status_code=404, detail="No FP data available yet")
+
+        curves   = build_deg_curves(fp_data)
+        sc_prob  = sc_probability([], 0, total_laps, circuit)
+
+        # Field baseline from available compound baselines
+        baselines = [c.baseline for c in curves.values() if c.baseline > 0]
+        field_bl  = sum(baselines) / len(baselines) if baselines else 90.0
+
+        # Generate optimal 1-stop and 2-stop for each starting compound
+        strategies = []
+        for start_c in DRY:
+            strat = optimize_strategy(
+                current_lap=0,
+                total_laps=total_laps,
+                current_compound=start_c,
+                current_age=0,
+                pace_delta=0.0,
+                curves=curves,
+                field_baseline=field_bl,
+                needs_compound_change=True,
+            )
+            stops = len(strat.pits_remaining)
+            compounds_seq = [start_c] + [p.compound for p in strat.pits_remaining]
+            stint_lengths = []
+            prev = 0
+            for p in strat.pits_remaining:
+                stint_lengths.append(p.lap - prev)
+                prev = p.lap
+            stint_lengths.append(total_laps - prev)
+            strategies.append({
+                "start_compound":  start_c,
+                "stops":           stops,
+                "compound_sequence": compounds_seq,
+                "pit_laps":        [p.lap for p in strat.pits_remaining],
+                "stint_lengths":   stint_lengths,
+                "total_time":      round(strat.total_time_from_now, 2),
+            })
+
+        # Sort by total time — best strategy first
+        strategies.sort(key=lambda s: s["total_time"])
+
+        return {
+            "session_key":   session_key,
+            "meeting_key":   meeting_key,
+            "circuit":       circuit,
+            "total_laps":    total_laps,
+            "sc_probability": sc_prob,
+            "fp_sessions_used": [fp_names[i] for i in range(len(fp_data))],
+            "deg_curves":    curves_to_dict(curves),
+            "strategies":    strategies,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/quali_analysis")
+def quali_analysis(session_key: int):
+    try:
+        session    = get_session(session_key)
+        laps_raw   = get_laps(session_key, HIST_TTL)
+        stints_raw = get_stints(session_key, HIST_TTL)
+        drv_raw    = get_drivers(session_key, HIST_TTL)
+        summaries  = analyse_quali(laps_raw, stints_raw, drv_raw)
+        return {
+            "session": session,
+            "session_mode": _session_mode(session),
+            "drivers": [s.to_dict() for s in summaries],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/tyre_inventory")
+def tyre_inventory(session_key: int):
+    """
+    Returns remaining new tyre sets per driver for the meeting containing
+    this session. Counts new sets (tyre_age_at_start=0) opened across all
+    sessions up to and including the given session_key.
+    """
+    try:
+        session    = get_session(session_key)
+        meeting_key = session.get("meeting_key")
+
+        # Get all sessions in this meeting, ordered by date
+        all_sessions = _cached_get(
+            f"meeting_sessions:{meeting_key}", "sessions", HIST_TTL,
+            meeting_key=meeting_key
+        )
+        all_sessions = sorted(all_sessions, key=lambda s: s["date_start"])
+
+        # Collect sessions up to and including the current one
+        relevant_sessions = []
+        for s in all_sessions:
+            relevant_sessions.append(s)
+            if s["session_key"] == session_key:
+                break
+
+        # Detect sprint weekend (has a session named "Sprint")
+        session_names = [s.get("session_name", "") for s in all_sessions]
+        is_sprint = any("sprint" in n.lower() for n in session_names
+                        if "qualifying" not in n.lower())
+
+        # Fetch stints for each relevant session
+        stints_by_session = []
+        for s in relevant_sessions:
+            sk = s["session_key"]
+            try:
+                stints = _cached_get(f"stints:{sk}", "stints", HIST_TTL,
+                                     session_key=sk)
+                stints_by_session.append(stints)
+            except Exception:
+                stints_by_session.append([])
+
+        drivers_raw = get_drivers(session_key, HIST_TTL)
+        inventory   = compute_inventory(stints_by_session, drivers_raw, is_sprint)
+
+        return {
+            "session_key": session_key,
+            "meeting_key": meeting_key,
+            "sessions_counted": [s["session_name"] for s in relevant_sessions],
+            "is_sprint": is_sprint,
+            "drivers": [d.to_dict() for d in inventory],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
