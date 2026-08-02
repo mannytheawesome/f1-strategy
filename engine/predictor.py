@@ -17,6 +17,7 @@ Outputs (via /api/predict):
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
+import itertools
 import statistics
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -521,6 +522,105 @@ def strategy_lap_trace(strategy, current_lap: int, total_laps: int,
             compound = stops[idx].compound
             age = 0
     return trace
+
+
+# ── Strategy duel (1-stop vs 2-stop head-to-head "knife") ─────────────────────
+
+def _stint_partitions(total_laps: int, n_stints: int, min_stint: int,
+                      step: int = 1):
+    """Yield every way to split `total_laps` into `n_stints` stint lengths, each
+    at least `min_stint`. `step` coarsens the search for speed on long races."""
+    if n_stints == 1:
+        if total_laps >= min_stint:
+            yield [total_laps]
+        return
+    # leave room for the remaining stints' minimums
+    hi = total_laps - min_stint * (n_stints - 1)
+    for first in range(min_stint, hi + 1, step):
+        for rest in _stint_partitions(total_laps - first, n_stints - 1,
+                                      min_stint, step):
+            yield [first] + rest
+
+
+def _best_fixed_plan(n_stops: int, curves: dict[str, DegCurve],
+                     field_baseline: float, pit_loss: float, total_laps: int,
+                     pace_delta: float = 0.0) -> Optional[dict]:
+    """Cheapest `n_stops`-stop plan (start compound + pit compounds + pit laps)
+    under the tuned lap model. Enforces the F1 two-compound rule and MIN_STINT.
+    Brute force over compound sequences × stint-length partitions — a few tens of
+    thousands of cheap evaluations, fine for an on-demand call."""
+    n_stints = n_stops + 1
+    # Coarsen the partition search on long races so a 2-stopper stays quick.
+    step = 1 if total_laps <= 45 or n_stints <= 2 else 2
+    best: Optional[dict] = None
+    for seq in itertools.product(DRY, repeat=n_stints):
+        if len(set(seq)) < 2:          # must run at least two dry compounds
+            continue
+        for lengths in _stint_partitions(total_laps, n_stints, MIN_STINT, step):
+            t = pit_loss * n_stops
+            abs_start = 0
+            for compound, length in zip(seq, lengths):
+                t += _stint_time(compound, 0, length, abs_start, total_laps,
+                                 pace_delta, curves, field_baseline)
+                abs_start += length
+            if best is None or t < best["total_time"]:
+                pit_laps = list(itertools.accumulate(lengths[:-1]))
+                best = {
+                    "stops":         n_stops,
+                    "compounds":     list(seq),
+                    "pit_laps":      pit_laps,
+                    "stint_lengths": list(lengths),
+                    "total_time":    round(t, 2),
+                }
+    return best
+
+
+def _plan_to_strategy(plan: dict) -> DriverStrategy:
+    return DriverStrategy(
+        driver_number=0, acronym="", current_lap=0,
+        current_compound=plan["compounds"][0], current_age=0,
+        pits_remaining=[PitPlan(lap, comp) for lap, comp
+                        in zip(plan["pit_laps"], plan["compounds"][1:])],
+        total_time_from_now=plan["total_time"], laps_until_must_pit=None,
+        confidence="")
+
+
+def strategy_duel(curves: dict[str, DegCurve], field_baseline: float,
+                  pit_loss: float, total_laps: int,
+                  pace_delta: float = 0.0) -> Optional[dict]:
+    """Head-to-head "knife": the optimal 1-stop vs the optimal 2-stop, priced on
+    the same tyre model. Returns a lap-by-lap trace of how far the 1-stopper is
+    ahead on corrected time (positive = 1-stop ahead, i.e. the 2-stopper has spent
+    more time), the two plans, and the gap at the flag. This is the data behind an
+    RSS-style divergence chart. Returns None if a plan can't be built (e.g. a race
+    too short for two stops)."""
+    one = _best_fixed_plan(1, curves, field_baseline, pit_loss, total_laps, pace_delta)
+    two = _best_fixed_plan(2, curves, field_baseline, pit_loss, total_laps, pace_delta)
+    if one is None or two is None:
+        return None
+
+    def cum_by_lap(plan: dict) -> dict[int, float]:
+        return {p["lap"]: p["cumulative"] for p in strategy_lap_trace(
+            _plan_to_strategy(plan), 0, total_laps, curves, field_baseline,
+            pace_delta, pit_loss)}
+
+    c1, c2 = cum_by_lap(one), cum_by_lap(two)
+    laps = sorted(set(c1) & set(c2))
+    # 2-stop cumulative time minus 1-stop: >0 means the 2-stopper is slower here,
+    # so the 1-stopper is ahead — matching the "1-stopper ahead (s)" axis.
+    trace = [{"lap": l, "one_stop_ahead": round(c2[l] - c1[l], 2)} for l in laps]
+    flag_gap = trace[-1]["one_stop_ahead"] if trace else 0.0
+    keep = ("compounds", "pit_laps", "stint_lengths", "total_time")
+    return {
+        "total_laps": total_laps,
+        "pit_loss":   round(pit_loss, 2),
+        "one_stop":   {k: one[k] for k in keep},
+        "two_stop":   {k: two[k] for k in keep},
+        "pit_laps":   {"one_stop": one["pit_laps"], "two_stop": two["pit_laps"]},
+        "trace":      trace,
+        "flag_gap":   flag_gap,
+        "verdict":    "one_stop" if flag_gap > 0 else "two_stop" if flag_gap < 0 else "tie",
+    }
 
 
 # ── Strategy optimizer (DP) ───────────────────────────────────────────────────

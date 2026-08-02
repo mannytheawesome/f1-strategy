@@ -1,5 +1,6 @@
 """Session analysis: FP stint breakdown, quali ranking, tyre inventory, the
-FP-derived pre-race strategy forecast, and the RSS-style per-race charts."""
+FP-derived pre-race strategy forecast, the 1-stop-vs-2-stop duel, and the
+RSS-style per-race charts."""
 
 import statistics
 
@@ -16,7 +17,7 @@ from engine.degradation import build_degradation_curves
 from engine.strategy import generate_strategies
 from engine.predictor import (
     sc_probability, build_deg_curves, curves_to_dict, optimize_strategy,
-    DRY, PIT_LOSS,
+    strategy_duel, DRY, PIT_LOSS,
 )
 from engine import race_charts as rc
 from api.helpers import _session_mode
@@ -207,6 +208,85 @@ def tyre_inventory(session_key: int):
             "is_sprint": is_sprint,
             "drivers": [d.to_dict() for d in inventory],
         }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/strategy_duel")
+def strategy_duel_route(session_key: int, total_laps: int = None):
+    """1-stop vs 2-stop head-to-head ("the knife") for this session's meeting.
+
+    Builds tyre-degradation curves from the meeting's practice sessions — and
+    from the race itself if this is a completed race — then prices the optimal
+    1-stop against the optimal 2-stop lap by lap. Works both pre-race (FP curves
+    only; pass total_laps for the circuit's race distance) and retrospectively
+    (a finished race supplies its own deg and lap count). Returns the lap-by-lap
+    "1-stopper ahead (s)" trace, both pit plans, and the gap at the flag.
+    """
+    try:
+        session     = get_session(session_key)
+        meeting_key = session.get("meeting_key")
+        mode        = _session_mode(session)
+
+        # Practice sessions in this meeting → weighted deg-curve prior
+        all_sessions = sorted(
+            _get("sessions", meeting_key=meeting_key),
+            key=lambda s: s.get("date_start", "")
+        )
+        fp_sessions = [s for s in all_sessions
+                       if s.get("session_type", "").lower() == "practice"]
+        fp_names = ["FP1", "FP2", "FP3"]
+        fp_data = []
+        for i, fp_s in enumerate(fp_sessions[:3]):
+            try:
+                fp_data.append((
+                    fp_names[i],
+                    get_laps(fp_s["session_key"], HIST_TTL),
+                    get_stints(fp_s["session_key"], HIST_TTL),
+                ))
+            except Exception:
+                pass
+
+        race_laps     = get_laps(session_key, HIST_TTL)
+        race_stints   = get_stints(session_key, HIST_TTL)
+        race_distance = max((l["lap_number"] for l in race_laps), default=0)
+
+        # Fold the race's own degradation in when it has meaningfully run
+        if mode in ("RACE", "SPRINT") and race_distance > 30:
+            fp_data.append(("RACE", race_laps, race_stints))
+
+        if not fp_data:
+            raise HTTPException(status_code=404,
+                                detail="No practice or race data available yet")
+
+        tl = total_laps or (race_distance if mode in ("RACE", "SPRINT") else 0)
+        if not tl:
+            raise HTTPException(
+                status_code=400,
+                detail="total_laps is required for a non-race session")
+
+        curves    = build_deg_curves(fp_data)
+        baselines = [c.baseline for c in curves.values() if c.baseline > 0]
+        field_bl  = statistics.median(baselines) if baselines else 90.0
+        pit_loss  = get_avg_pit_loss(session_key, HIST_TTL) or PIT_LOSS
+
+        duel = strategy_duel(curves, field_bl, pit_loss, tl)
+        if duel is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Race too short to compare a 1-stop against a 2-stop")
+
+        return {
+            "session_key":    session_key,
+            "meeting_key":    meeting_key,
+            "circuit":        session.get("circuit_short_name", ""),
+            "session_mode":   mode,
+            "field_baseline": round(field_bl, 3),
+            "deg_curves":     curves_to_dict(curves),
+            **duel,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
