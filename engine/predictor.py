@@ -636,6 +636,7 @@ def optimize_strategy(
     pit_loss:         float = PIT_LOSS,
     needs_compound_change: bool = False,   # F1 rule: must use 2 dry compounds
     force_stops:      int | None = None,   # constrain to exactly N stops
+    forbid_repeat_compound: bool = False,  # no pitting onto the same compound back-to-back
 ) -> DriverStrategy:
 
     remaining = total_laps - current_lap
@@ -665,7 +666,7 @@ def optimize_strategy(
     # 1-stop
     for pit in range(MIN_STINT, remaining - MIN_STINT + 1) if allow(1) else []:
         for c2 in DRY:
-            if c2 == current_compound and (needs_compound_change or current_age < 5):
+            if c2 == current_compound and (needs_compound_change or forbid_repeat_compound or current_age < 5):
                 continue
             if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
                 continue
@@ -683,6 +684,8 @@ def optimize_strategy(
             for c2 in DRY:
                 for c3 in DRY:
                     if needs_compound_change and c2 == current_compound and c3 == current_compound:
+                        continue
+                    if forbid_repeat_compound and (c2 == current_compound or c3 == c2):
                         continue
                     if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
                         continue
@@ -712,6 +715,9 @@ def optimize_strategy(
                             for c4 in DRY:
                                 seq = [current_compound, c2, c3, c4]
                                 if needs_compound_change and len(set(seq)) < 2:
+                                    continue
+                                if forbid_repeat_compound and any(
+                                        seq[j] == seq[j - 1] for j in range(1, 4)):
                                     continue
                                 # no mid-race downgrade to a softer tyre unless
                                 # that stint is short enough to be a late splash
