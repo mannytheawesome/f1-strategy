@@ -14,6 +14,9 @@
       --wet: #0067ff;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* The page itself never scrolls sideways — wide content (the timing board,
+       tables, charts) scrolls inside its own container instead. */
+    html, body { max-width: 100%; overflow-x: hidden; }
     body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
 
     header {
@@ -53,7 +56,9 @@
     #track-canvas { display: block; width: 260px; height: 200px; }
 
     /* ── main table ── */
-    .table-wrap { flex: 1; overflow-x: auto; }
+    /* min-width:0 lets this flex item shrink below the board's intrinsic width
+       so the board scrolls inside .board-wrap instead of blowing out the page. */
+    .table-wrap { flex: 1; min-width: 0; overflow-x: auto; }
 
     #controls {
       display: flex;

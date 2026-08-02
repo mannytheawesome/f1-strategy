@@ -12,6 +12,9 @@
       --hard: #ffffff;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* The page itself never scrolls sideways — wide content (tables, stint bars,
+       charts) scrolls inside its own card instead. */
+    html, body { max-width: 100%; overflow-x: hidden; }
     body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
 
     header {
@@ -102,7 +105,7 @@
     #editor-track, .handle, .seg { touch-action: none; }
 
     /* Wide tables scroll inside their card rather than stretching the page */
-    .card { overflow-x: auto; }
+    .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
     /* ── mobile ── */
     @media (max-width: 760px) {
