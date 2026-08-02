@@ -30,7 +30,7 @@ from data.live import (get_sc_laps_from_race_control, get_avg_pit_loss,
                        get_quali_times, get_yellow_laps)
 from engine.tyre_inventory import compute_inventory, COMPOUNDS
 
-STREET_CIRCUITS = ["monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"]
+from engine.circuits import track_position_weight
 
 USED_SET_DEFAULT_AGE = 3   # typical scrub (one quali/practice run) when age unknown
 
@@ -235,7 +235,7 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
                                   stints_raw, quali_times=quali_times or None,
                                   exclude_laps=get_yellow_laps(session_key, HIST_TTL))
     pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
-    track_pos_weight = 0.75 if any(c in circuit.lower() for c in STREET_CIRCUITS) else 0.6
+    track_pos_weight = track_position_weight(circuit)
 
     # Shared starting state at the anchor lap
     state = build_state(session_key, include_locations=False,

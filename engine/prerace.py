@@ -29,7 +29,7 @@ from engine.predictor import (
 PACK_VERSION = 10
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
-from engine.whatif import STREET_CIRCUITS
+from engine.circuits import is_street_circuit
 
 # Scheduled race distance per circuit_short_name (lowercased). OpenF1 has no
 # scheduled-laps field, so this mirrors the calendar; DEFAULT_LAPS covers
@@ -290,7 +290,7 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
             pace_median=0.0, pace_std=0.3,
             pace_delta=pr["pace_delta"] if pr else 0.0,
             laps_counted=pr["laps"] if pr else 0)
-    is_street = any(c in circuit.lower() for c in STREET_CIRCUITS)
+    is_street = is_street_circuit(circuit)
     return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
                          pit_loss=pit_loss,
                          track_position_weight=0.75 if is_street else 0.6)
@@ -323,7 +323,7 @@ def _overtaking_cost(total_laps: int, circuit: str) -> dict:
     leader's once its per-lap pace advantage d satisfies gap < (1-w)*d*window,
     i.e. d > gap / ((1-w) * window). Street circuits (higher w) resist hardest.
     This is a model quantity, not an empirical DRS measurement."""
-    is_street = any(c in circuit.lower() for c in STREET_CIRCUITS)
+    is_street = is_street_circuit(circuit)
     w = 0.75 if is_street else 0.6
     gap = 1.0
     threshold = gap / ((1 - w) * BATTLE_WINDOW_LAPS)
@@ -651,7 +651,7 @@ def _undercut_power(curves: dict, field_baseline: float, pit_loss: float,
         fresh_gain += worn - new
     net = round(fresh_gain - OUT_LAP_PENALTY_S, 2)
     verdict = "undercut" if net > 0.4 else "overcut" if net < -0.2 else "neutral"
-    is_street = any(w in circuit.lower() for w in STREET_CIRCUITS)
+    is_street = is_street_circuit(circuit)
     play = {
         "undercut": "pitting first jumps rivals — expect teams to trigger stops early to cover",
         "overcut":  "track position holds — the overcut (staying out on live tyres) is the play",
@@ -721,7 +721,7 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
             "fresh_rubber_saving_s": round(extra_stops * pit_loss - runner["time_delta"], 1),
         }
 
-    is_street = any(w in circuit.lower() for w in STREET_CIRCUITS)
+    is_street = is_street_circuit(circuit)
     return {
         "optimal_stops": best["stops"],
         "candidates": diag,

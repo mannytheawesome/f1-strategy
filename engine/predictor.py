@@ -40,7 +40,7 @@ FP_WEIGHTS = {"FP1": 0.3, "FP2": 1.0, "FP3": 0.9, "RACE": 3.0}
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
 
-STREET_CIRCUITS = {"monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"}
+from engine.circuits import STREET_CIRCUITS
 SC_RATE_DEFAULT = 0.0067
 SC_RATE_STREET  = 0.0120
 

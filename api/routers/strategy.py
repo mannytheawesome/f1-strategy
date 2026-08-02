@@ -15,6 +15,7 @@ from engine.predictor import (
     detect_sc, sc_probability, build_deg_curves, build_pace_model,
     simulate_race, forecast_to_dict, curves_to_dict, SCEvent,
 )
+from engine.circuits import track_position_weight
 from api.helpers import _session_mode
 
 router = APIRouter()
@@ -174,8 +175,7 @@ def predict(session_key: int = None, lap: int = None):
             for d in drivers_sorted
         ]
 
-        is_street = any(c in circuit.lower() for c in ["monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"])
-        track_pos_weight = 0.75 if is_street else 0.6
+        track_pos_weight = track_position_weight(circuit)
 
         forecasts = simulate_race(
             serialised, max_lap, total_laps, curves, pace_model, sc_events,
