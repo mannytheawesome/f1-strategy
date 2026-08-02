@@ -1,18 +1,24 @@
-"""Session analysis: FP stint breakdown, quali ranking, tyre inventory, and
-the FP-derived pre-race strategy forecast."""
+"""Session analysis: FP stint breakdown, quali ranking, tyre inventory, the
+FP-derived pre-race strategy forecast, and the RSS-style per-race charts."""
+
+import statistics
 
 from fastapi import APIRouter, HTTPException
 
 from data.live import (
     get_session, get_laps, get_stints, get_drivers, get_weather_summary,
-    _get, _cached_get, HIST_TTL,
+    get_avg_pit_loss, _get, _cached_get, HIST_TTL,
 )
 from engine.fp_analysis import analyse_fp, _field_compound_summary
 from engine.quali_analysis import analyse_quali
 from engine.tyre_inventory import compute_inventory
+from engine.degradation import build_degradation_curves
+from engine.strategy import generate_strategies
 from engine.predictor import (
-    sc_probability, build_deg_curves, curves_to_dict, optimize_strategy, DRY,
+    sc_probability, build_deg_curves, curves_to_dict, optimize_strategy,
+    DRY, PIT_LOSS,
 )
+from engine import race_charts as rc
 from api.helpers import _session_mode
 
 router = APIRouter()
@@ -201,5 +207,63 @@ def tyre_inventory(session_key: int):
             "is_sprint": is_sprint,
             "drivers": [d.to_dict() for d in inventory],
         }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/race_charts")
+def race_charts_route(session_key: int):
+    """RSS-style per-race chart datasets, all rebuilt from this race's public lap
+    timing: the gap-to-leader trace (#5), the rejoin trap (#4a), the leader's
+    lapping tax (#4b), and the decision-on-one-page panel (#3)."""
+    try:
+        session = get_session(session_key)
+        if _session_mode(session) not in ("RACE", "SPRINT"):
+            raise HTTPException(status_code=400,
+                                detail="Race charts are only available for race sessions")
+
+        all_laps    = get_laps(session_key, HIST_TTL)
+        race_stints = get_stints(session_key, HIST_TTL)
+        drivers_raw = get_drivers(session_key, HIST_TTL)
+        total_laps  = max((l["lap_number"] for l in all_laps), default=0)
+        if total_laps < 5:
+            raise HTTPException(status_code=422, detail="Not enough lap data for race charts")
+
+        stints_by_driver: dict[int, list[dict]] = {}
+        for s in race_stints:
+            stints_by_driver.setdefault(s["driver_number"], []).append(s)
+        acronyms = {num: (d.get("name_acronym") or str(num))
+                    for num, d in drivers_raw.items()}
+
+        pit_loss = get_avg_pit_loss(session_key, HIST_TTL) or PIT_LOSS
+        curves   = build_degradation_curves(all_laps, race_stints)
+
+        # A rough pit window from the best 1-stop on this race's deg curves.
+        window = None
+        try:
+            strats = generate_strategies(0, total_laps, "MEDIUM", 0, curves)
+            one = next((s for s in strats if s.stop_count == 1 and len(s.stints) >= 2), None)
+            if one:
+                pit = one.stints[0].end_lap
+                window = {"earliest": max(1, pit - 3),
+                          "latest": min(total_laps, pit + 3), "target": pit}
+        except Exception:
+            pass
+
+        baselines = [c.baseline for c in curves.values()
+                     if getattr(c, "baseline", 0) and c.baseline > 0]
+        field_bl = statistics.median(baselines) if baselines else 90.0
+
+        return {
+            "session_key":   session_key,
+            "circuit":       session.get("circuit_short_name", ""),
+            "total_laps":    total_laps,
+            "race_trace":    rc.race_trace(all_laps, stints_by_driver, acronyms, total_laps),
+            "rejoin_map":    rc.rejoin_map(all_laps, pit_loss, total_laps),
+            "lapping_tax":   rc.lapping_tax(all_laps, total_laps),
+            "decision_page": rc.decision_page(curves, pit_loss, total_laps, field_bl, window),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
