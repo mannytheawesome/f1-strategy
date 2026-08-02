@@ -63,10 +63,13 @@ def _compound_at(stints: list[dict], lap: int) -> str:
 
 
 def race_trace(all_laps: list[dict], stints_by_driver: dict[int, list[dict]],
-               acronyms: dict[int, str], total_laps: int) -> dict:
+               acronyms: dict[int, str], total_laps: int,
+               team_colours: dict[int, str] | None = None) -> dict:
     """Per-driver gap-to-leader (seconds) at the end of each lap. Positive = that
     driver is behind the lap leader on cumulative time. Each point carries the
-    driver's compound so the trace can be coloured by stint."""
+    driver's compound so the trace can be coloured by stint; each driver carries
+    their team colour so the whole field can be drawn, not just the leaders."""
+    team_colours = team_colours or {}
     cum = _cum_race_time(all_laps, total_laps)
     # Leader cumulative time at each lap = the minimum among drivers present.
     leader_time: dict[int, float] = {}
@@ -89,6 +92,7 @@ def race_trace(all_laps: list[dict], stints_by_driver: dict[int, list[dict]],
         drivers.append({
             "driver_number": num,
             "acronym": acronyms.get(num, str(num)),
+            "team_colour": team_colours.get(num),
             "final_gap": points[-1]["gap"],
             "laps_completed": points[-1]["lap"],
             "points": points,
