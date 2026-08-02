@@ -981,6 +981,14 @@ def briefing(session_key: int, regenerate: bool = False, token: str = None):
 # Serve frontend
 @app.get("/")
 def index():
+    # Strategy briefings are the product's front door. The live timing board is
+    # frozen (available at /live) — real-time timing already exists everywhere;
+    # the strategy analysis is the differentiated part.
+    return FileResponse(os.path.join(FRONTEND_DIR, "briefing.html"))
+
+
+@app.get("/live")
+def live_board():
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="static")
