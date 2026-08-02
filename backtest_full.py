@@ -36,8 +36,10 @@ RESULTS_FILE = os.path.join(CACHE_DIR, "backtest_results.json")
 YEARS = [2023, 2024, 2025, 2026]
 EVAL_FRACTIONS = [0.25, 0.50, 0.75]
 
-STREET_CIRCUITS = {"monaco", "baku", "singapore", "jeddah", "las vegas",
-                   "las_vegas", "miami", "marina bay"}
+from engine.circuits import STREET_CIRCUITS as _CANONICAL_STREET
+# The offline harness matches a couple of extra name spellings that show up in
+# historical OpenF1 circuit_short_name values.
+STREET_CIRCUITS = _CANONICAL_STREET | {"las vegas", "marina bay"}
 
 
 # ── Disk-cached OpenF1 fetch ──────────────────────────────────────────────────

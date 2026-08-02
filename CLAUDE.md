@@ -65,14 +65,24 @@ uvicorn api.main:app --reload --port 8000
 ## Architecture
 
 ```
-frontend/briefing.html   — briefings SPA (front door, served at "/")
-frontend/index.html      — live timing board SPA (served at "/live")
-api/main.py              — FastAPI routes, session-mode detection, glue
+frontend/
+  briefing.html/.css/.js — briefings SPA (front door, served at "/")
+  index.html/.css/.js    — live timing board SPA (served at "/live")
+api/
+  main.py                — app setup, CORS, router wiring, frontend serving (thin)
+  helpers.py             — session-mode / driver serialisation / prediction block
+  routers/               — routes grouped by domain:
+    meta.py              — session metadata, auth diagnostics
+    timing.py            — live/replay board, locations, sectors, intervals
+    analysis.py          — FP/quali analysis, tyre inventory, pre-race strategy
+    strategy.py          — strategy generation, prediction engine, what-if
+    briefings.py         — race listings, pre-race + post-race briefings
 data/live.py             — OpenF1 client: OAuth, polling, in-memory cache, build_state()
 engine/
   predictor.py           — lap-by-lap race simulation engine (the accuracy core)
   degradation.py         — tyre deg curves via linear regression on session laps
-  strategy.py            — 1-stop / 2-stop strategy generator
+  strategy.py            — 1-stop / 2-stop strategy generator (PlanStint = planned segment)
+  circuits.py            — street-circuit set + track-position-weight (shared)
   fp_analysis.py         — FP stint classification + DEG/LAP rates
   quali_analysis.py      — quali ranking, gap to P1, theoretical best
   tyre_inventory.py      — new-set counts across the meeting weekend
@@ -86,9 +96,15 @@ cache/                   — disk cache of raw OpenF1 data + backtest_results.js
 briefings/               — cached generated briefings, prerace_<key>.json (gitignored)
 ```
 
+Two `Stint`-like concepts, kept deliberately separate: `data.live.Stint` is a
+stint a driver **actually ran**; `engine.strategy.PlanStint` is a **planned**
+segment of a candidate strategy. Two tyre-curve types also coexist by design:
+`degradation.TyreDegradation` (single-session, feeds the live pit-window) and
+`predictor.DegCurve` (weighted multi-session, feeds the race simulation).
+
 ### Data flow
 OpenF1 → `data/live.py` (fetch + cache + `build_state()`) → `engine/*`
-(deg curves, pace model, simulation, strategy) → `api/main.py` routes → frontend.
+(deg curves, pace model, simulation, strategy) → `api/routers/*` → frontend.
 
 ### The predictor (accuracy core — `engine/predictor.py`)
 Pipeline: `build_deg_curves` (blend FP1/2/3 + race into per-compound curves) →
@@ -118,7 +134,7 @@ Key tunables (all in `predictor.py`, tuned on the backtest):
 
 ---
 
-## API endpoints (`api/main.py`)
+## API endpoints (`api/routers/`)
 Session/data: `/api/session`, `/api/session/total_laps`, `/api/live`,
 `/api/replay?session_key&lap`, `/api/sectors`, `/api/intervals_live`,
 `/api/locations`, `/api/track_layout`, `/api/races`, `/api/next_meeting`.
@@ -219,6 +235,16 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       location endpoint reliability).
 - [ ] Live-session validation across a full weekend (Quali + Race) for all three
       mode layouts.
+
+### Refactor / cleanup (deferred)
+- [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
+      into one curve type. Deferred: their builders take different inputs and
+      feed different subsystems, so a merge changes behaviour on the live/
+      strategy path (not covered by the backtest fingerprint). Do it only with a
+      test that exercises `build_degradation_curves` + `predict_drivers`.
+- [ ] `build_state` (data/live.py, ~180 lines) and `build_prerace_data`
+      (prerace.py, ~200 lines) are the remaining oversized functions — left
+      un-split because they can't be verified offline without OpenF1 access.
 
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in

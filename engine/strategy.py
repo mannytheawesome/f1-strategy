@@ -28,8 +28,10 @@ MIN_STINT = 12
 REQUIRED_COMPOUNDS = 2
 
 
+# A planned segment of a candidate strategy (compound + lap window). Distinct
+# from data.live.Stint, which records a stint a driver ACTUALLY ran.
 @dataclass
-class Stint:
+class PlanStint:
     compound: str
     start_lap: int
     end_lap: int
@@ -50,7 +52,7 @@ class Stint:
 @dataclass
 class Strategy:
     label: str
-    stints: list[Stint]
+    stints: list[PlanStint]
     total_time_penalty: float   # estimated extra seconds vs optimal (lower = better)
     stop_count: int
 
@@ -141,10 +143,10 @@ def generate_strategies(
         stints = []
         # First partial current stint (already running) — clamp start to lap 1
         stint_start = max(1, current_lap - current_tyre_age)
-        stints.append(Stint(current_compound, stint_start, current_lap + plan[0][1]))
+        stints.append(PlanStint(current_compound, stint_start, current_lap + plan[0][1]))
         lap = current_lap + plan[0][1] + 1
         for compound, length in plan[1:]:
-            stints.append(Stint(compound, lap, lap + length - 1))
+            stints.append(PlanStint(compound, lap, lap + length - 1))
             lap += length
         strategies.append(Strategy(label=label, stints=stints,
                                    total_time_penalty=penalty,
