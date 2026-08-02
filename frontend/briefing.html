@@ -564,11 +564,32 @@
         <td>${stintBarHTML(stints, m.total_laps_assumed)}</td>
         <td>${s.time_delta === 0 ? 'fastest on paper' : '+' + s.time_delta + 's'}</td></tr>`;
     }
+    const sd = d.stop_decision, xo = sd && sd.crossover;
     stratCard.innerHTML = `<h2>One stop on paper — the candidates</h2>
       <table class="results"><tr><th>PLAN</th><th>STOPS</th><th>PITS</th><th>SHAPE</th><th>Δ</th></tr>${sRows}</table>
-      ${inv ? `<div class="meta-row" style="margin-top:8px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
+      ${sd ? `<div class="meta-row" style="margin-top:8px"><span><b>${sd.optimal_stops}-stop optimal.</b>${xo && xo.runner_stops ? ` A ${xo.runner_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.` : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
+      ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     root.appendChild(stratCard);
     if (n) root.appendChild(proseCard('Race shape', n.race_shape));
+
+    // undercut vs overcut
+    if (d.undercut) {
+      const u = d.undercut;
+      const col = u.verdict === 'undercut' ? '#2ea44f' : u.verdict === 'overcut' ? '#ff8c00' : '#8a8a8a';
+      const uCard = document.createElement('div');
+      uCard.className = 'card';
+      uCard.innerHTML = `<h2>Undercut vs overcut</h2>
+        <div class="meta-row"><span>fresh-tyre gain over the ${u.window_laps} laps before a rival covers, net of the cold out-lap</span></div>
+        <div class="meta-row" style="margin-top:6px">
+          <span>fresh ${u.compound} vs a ${u.rival_tyre_age}-lap tyre: <b>${u.fresh_gain_per_lap}s/lap</b></span>
+          <span>out-lap cost: ${u.out_lap_penalty_s}s</span>
+          <span>net undercut: <b style="color:${col}">${u.net_undercut_s > 0 ? '+' : ''}${u.net_undercut_s}s</b></span>
+          <span>verdict: <b style="color:${col}">${u.verdict.toUpperCase()}</b></span>
+        </div>
+        <div class="meta-row" style="margin-top:6px"><span>${u.note}</span></div>`;
+      root.appendChild(uCard);
+    }
+    if (n && n.the_undercut) root.appendChild(proseCard('The undercut', n.the_undercut));
 
     // grid → flag projection
     if (d.projection && d.projection.forecasts && d.projection.forecasts.length) {

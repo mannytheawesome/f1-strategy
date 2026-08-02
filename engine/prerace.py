@@ -23,10 +23,10 @@ from data.live import (
 from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
-    PIT_LOSS, DRY,
+    PIT_LOSS, DRY, _lap_t, _cliff_life,
 )
 
-PACK_VERSION = 9
+PACK_VERSION = 10
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.whatif import STREET_CIRCUITS
@@ -67,12 +67,13 @@ PRERACE_SCHEMA = {
         "headline":   {"type": "string", "description": "Punchy 4-8 word title framing the race's central strategic question"},
         "grid_story": {"type": "string", "description": "120-200 words: what the grid means strategically — who is out of position, where the pace really is"},
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
-        "race_shape": {"type": "string", "description": "180-280 words: expected stop count, the paper strategies and what breaks them, how the Safety Car probability and pit loss change the calculus"},
+        "race_shape": {"type": "string", "description": "180-280 words: the stop-count call and WHY. Lead with stop_decision.optimal_stops, then decompose stop_decision.crossover — the extra_pit_cost_s of one more stop vs the fresh_rubber_saving_s it buys — to explain why that count wins. Flag any plan's laps_over_cliff. Use stop_decision.sc_flips_call / sc_favored_stops to say whether a Safety Car tips it toward more stops, and track_position_bias for how much staying out is worth here."},
+        "the_undercut": {"type": "string", "description": "120-200 words on the undercut vs the overcut, using the undercut object: fresh_gain_per_lap and net_undercut_s (fresh-tyre gain over the window, net of the out-lap), judged against pit_loss_s and the verdict. Say plainly whether teams should pit early to jump rivals (undercut) or hold track position and extend (overcut), and tie it to how hard passing is here."},
         "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
         "watch_list": {"type": "string", "description": "80-160 words: the 2-4 unknowns that get filled in during the first stint, and exactly what to watch for each"},
     },
-    "required": ["headline", "grid_story", "the_trade", "race_shape", "the_doors", "projection", "watch_list"],
+    "required": ["headline", "grid_story", "the_trade", "race_shape", "the_undercut", "the_doors", "projection", "watch_list"],
     "additionalProperties": False,
 }
 
@@ -625,6 +626,117 @@ def _trade_table(curves: dict) -> dict:
     }
 
 
+OUT_LAP_PENALTY_S = 1.0   # cold fresh tyres lose ~1s on the out-lap
+UNDERCUT_WINDOW = 2       # laps a rival typically takes to cover a stop
+
+
+def _undercut_power(curves: dict, field_baseline: float, pit_loss: float,
+                    total_laps: int, circuit: str) -> dict | None:
+    """How hard the undercut bites here. When a car pits, its fresh tyre gains on
+    the rival's worn tyre over the ~2 laps before the rival can cover — net of the
+    cold out-lap. Positive = pitting first jumps rivals (an undercut track); near
+    zero/negative = track position holds and the overcut (extending) is the play.
+    Compared against the pit loss and this track's overtaking difficulty."""
+    compound = next((c for c in ("MEDIUM", "HARD", "SOFT")
+                     if c in curves and curves[c].baseline > 0), None)
+    if not compound:
+        return None
+    deg = curves[compound].deg_rate
+    # the rival is deep in a stint at the moment of an undercut
+    rival_age = min(_cliff_life(compound, deg), max(8, total_laps // 3))
+    fresh_gain = 0.0
+    for i in range(UNDERCUT_WINDOW):
+        worn = _lap_t(compound, rival_age + i, 0.0, curves, field_baseline)
+        new = _lap_t(compound, 1 + i, 0.0, curves, field_baseline)
+        fresh_gain += worn - new
+    net = round(fresh_gain - OUT_LAP_PENALTY_S, 2)
+    verdict = "undercut" if net > 0.4 else "overcut" if net < -0.2 else "neutral"
+    is_street = any(w in circuit.lower() for w in STREET_CIRCUITS)
+    play = {
+        "undercut": "pitting first jumps rivals — expect teams to trigger stops early to cover",
+        "overcut":  "track position holds — the overcut (staying out on live tyres) is the play",
+        "neutral":  "undercut and overcut roughly balance — the stop is a coin-flip on traffic",
+    }[verdict]
+    return {
+        "compound": compound,
+        "rival_tyre_age": rival_age,
+        "fresh_gain_per_lap": round(fresh_gain / UNDERCUT_WINDOW, 2),
+        "out_lap_penalty_s": OUT_LAP_PENALTY_S,
+        "window_laps": UNDERCUT_WINDOW,
+        "net_undercut_s": net,
+        "pit_loss_s": pit_loss,
+        "verdict": verdict,
+        "note": (f"A fresh {compound} gains ~{fresh_gain:.1f}s over the {UNDERCUT_WINDOW} "
+                 f"laps before a rival covers (vs a {rival_age}-lap tyre), minus the "
+                 f"{OUT_LAP_PENALTY_S:.0f}s cold out-lap → net {net:+.1f}s: {play}. "
+                 + ("Tight circuit — the undercut is decisive since you can't pass on track."
+                    if is_street else
+                    "Overtaking is workable here, so track position matters a little less.")),
+    }
+
+
+def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
+                   total_laps: int, circuit: str, sc_prob: float) -> dict | None:
+    """Why the optimal stop count is what it is. Decomposes the gap between the
+    best plan and the next-best into the extra stop's pit cost vs the fresh-rubber
+    it buys, flags cliff exposure per plan, and shows whether a Safety Car (which
+    makes an extra stop cheap) would flip the call."""
+    if not strategies:
+        return None
+
+    def laps_over_cliff(seq, lengths):
+        over = 0
+        for comp, length in zip(seq, lengths):
+            deg = curves[comp].deg_rate if comp in curves and curves[comp].baseline > 0 else 0.03
+            if length > _cliff_life(comp, deg):
+                over += length - _cliff_life(comp, deg)
+        return over
+
+    diag = [{
+        "stops": s["stops"],
+        "sequence": s["compound_sequence"],
+        "time_delta": s["time_delta"],
+        "max_stint": max(s["stint_lengths"]),
+        "laps_over_cliff": laps_over_cliff(s["compound_sequence"], s["stint_lengths"]),
+        "pit_time_cost": round(s["stops"] * pit_loss, 1),
+    } for s in strategies]
+
+    best = strategies[0]
+    runner = strategies[1] if len(strategies) > 1 else None
+
+    # a Safety Car refunds ~55% of an extra stop's pit loss; rank on expected cost
+    sc_ranked = sorted(strategies,
+                       key=lambda s: s["total_time"] - s["stops"] * pit_loss * 0.55 * sc_prob)
+    sc_favored = sc_ranked[0]["stops"]
+
+    crossover = None
+    if runner:
+        extra_stops = runner["stops"] - best["stops"]
+        crossover = {
+            "best_stops": best["stops"],
+            "runner_stops": runner["stops"],
+            "margin_s": runner["time_delta"],
+            "extra_pit_cost_s": round(extra_stops * pit_loss, 1),
+            # the higher-stop plan's fresher tyres claw back (pit_cost − margin)
+            "fresh_rubber_saving_s": round(extra_stops * pit_loss - runner["time_delta"], 1),
+        }
+
+    is_street = any(w in circuit.lower() for w in STREET_CIRCUITS)
+    return {
+        "optimal_stops": best["stops"],
+        "candidates": diag,
+        "crossover": crossover,
+        "sc_probability": sc_prob,
+        "sc_favored_stops": sc_favored,
+        "sc_flips_call": sc_favored != best["stops"],
+        "track_position_bias": "high" if is_street else "moderate",
+        "note": ("The optimal stop count balances pit-lane time against tyre life: "
+                 "each extra stop costs a pit loss but buys younger, faster rubber "
+                 "and dodges the cliff. A Safety Car cuts the pit cost ~55%, which "
+                 "can flip the call toward more stops."),
+    }
+
+
 def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sessions = _meeting_sessions(meeting_key)
     if not sessions:
@@ -786,6 +898,9 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     except Exception:
         pass
 
+    undercut = _undercut_power(curves, field_baseline, pit_loss, total_laps, circuit)
+    stop_decision = _stop_decision(strategies, curves, pit_loss, total_laps, circuit, sc_prob)
+
     return {
         "meeting": {
             "meeting_key":  meeting_key,
@@ -803,6 +918,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "deg_curves": curves_to_dict(curves),
         "trade": _trade_table(curves),
         "strategies": strategies,
+        "undercut": undercut,
+        "stop_decision": stop_decision,
         "pit_loss": pit_loss,
         "pit_loss_source": "sprint_measured" if sprint_key else "default",
         "sc_probability": sc_prob,
