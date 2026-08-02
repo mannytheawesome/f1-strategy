@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY, _lap_t, _cliff_life,
 )
 
-PACK_VERSION = 10
+PACK_VERSION = 11   # 11: strategies no longer repeat a compound back-to-back
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -815,7 +815,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
                                       field_baseline, pit_loss,
                                       needs_compound_change=True,
-                                      force_stops=stops)
+                                      force_stops=stops,
+                                      forbid_repeat_compound=True)
             if len(strat.pits_remaining) != stops:
                 continue   # no legal plan at this stop count
             if best is None or strat.total_time_from_now < best[1]:
