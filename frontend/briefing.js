@@ -143,6 +143,16 @@
     }
     root.appendChild(degCurveCard(d.deg_curves));
 
+    // Race in charts — RSS-style panels, fetched separately so they never block
+    // or bloat the LLM briefing pack.
+    const rcCard = document.createElement('div');
+    rcCard.className = 'card';
+    rcCard.id = 'race-charts-card';
+    rcCard.innerHTML = '<h2>The race in charts</h2>'
+      + '<div id="race-charts-body"><span class="notice spin">building race charts…</span></div>';
+    root.appendChild(rcCard);
+    if (currentContext && currentContext.sessionKey) loadRaceCharts(currentContext.sessionKey);
+
     // stint pace — the "which tyre was a rock" read
     if (d.stint_pace && d.stint_pace.field && d.stint_pace.field.length) {
       const sp = d.stint_pace;
@@ -780,6 +790,141 @@
       ${stops(actual)}${scenPaths}
       <text x="${(X(ae.lap) + 4).toFixed(1)}" y="${(Y(ae.y) + 3).toFixed(1)}" fill="#2f6fed" font-size="8.5">actual</text>
     </svg>`;
+  }
+
+  // ── RSS-style per-race charts (data from /api/race_charts) ──────────────────
+
+  const CHART_COMP = { SOFT: '#e8002d', MEDIUM: '#ffd700', HARD: '#ffffff',
+                       INTERMEDIATE: '#43b02a', WET: '#0067ad', UNKNOWN: '#888' };
+
+  async function loadRaceCharts(sessionKey) {
+    const body = document.getElementById('race-charts-body');
+    if (!body) return;
+    try {
+      const res = await fetch(`/api/race_charts?session_key=${sessionKey}`);
+      if (!res.ok) throw new Error((await res.json()).detail || res.status);
+      const rc = await res.json();
+      body.innerHTML =
+        chartBlock('Gap to the leader — the race trace',
+                   'reconstructed from public lap times · coloured dots = tyre change', raceTraceSVG(rc.race_trace)) +
+        chartBlock('The rejoin trap — cars you drop behind if you box on lap L',
+                   `a stop costs ~${rc.rejoin_map.pit_loss}s; the peak marks the DRS-train lap`, rejoinSVG(rc.rejoin_map)) +
+        chartBlock('The leader’s lapping tax (estimated)',
+                   'cumulative time bled clearing backmarkers — a traffic-density proxy, not a measured delta', lappingTaxSVG(rc.lapping_tax)) +
+        chartBlock('The decision on one page',
+                   'measured degradation, the pit window, and the rules', decisionPageHTML(rc.decision_page));
+    } catch (e) {
+      body.innerHTML = `<span class="notice">Race charts unavailable: ${e.message}</span>`;
+    }
+  }
+
+  function chartBlock(title, sub, inner) {
+    return `<div style="margin:16px 0">
+      <div class="meta-row"><span><b>${title}</b></span></div>
+      <div class="meta-row"><span style="color:#777">${sub}</span></div>
+      ${inner}</div>`;
+  }
+
+  // #5 — per-driver gap to the leader over the race
+  function raceTraceSVG(rt) {
+    const drivers = (rt.drivers || []).filter(d => d.points && d.points.length > 1);
+    if (drivers.length < 2) return '<span class="notice">no trace data</span>';
+    const W = 620, H = 300, padL = 40, padR = 66, padT = 14, padB = 26;
+    const total = rt.total_laps;
+    let maxGap = 1;
+    drivers.forEach(d => d.points.forEach(p => { if (p.gap > maxGap) maxGap = p.gap; }));
+    const X = l => padL + (l - 1) / Math.max(1, total - 1) * (W - padL - padR);
+    const Y = g => padT + (g / maxGap) * (H - padT - padB);   // leader (0) at top
+    const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + X(p.lap).toFixed(1) + ' ' + Y(p.gap).toFixed(1)).join(' ');
+    let gx = '';
+    for (let l = 10; l <= total; l += 10)
+      gx += `<line x1="${X(l)}" y1="${padT}" x2="${X(l)}" y2="${H - padB}" stroke="#242424"/><text x="${X(l)}" y="${H - padB + 12}" fill="#666" font-size="9" text-anchor="middle">${l}</text>`;
+    const faint = drivers.slice(3).map(d =>
+      `<path d="${path(d.points)}" fill="none" stroke="#3a3a3a" stroke-width="0.8" opacity="0.6"/>`).join('');
+    const HL = ['#2f6fed', '#e8002d', '#2ea44f'];
+    const top = drivers.slice(0, 3).map((d, i) => {
+      const c = HL[i], e = d.points[d.points.length - 1];
+      const stops = d.points.filter((p, j) => j > 0 && p.compound !== d.points[j - 1].compound)
+        .map(p => `<circle cx="${X(p.lap).toFixed(1)}" cy="${Y(p.gap).toFixed(1)}" r="3" fill="${CHART_COMP[p.compound] || '#888'}" stroke="#111"/>`).join('');
+      return `<path d="${path(d.points)}" fill="none" stroke="${c}" stroke-width="2"/>${stops}`
+        + `<text x="${(X(e.lap) + 4).toFixed(1)}" y="${(Y(e.gap) + 3).toFixed(1)}" fill="${c}" font-size="9">${d.acronym}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+      ${gx}
+      <line x1="${padL}" y1="${padT}" x2="${(W - padR).toFixed(1)}" y2="${padT}" stroke="#555" stroke-dasharray="3 3"/>
+      <text x="${padL + 2}" y="${padT - 3}" fill="#777" font-size="8.5">leader</text>
+      <text x="4" y="${H - padB}" fill="#666" font-size="9">behind ↓</text>
+      ${faint}${top}
+    </svg>`;
+  }
+
+  // #4a — how many cars the leader rejoins behind if they box on lap L
+  function rejoinSVG(rj) {
+    const pts = rj.points || [];
+    if (pts.length < 2) return '<span class="notice">no data</span>';
+    const W = 620, H = 170, padL = 34, padR = 20, padT = 12, padB = 24;
+    const total = rj.total_laps;
+    const maxC = Math.max(...pts.map(p => p.rejoin_behind), 1);
+    const X = l => padL + (l - 1) / Math.max(1, total - 1) * (W - padL - padR);
+    const Y = c => padT + (1 - c / maxC) * (H - padT - padB);
+    const line = pts.map((p, i) => (i ? 'L' : 'M') + X(p.lap).toFixed(1) + ' ' + Y(p.rejoin_behind).toFixed(1)).join(' ');
+    const area = `M${X(pts[0].lap).toFixed(1)} ${(H - padB).toFixed(1)} `
+      + pts.map(p => 'L' + X(p.lap).toFixed(1) + ' ' + Y(p.rejoin_behind).toFixed(1)).join(' ')
+      + ` L${X(pts[pts.length - 1].lap).toFixed(1)} ${(H - padB).toFixed(1)} Z`;
+    let gx = '';
+    for (let l = 10; l <= total; l += 10)
+      gx += `<line x1="${X(l)}" y1="${padT}" x2="${X(l)}" y2="${H - padB}" stroke="#242424"/><text x="${X(l)}" y="${H - padB + 12}" fill="#666" font-size="9" text-anchor="middle">${l}</text>`;
+    const wx = rj.worst_lap ? X(rj.worst_lap) : null;
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+      ${gx}
+      <path d="${area}" fill="#e8002d" opacity="0.15"/>
+      <path d="${line}" fill="none" stroke="#e8002d" stroke-width="1.8"/>
+      ${wx != null ? `<line x1="${wx.toFixed(1)}" y1="${padT}" x2="${wx.toFixed(1)}" y2="${H - padB}" stroke="#ff8c00" stroke-dasharray="4 3"/><text x="${(wx + 3).toFixed(1)}" y="${padT + 9}" fill="#ff8c00" font-size="8.5">trap: lap ${rj.worst_lap} · behind ${rj.worst_count}</text>` : ''}
+      <text x="4" y="${padT + 8}" fill="#666" font-size="9">cars</text>
+    </svg>`;
+  }
+
+  // #4b — leader's cumulative time lost in backmarker traffic
+  function lappingTaxSVG(lt) {
+    const pts = lt.points || [];
+    if (pts.length < 2) return '<span class="notice">no data</span>';
+    const W = 620, H = 150, padL = 34, padR = 54, padT = 12, padB = 24;
+    const total = lt.total_laps;
+    const maxT = Math.max(...pts.map(p => p.cumulative_tax_s), 1);
+    const X = l => padL + (l - 1) / Math.max(1, total - 1) * (W - padL - padR);
+    const Y = t => padT + (1 - t / maxT) * (H - padT - padB);
+    const line = pts.map((p, i) => (i ? 'L' : 'M') + X(p.lap).toFixed(1) + ' ' + Y(p.cumulative_tax_s).toFixed(1)).join(' ');
+    let gx = '';
+    for (let l = 10; l <= total; l += 10)
+      gx += `<line x1="${X(l)}" y1="${padT}" x2="${X(l)}" y2="${H - padB}" stroke="#242424"/><text x="${X(l)}" y="${H - padB + 12}" fill="#666" font-size="9" text-anchor="middle">${l}</text>`;
+    const e = pts[pts.length - 1];
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+      ${gx}
+      <path d="${line}" fill="none" stroke="#ffd700" stroke-width="1.8"/>
+      <text x="${(X(e.lap) + 3).toFixed(1)}" y="${(Y(e.cumulative_tax_s) + 3).toFixed(1)}" fill="#ffd700" font-size="9">${lt.total_tax_s}s</text>
+      <text x="4" y="${padT + 8}" fill="#666" font-size="9">s lost</text>
+    </svg>`;
+  }
+
+  // #3 — the decision on one page: deg bars + window + rules
+  function decisionPageHTML(dp) {
+    const comps = dp.compounds || [];
+    const maxDeg = Math.max(...comps.map(c => c.deg_rate || 0), 0.001);
+    const bars = comps.map(c => {
+      const w = c.deg_rate ? Math.round(c.deg_rate / maxDeg * 100) : 0;
+      return `<div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+        <span style="width:64px;color:${CHART_COMP[c.compound] || '#ccc'}">${c.compound}</span>
+        <div style="flex:1;background:#1c1c1c;border-radius:3px;height:14px"><div style="width:${w}%;height:100%;background:${CHART_COMP[c.compound] || '#888'};opacity:0.85;border-radius:3px"></div></div>
+        <span style="width:104px;text-align:right;color:#aaa">${c.deg_rate != null ? c.deg_rate.toFixed(3) + ' s/lap' : '—'}</span></div>`;
+    }).join('');
+    const w = dp.window;
+    const windowTxt = w ? `pit window: laps ${w.earliest}–${w.latest} (target ${w.target})` : 'pit window: n/a';
+    const rules = (dp.rules || []).map(r => `<li>${r}</li>`).join('');
+    return `<div style="display:flex;flex-direction:column;gap:6px">
+      <div>${bars}</div>
+      <div class="meta-row"><span>${windowTxt}</span><span>pit loss ${dp.pit_loss}s</span></div>
+      <ul style="margin:4px 0 0 16px;color:#bbb;font-size:12px">${rules}</ul>
+    </div>`;
   }
 
   function whatifOrderTable(trace) {
