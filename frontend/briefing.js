@@ -829,32 +829,46 @@
   function raceTraceSVG(rt) {
     const drivers = (rt.drivers || []).filter(d => d.points && d.points.length > 1);
     if (drivers.length < 2) return '<span class="notice">no trace data</span>';
-    const W = 620, H = 300, padL = 40, padR = 66, padT = 14, padB = 26;
+    const W = 640, H = 340, padL = 40, padR = 48, padT = 16, padB = 26;
     const total = rt.total_laps;
     let maxGap = 1;
     drivers.forEach(d => d.points.forEach(p => { if (p.gap > maxGap) maxGap = p.gap; }));
     const X = l => padL + (l - 1) / Math.max(1, total - 1) * (W - padL - padR);
     const Y = g => padT + (g / maxGap) * (H - padT - padB);   // leader (0) at top
     const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + X(p.lap).toFixed(1) + ' ' + Y(p.gap).toFixed(1)).join(' ');
+    const colOf = d => d.team_colour ? ('#' + d.team_colour) : '#8a8a8a';
+
     let gx = '';
     for (let l = 10; l <= total; l += 10)
       gx += `<line x1="${X(l)}" y1="${padT}" x2="${X(l)}" y2="${H - padB}" stroke="#242424"/><text x="${X(l)}" y="${H - padB + 12}" fill="#666" font-size="9" text-anchor="middle">${l}</text>`;
-    const faint = drivers.slice(3).map(d =>
-      `<path d="${path(d.points)}" fill="none" stroke="#3a3a3a" stroke-width="0.8" opacity="0.6"/>`).join('');
-    const HL = ['#2f6fed', '#e8002d', '#2ea44f'];
-    const top = drivers.slice(0, 3).map((d, i) => {
-      const c = HL[i], e = d.points[d.points.length - 1];
+
+    // Every driver drawn in their team colour; the second car sharing a colour
+    // is dashed so team-mates stay distinguishable.
+    const seen = {};
+    const lines = drivers.map((d, i) => {
+      const c = colOf(d);
+      const dash = (seen[c] = (seen[c] || 0) + 1) > 1 ? ' stroke-dasharray="5 3"' : '';
+      const lw = i === 0 ? 2.4 : 1.4;
       const stops = d.points.filter((p, j) => j > 0 && p.compound !== d.points[j - 1].compound)
-        .map(p => `<circle cx="${X(p.lap).toFixed(1)}" cy="${Y(p.gap).toFixed(1)}" r="3" fill="${CHART_COMP[p.compound] || '#888'}" stroke="#111"/>`).join('');
-      return `<path d="${path(d.points)}" fill="none" stroke="${c}" stroke-width="2"/>${stops}`
-        + `<text x="${(X(e.lap) + 4).toFixed(1)}" y="${(Y(e.gap) + 3).toFixed(1)}" fill="${c}" font-size="9">${d.acronym}</text>`;
+        .map(p => `<circle cx="${X(p.lap).toFixed(1)}" cy="${Y(p.gap).toFixed(1)}" r="2.4" fill="${CHART_COMP[p.compound] || '#888'}" stroke="#111" stroke-width="0.5"/>`).join('');
+      return `<path d="${path(d.points)}" fill="none" stroke="${c}" stroke-width="${lw}"${dash} opacity="0.92"/>${stops}`;
     }).join('');
+
+    // Right-edge acronym labels for every finisher, nudged apart so they don't overlap.
+    const labels = drivers.map(d => ({ acr: d.acronym, c: colOf(d), y: Y(d.points[d.points.length - 1].gap) }))
+      .sort((a, b) => a.y - b.y);
+    const MINH = 10;
+    for (let i = 1; i < labels.length; i++)
+      if (labels[i].y - labels[i - 1].y < MINH) labels[i].y = labels[i - 1].y + MINH;
+    const labelSVG = labels.map(l =>
+      `<text x="${(W - padR + 3).toFixed(1)}" y="${(Math.min(l.y, H - 4) + 3).toFixed(1)}" fill="${l.c}" font-size="8.5">${l.acr}</text>`).join('');
+
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
       ${gx}
       <line x1="${padL}" y1="${padT}" x2="${(W - padR).toFixed(1)}" y2="${padT}" stroke="#555" stroke-dasharray="3 3"/>
-      <text x="${padL + 2}" y="${padT - 3}" fill="#777" font-size="8.5">leader</text>
+      <text x="${padL + 2}" y="${padT - 4}" fill="#777" font-size="8.5">leader</text>
       <text x="4" y="${H - padB}" fill="#666" font-size="9">behind ↓</text>
-      ${faint}${top}
+      ${lines}${labelSVG}
     </svg>`;
   }
 

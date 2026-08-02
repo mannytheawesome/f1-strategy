@@ -314,6 +314,7 @@ def race_charts_route(session_key: int):
             stints_by_driver.setdefault(s["driver_number"], []).append(s)
         acronyms = {num: (d.get("name_acronym") or str(num))
                     for num, d in drivers_raw.items()}
+        team_colours = {num: d.get("team_colour") for num, d in drivers_raw.items()}
 
         pit_loss = get_avg_pit_loss(session_key, HIST_TTL) or PIT_LOSS
         curves   = build_degradation_curves(all_laps, race_stints)
@@ -338,7 +339,7 @@ def race_charts_route(session_key: int):
             "session_key":   session_key,
             "circuit":       session.get("circuit_short_name", ""),
             "total_laps":    total_laps,
-            "race_trace":    rc.race_trace(all_laps, stints_by_driver, acronyms, total_laps),
+            "race_trace":    rc.race_trace(all_laps, stints_by_driver, acronyms, total_laps, team_colours),
             "rejoin_map":    rc.rejoin_map(all_laps, pit_loss, total_laps),
             "lapping_tax":   rc.lapping_tax(all_laps, total_laps),
             "decision_page": rc.decision_page(curves, pit_loss, total_laps, field_bl, window),
