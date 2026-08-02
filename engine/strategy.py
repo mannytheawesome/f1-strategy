@@ -166,8 +166,8 @@ def generate_strategies(
 
     # ── 1-stop strategies ─────────────────────────────────────────────────
     for c2 in DRY_COMPOUNDS:
-        if c2 == current_compound and current_tyre_age < 5:
-            continue   # same compound again only if already some age
+        if c2 == current_compound:
+            continue   # never pit onto the compound you're already on
         # Don't suggest going to a softer compound mid-race unless it's a late splash
         if HARDNESS.get(c2, 0) < HARDNESS.get(current_compound, 0):
             continue
@@ -186,6 +186,10 @@ def generate_strategies(
         for c3 in DRY_COMPOUNDS:
             compounds = {current_compound, c2, c3}
             if len(compounds) < REQUIRED_COMPOUNDS:
+                continue
+            # Never pit onto the compound just removed — a back-to-back identical
+            # stint is a pit for an equivalent tyre, which no team runs.
+            if c2 == current_compound or c3 == c2:
                 continue
             cliff2 = _cliff(c2, curves)
             cliff3 = _cliff(c3, curves)
