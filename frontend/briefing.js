@@ -797,6 +797,10 @@
   const CHART_COMP = { SOFT: '#e8002d', MEDIUM: '#ffd700', HARD: '#ffffff',
                        INTERMEDIATE: '#43b02a', WET: '#0067ad', UNKNOWN: '#888' };
 
+  // Hover state for the interactive race trace (set when the SVG is built).
+  let _rtState = null;
+  let _rtTooltip = null;
+
   async function loadRaceCharts(sessionKey) {
     const body = document.getElementById('race-charts-body');
     if (!body) return;
@@ -806,13 +810,14 @@
       const rc = await res.json();
       body.innerHTML =
         chartBlock('Gap to the leader — the race trace',
-                   'reconstructed from public lap times · coloured dots = tyre change', raceTraceSVG(rc.race_trace)) +
+                   'reconstructed from public lap times · coloured dots = tyre change · hover for exact gaps', raceTraceSVG(rc.race_trace)) +
         chartBlock('The rejoin trap — cars you drop behind if you box on lap L',
                    `a stop costs ~${rc.rejoin_map.pit_loss}s; the peak marks the DRS-train lap`, rejoinSVG(rc.rejoin_map)) +
         chartBlock('The leader’s lapping tax (estimated)',
                    'cumulative time bled clearing backmarkers — a traffic-density proxy, not a measured delta', lappingTaxSVG(rc.lapping_tax)) +
         chartBlock('The decision on one page',
                    'measured degradation, the pit window, and the rules', decisionPageHTML(rc.decision_page));
+      wireRaceTrace();   // attach the hover crosshair + gap tooltip
     } catch (e) {
       body.innerHTML = `<span class="notice">Race charts unavailable: ${e.message}</span>`;
     }
@@ -863,13 +868,104 @@
     const labelSVG = labels.map(l =>
       `<text x="${(W - padR + 3).toFixed(1)}" y="${(Math.min(l.y, H - 4) + 3).toFixed(1)}" fill="${l.c}" font-size="8.5">${l.acr}</text>`).join('');
 
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+    // Stash geometry + data so the hover handler can map cursor → lap → gaps.
+    _rtState = { drivers, total, maxGap, W, H, padL, padR, padT, padB };
+
+    return `<svg id="race-trace-svg" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
       ${gx}
       <line x1="${padL}" y1="${padT}" x2="${(W - padR).toFixed(1)}" y2="${padT}" stroke="#555" stroke-dasharray="3 3"/>
       <text x="${padL + 2}" y="${padT - 4}" fill="#777" font-size="8.5">leader</text>
       <text x="4" y="${H - padB}" fill="#666" font-size="9">behind ↓</text>
       ${lines}${labelSVG}
+      <line id="rt-crosshair" x1="0" y1="${padT}" x2="0" y2="${H - padB}" stroke="#aaa" stroke-dasharray="3 3" visibility="hidden"/>
+      <g id="rt-hoverdots"></g>
+      <rect id="rt-hit" x="${padL}" y="${padT}" width="${(W - padL - padR).toFixed(1)}" height="${(H - padT - padB).toFixed(1)}" fill="transparent" style="cursor:crosshair"/>
     </svg>`;
+  }
+
+  // Attach the interactive crosshair + gap tooltip to the race trace. On hover
+  // it snaps to the nearest lap, drops a dot on every driver's line at that lap,
+  // and shows a tooltip of each driver's actual gap to the leader in seconds.
+  function wireRaceTrace() {
+    const svg = document.getElementById('race-trace-svg');
+    if (!svg || !_rtState) return;
+    const st = _rtState;
+    const hit = svg.querySelector('#rt-hit');
+    const cross = svg.querySelector('#rt-crosshair');
+    const dots = svg.querySelector('#rt-hoverdots');
+    if (!hit || !cross || !dots) return;
+
+    const X = l => st.padL + (l - 1) / Math.max(1, st.total - 1) * (st.W - st.padL - st.padR);
+    const Y = g => st.padT + (g / st.maxGap) * (st.H - st.padT - st.padB);
+    const colOf = d => d.team_colour ? ('#' + d.team_colour) : '#8a8a8a';
+
+    // Per-driver lap → gap lookup (drivers may retire, so track available laps).
+    const lookups = st.drivers.map(d => {
+      const map = {};
+      d.points.forEach(p => { map[p.lap] = p.gap; });
+      return { acr: d.acronym, colour: colOf(d), map, laps: d.points.map(p => p.lap) };
+    });
+
+    if (!_rtTooltip) {
+      _rtTooltip = document.createElement('div');
+      _rtTooltip.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;display:none;'
+        + 'background:#0b0b0b;border:1px solid #333;border-radius:4px;padding:6px 8px;'
+        + 'font:11px/1.35 "Courier New",monospace;color:#ddd;box-shadow:0 4px 14px rgba(0,0,0,0.5)';
+      document.body.appendChild(_rtTooltip);
+    }
+
+    function show(clientX, clientY) {
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width) return;
+      const svgX = (clientX - rect.left) * (st.W / rect.width);
+      let lap = Math.round((svgX - st.padL) / Math.max(1, st.W - st.padL - st.padR) * (st.total - 1)) + 1;
+      lap = Math.max(1, Math.min(st.total, lap));
+      const cx = X(lap);
+      cross.setAttribute('x1', cx.toFixed(1));
+      cross.setAttribute('x2', cx.toFixed(1));
+      cross.setAttribute('visibility', 'visible');
+
+      const rows = [];
+      let dotSVG = '';
+      lookups.forEach(lu => {
+        let g = lu.map[lap];
+        if (g === undefined) {
+          const before = lu.laps.filter(l => l <= lap);
+          if (!before.length) return;           // driver hadn't started / no data
+          g = lu.map[before[before.length - 1]];
+        }
+        rows.push({ acr: lu.acr, colour: lu.colour, gap: g });
+        dotSVG += `<circle cx="${cx.toFixed(1)}" cy="${Y(g).toFixed(1)}" r="2.6" fill="${lu.colour}" stroke="#000" stroke-width="0.5"/>`;
+      });
+      dots.innerHTML = dotSVG;
+      rows.sort((a, b) => a.gap - b.gap);
+
+      const body = rows.map(r =>
+        `<div style="display:flex;justify-content:space-between;gap:12px">`
+        + `<span style="color:${r.colour}">${r.acr}</span>`
+        + `<span>${r.gap <= 0.05 ? 'leader' : '+' + r.gap.toFixed(1) + 's'}</span></div>`).join('');
+      _rtTooltip.innerHTML = `<div style="color:#888;margin-bottom:3px">LAP ${lap}</div>${body}`;
+      _rtTooltip.style.display = 'block';
+
+      const tw = _rtTooltip.offsetWidth, th = _rtTooltip.offsetHeight;
+      let left = clientX + 14;
+      if (left + tw > window.innerWidth - 8) left = clientX - tw - 14;
+      let top = Math.max(8, Math.min(window.innerHeight - th - 8, clientY - th / 2));
+      _rtTooltip.style.left = left + 'px';
+      _rtTooltip.style.top = top + 'px';
+    }
+
+    function hide() {
+      cross.setAttribute('visibility', 'hidden');
+      dots.innerHTML = '';
+      if (_rtTooltip) _rtTooltip.style.display = 'none';
+    }
+
+    hit.addEventListener('mousemove', e => show(e.clientX, e.clientY));
+    hit.addEventListener('mouseleave', hide);
+    hit.addEventListener('touchstart', e => { if (e.touches[0]) { show(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: true });
+    hit.addEventListener('touchmove', e => { if (e.touches[0]) { show(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); } }, { passive: false });
+    hit.addEventListener('touchend', hide);
   }
 
   // #4a — how many cars the leader rejoins behind if they box on lap L
