@@ -25,6 +25,7 @@ import time
 import statistics
 import urllib.request
 import urllib.parse
+import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -69,6 +70,16 @@ def fetch(endpoint: str, max_retries: int = 6, cache_only: bool = False, **param
                 json.dump(data, f)
             time.sleep(2.2)   # stay under 30 req/min
             return data
+        except urllib.error.HTTPError as e:
+            # 404 means this session simply has no data (a race that hasn't run,
+            # or one OpenF1 never published laps for). Retrying can't help, and
+            # the escalating backoff burned ~5 minutes per such session.
+            if e.code == 404:
+                print(f"    fetch {endpoint} {params} -> 404, no data — skipping")
+                raise RuntimeError(f"no data (404): {url}") from e
+            wait = 15 * (attempt + 1)
+            print(f"    fetch {endpoint} {params} failed ({e}) — retry in {wait}s")
+            time.sleep(wait)
         except Exception as e:
             wait = 15 * (attempt + 1)
             print(f"    fetch {endpoint} {params} failed ({e}) — retry in {wait}s")
