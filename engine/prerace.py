@@ -26,7 +26,7 @@ from engine.predictor import (
     PIT_LOSS, DRY, _lap_t, _cliff_life,
 )
 
-PACK_VERSION = 11   # 11: strategies no longer repeat a compound back-to-back
+PACK_VERSION = 12   # 12: robust circuit->total_laps; regenerates stale wrong-distance briefings
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -748,7 +748,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
 
     race = next((s for s in sessions if _is_grand_prix(s)), None)
     meta = race or sources[-1]
-    circuit = meta.get("circuit_short_name", "")
+    # circuit_short_name can be missing on the chosen session; take it from any
+    # session in the meeting that has one, so total_laps never silently falls
+    # back to DEFAULT_LAPS (which shoved every stop to the end of a too-long race).
+    circuit = (meta.get("circuit_short_name")
+               or next((s.get("circuit_short_name") for s in sessions
+                        if s.get("circuit_short_name")), ""))
     if total_laps is None:
         total_laps = CIRCUIT_LAPS.get(circuit.lower(), DEFAULT_LAPS)
 
