@@ -405,27 +405,30 @@ def get_sc_laps_from_race_control(session_key: int, ttl: float = HIST_TTL) -> li
     active: dict[str, int | None] = {"SC": None, "VSC": None}
 
     for msg in sorted(messages, key=lambda m: m.get("date", "")):
-        flag   = msg.get("flag", "")
-        lap    = msg.get("lap_number")
-        scope  = msg.get("scope", "")
-        if scope != "Track":
+        lap  = msg.get("lap_number")
+        text = (msg.get("message") or "").upper()
+        # OpenF1 reports neutralisations as category="SafetyCar" rows whose state
+        # lives in the message text — `flag` and `scope` are null on these rows,
+        # so matching on them (as this used to) silently found nothing. Observed
+        # wordings: "SAFETY CAR DEPLOYED" / "SAFETY CAR IN THIS LAP",
+        # "VSC DEPLOYED" / "VSC ENDING", "VIRTUAL SAFETY CAR DEPLOYED" / "... ENDING".
+        if msg.get("category") != "SafetyCar" or not text:
             continue
 
-        if flag == "SAFETY CAR":
-            if active["SC"] is None:
-                active["SC"] = lap
-        elif flag == "VIRTUAL SAFETY CAR":
-            if active["VSC"] is None:
-                active["VSC"] = lap
-        elif flag in ("CLEAR", "GREEN") and lap:
-            for kind in ("SC", "VSC"):
-                if active[kind] is not None:
-                    events.append({
-                        "type":      kind,
-                        "start_lap": active[kind],
-                        "end_lap":   lap,
-                    })
-                    active[kind] = None
+        # "VIRTUAL SAFETY CAR ..." also contains "SAFETY CAR", so test VSC first.
+        kind = "VSC" if ("VIRTUAL" in text or text.startswith("VSC")) else "SC"
+
+        if "DEPLOYED" in text:
+            if active[kind] is None:
+                active[kind] = lap
+        elif "ENDING" in text or "IN THIS LAP" in text:
+            if active[kind] is not None and lap:
+                events.append({
+                    "type":      kind,
+                    "start_lap": active[kind],
+                    "end_lap":   lap,
+                })
+                active[kind] = None
 
     # Close any still-active events (red flag finish etc.)
     for kind, start in active.items():

@@ -26,7 +26,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 8
+PACK_VERSION = 9   # 9: SC/VSC now parsed from race control (were silently never detected)
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
