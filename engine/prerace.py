@@ -41,6 +41,10 @@ CIRCUIT_LAPS = {
     "spa": 44, "hungaroring": 70, "zandvoort": 72, "monza": 53, "baku": 51,
     "singapore": 62, "austin": 56, "mexico city": 71, "interlagos": 71,
     "las vegas": 50, "lusail": 57, "yas marina circuit": 58, "yas marina": 58,
+    # 2026 additions. OpenF1 names them "Kuala Lumpur" (Sepang) and "Madring"
+    # (Madrid). Both follow the FIA rule of the fewest laps exceeding 305 km:
+    # Sepang 5.543 km -> 56; Madring 5.474 km -> 56.
+    "kuala lumpur": 56, "sepang": 56, "madring": 56, "madrid": 56,
 }
 DEFAULT_LAPS = 55
 
