@@ -26,16 +26,23 @@ engine (`engine/predictor.py`) and validating it via the backtest harness.
 Everything else (briefings UI, live board) is supporting surface. When making
 changes, prefer ones that are measurable against the backtest.
 
-Current backtested accuracy (`cache/backtest_results.json`, 53 races,
-2023–2025) — winner-hit / podium-of-3 / mean absolute position error:
+Current backtested accuracy (`cache/backtest_results.json`, 57 races,
+2023–2026, 192 checkpoints) — winner-hit / podium-of-3 / mean absolute
+position error:
 
 | Race distance | Winner | Podium | MAE |
 |---|---|---|---|
-| 25% | 68% | 2.40 | 1.95 |
-| 50% | 68% | 2.47 | 1.63 |
-| 75% | 87% | 2.57 | 1.05 |
+| 25% | 70% | 2.38 | 1.91 |
+| 50% | 69% | 2.47 | 1.67 |
+| 75% | 84% | 2.52 | 1.12 |
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
+
+These supersede an older 53-race table (68/68/87% winner, MAE 1.95/1.63/1.05).
+The engine is unchanged — the cache was rebuilt from scratch, so the numbers
+moved only because the underlying OpenF1 data was re-fetched and the race set
+grew. Verified by A/B: the same 81-weekend cache evaluated at the pre- and
+post-SC-fix commits produces a byte-identical fingerprint.
 
 ---
 
