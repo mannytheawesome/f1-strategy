@@ -22,12 +22,12 @@ from data.live import (
 )
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, curves_to_dict, SCEvent,
-    FUEL_RATE,
+    FUEL_RATE, SC_PIT_FACTOR, VSC_PIT_FACTOR,
 )
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 10  # 10: compound_sequence in the pack + tyre-claim validation
+PACK_VERSION = 11  # 11: measured SC/VSC pit-loss factors change stop grading
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -105,15 +105,17 @@ def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
             stay_out = sum(oc.lap_time(age_at_stop + i) for i in range(1, window + 1))
             pit_now = sum(nc.lap_time(i) for i in range(1, window + 1))
             gain = stay_out - pit_now
-            # Neutralisation windfall differs by kind: full SC saves ~55% of
-            # the pit loss (field bunched + slowed), VSC only ~35% (delta pace)
+            # Neutralisation windfall, measured against rivals who stayed out
+            # (2023-2026): a stop under a full SC still costs 0.78x the green
+            # loss and a VSC 0.69x, so the saving is ~22% / ~31% — not the
+            # ~55% / ~35% this used to credit.
             ev = next((e for e in sc_events
                        if e.start_lap <= stop_lap <= e.end_lap + 1), None)
             neutralised = ev.type if ev else None
             if neutralised == "VSC":
-                gain += pit_loss * 0.35
+                gain += pit_loss * (1 - VSC_PIT_FACTOR)
             elif neutralised:
-                gain += pit_loss * 0.55
+                gain += pit_loss * (1 - SC_PIT_FACTOR)
             label = "howler"
             for threshold, name in GRADE_LABELS:
                 if gain >= threshold:

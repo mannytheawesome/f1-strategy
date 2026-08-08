@@ -38,6 +38,7 @@ YEARS = [2023, 2024, 2025, 2026]
 EVAL_FRACTIONS = [0.25, 0.50, 0.75]
 
 from engine.circuits import STREET_CIRCUITS as _CANONICAL_STREET
+from engine.pit_loss import pit_loss_for
 # The offline harness matches a couple of extra name spellings that show up in
 # historical OpenF1 circuit_short_name values.
 STREET_CIRCUITS = _CANONICAL_STREET | {"las vegas", "marina bay"}
@@ -261,7 +262,8 @@ def evaluate_weekend(data: dict, tpw_street: float, tpw_normal: float) -> list[d
                                     curves, data["race_stints"])
             state = state_at_lap(data, eval_lap)
             forecasts = simulate_race(state, eval_lap, total_laps, curves,
-                                      pace, sc, track_position_weight=tpw)
+                                      pace, sc, track_position_weight=tpw,
+                                      pit_loss=pit_loss_for(w["circuit"]))
         except Exception as e:
             results.append({"race": f"{w['year']} {w['country']}", "lap": eval_lap,
                             "error": str(e)[:80]})
