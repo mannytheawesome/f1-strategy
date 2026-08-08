@@ -329,6 +329,8 @@ def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
     for s in rows:
         if s.get("lap_start") is None:
             continue   # a stint with no start lap isn't usable yet
+        if s.get("lap_end") is not None and s["lap_end"] < s["lap_start"]:
+            continue   # inverted bounds — a corrupt row, not a stint
         if (s.get("tyre_age_at_start") is None or s.get("stint_number") is None
                 or s.get("compound") is None):
             s = {**s,
@@ -336,7 +338,85 @@ def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
                  "stint_number": s.get("stint_number") or 0,
                  "compound": s.get("compound") or "UNKNOWN"}
         out.append(s)
-    return out
+    return _merge_stint_fragments(out)
+
+
+def _merge_stint_fragments(rows: list[dict]) -> list[dict]:
+    """Rejoin stint rows that OpenF1 split mid-set.
+
+    OpenF1 sometimes emits one physical stint as several rows — often 1-lap
+    slivers around a restart or a mid-race event, e.g.
+        HARD 37-66 (age 0) | HARD 67-67 (age 0) | HARD 68-68 (age 0) | HARD 69-70 (age 32)
+    which is one HARD set run from lap 37 to the flag. Left alone these fragments
+    invent extra stops and push a driver past the tyre allocation (that example
+    read as four *new* HARD sets, when only two are allocated).
+
+    A following row continues the same physical set when it shares the compound
+    and its tyre age has kept counting from the previous row's start:
+        age_b == age_a + (lap_start_b - lap_start_a)
+    A genuine stop onto a fresh set resets the age to 0, so real same-compound
+    stops (a second new HARD, say) are preserved untouched.
+    """
+    by_driver: dict[int, list[dict]] = {}
+    for s in rows:
+        by_driver.setdefault(s.get("driver_number"), []).append(s)
+
+    merged: list[dict] = []
+    for _, stints in by_driver.items():
+        stints = sorted(stints, key=lambda s: s["lap_start"])
+
+        # Rows of one physical set share a compound and an implied fitting lap
+        # (lap_start - tyre_age), because the age keeps counting on that set.
+        sets: dict[tuple, dict] = {}
+        for s in stints:
+            key = (s.get("compound"), s["lap_start"] - (s.get("tyre_age_at_start") or 0))
+            keep = sets.get(key)
+            if keep is None:
+                sets[key] = dict(s)
+                continue
+            ends = [e for e in (keep.get("lap_end"), s.get("lap_end")) if e is not None]
+            keep["lap_end"] = max(ends) if ends else None
+            if s["lap_start"] < keep["lap_start"]:
+                keep["lap_start"] = s["lap_start"]
+                keep["tyre_age_at_start"] = s.get("tyre_age_at_start") or 0
+
+        spans = sorted(sets.values(), key=lambda s: s["lap_start"])
+
+        def length(s):
+            return (s["lap_end"] - s["lap_start"] + 1) if s.get("lap_end") is not None else 1
+
+        # A driver is on one set at a time, so a span sitting entirely inside
+        # another is a duplicate slice, not a stint. (Typically a 1-lap row at
+        # the start overlapping the real opening stint.)
+        kept = []
+        for s in spans:
+            s_end = s.get("lap_end")
+            contained = any(
+                o is not s and o.get("lap_end") is not None and s_end is not None
+                and o["lap_start"] <= s["lap_start"] and s_end <= o["lap_end"]
+                and length(o) > length(s)
+                for o in spans
+            )
+            if not contained:
+                kept.append(s)
+
+        # Slivers whose age is reported as 0 mid-set look like fresh sets, so the
+        # age arithmetic above can't rejoin them. But you cannot pit, run a lap or
+        # two, and pit again onto the same compound — a very short run touching a
+        # same-compound neighbour is a fragment of it.
+        out: list[dict] = []
+        for s in sorted(kept, key=lambda s: s["lap_start"]):
+            prev = out[-1] if out else None
+            if (prev and prev.get("compound") == s.get("compound")
+                    and prev.get("lap_end") is not None
+                    and s["lap_start"] <= prev["lap_end"] + 1
+                    and min(length(prev), length(s)) <= 2):
+                ends = [e for e in (prev.get("lap_end"), s.get("lap_end")) if e is not None]
+                prev["lap_end"] = max(ends) if ends else None
+            else:
+                out.append(s)
+        merged.extend(out)
+    return merged
 
 
 def get_laps(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
