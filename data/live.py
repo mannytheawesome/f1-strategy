@@ -548,7 +548,14 @@ def get_avg_pit_loss(session_key: int, ttl: float = HIST_TTL) -> float:
     durations = [p["pit_duration"] for p in pits
                  if p.get("pit_duration") and 15 < p["pit_duration"] < 35]
     if not durations:
-        return 22.0
+        # No measured stops — fall back to this circuit's measured pit loss
+        # rather than a blind 22.0s (the real range is 16.8s-28.3s).
+        from engine.pit_loss import pit_loss_for
+        try:
+            circuit = get_session(session_key).get("circuit_short_name", "")
+        except Exception:
+            circuit = ""
+        return pit_loss_for(circuit)
     return round(sum(durations) / len(durations), 1)
 
 

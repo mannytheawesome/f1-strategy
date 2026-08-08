@@ -42,6 +42,11 @@ COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
 
 from engine.circuits import STREET_CIRCUITS
+# Share of the green-flag pit loss still paid when stopping under a
+# neutralisation (measured vs rivals who stayed out, 2023-2026).
+SC_PIT_FACTOR  = 0.78   # full safety car  (n=177)
+VSC_PIT_FACTOR = 0.69   # virtual safety car (n=71)
+
 SC_RATE_DEFAULT = 0.0067
 SC_RATE_STREET  = 0.0120
 
@@ -938,17 +943,19 @@ def _neutralised_pit_loss(sc_events: list[SCEvent], current_lap: int,
                           pit_loss: float) -> tuple[Optional[SCEvent], float]:
     """Discount the pit-lane time loss while a neutralisation is active.
 
-    A full SC bunches the field and slows it hardest (~55% of the loss saved);
-    a VSC only holds everyone to a delta (~35% saved). Returns the active event
-    (or None) and the effective pit loss to cost stops against.
+    Measured over 2023-2026: taking the stop under a neutralisation costs 0.78x
+    the green-flag loss under a full SC (n=177) and 0.69x under a VSC (n=71),
+    against rivals who stayed out. The old figures (0.45x SC / 0.65x VSC) priced
+    a full safety car as a far bigger windfall than it actually is — in practice
+    a bunched field and a busy pit lane eat most of the theoretical saving.
     """
     active_ev = next((ev for ev in sc_events
                       if ev.start_lap <= current_lap <= ev.end_lap + 1), None)
     if active_ev is None:
         return None, pit_loss
     if active_ev.type == "VSC":
-        return active_ev, pit_loss * 0.65
-    return active_ev, pit_loss * 0.45
+        return active_ev, pit_loss * VSC_PIT_FACTOR
+    return active_ev, pit_loss * SC_PIT_FACTOR
 
 
 def simulate_race(
