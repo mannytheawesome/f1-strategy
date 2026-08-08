@@ -11,6 +11,7 @@ data pack with narrative=None so the frontend can degrade gracefully.
 
 import json
 import os
+import re
 import statistics
 from datetime import datetime, timezone
 
@@ -26,7 +27,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 9   # 9: SC/VSC now parsed from race control (were silently never detected)
+PACK_VERSION = 10  # 10: compound_sequence in the pack + tyre-claim validation
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -42,6 +43,12 @@ Hard rules:
 - Every number you cite MUST appear in the JSON data pack you are given. Never invent \
 lap times, gaps, degradation rates, or positions. If the data doesn't support a claim, \
 don't make it.
+- TYRES ARE FACTS, NOT PROSE. Any compound you name for a driver must come from that \
+driver's `compound_sequence` / `stints` in the data pack. Never reconstruct a tyre \
+sequence from memory or from what a strategy "should" have been: quote \
+`compound_sequence` as given, in order. A compound listed as UNKNOWN must be described \
+as unknown (or left out) — never guessed at. Do not state how many stints a driver ran \
+on a compound unless it matches `compound_counts`.
 - Refer to drivers by their three-letter acronym as given in the data.
 - Degradation rates are seconds per lap of tyre age; pace deltas are seconds per lap \
 vs the field median (negative = faster).
@@ -349,6 +356,10 @@ def build_briefing_data(session_key: int) -> dict:
             for s in sorted(stints_by_driver.get(d.driver_number, []),
                             key=lambda s: s.get("lap_start") or 0)
         ]
+        # An unambiguous, quotable tyre sequence. The narrative must copy this
+        # verbatim rather than reconstruct it from the stint list — reconstructing
+        # is how a MEDIUM-HARD-HARD race became "HARD-HARD-HARD" in prose.
+        seq = [(s["compound"] or "UNKNOWN") for s in stints]
         results.append({
             "driver_number":  d.driver_number,
             "acronym":        d.acronym,
@@ -360,6 +371,8 @@ def build_briefing_data(session_key: int) -> dict:
             "retired":        d.retired,
             "gap_to_leader":  d.gap_to_leader,
             "stops":          max(0, len(stints) - 1),
+            "compound_sequence": "-".join(seq),
+            "compound_counts": {c: seq.count(c) for c in sorted(set(seq))},
             "stints":         stints,
             "pace_delta":     round(pace.pace_delta, 3) if pace else None,
         })
@@ -455,10 +468,55 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
         return None
 
 
+_COMPOUND_WORDS = ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
+
+
+def validate_tyre_claims(narrative: dict, results: list[dict]) -> list[str]:
+    """Check every tyre sequence asserted in the prose against the real stint data.
+
+    The model writes things like "a HARD-HARD-HARD sequence"; this pulls those
+    hyphenated runs out and confirms each is a contiguous slice of some driver's
+    actual compound_sequence. Returns human-readable warnings for any that aren't
+    — a real race produced "HARD-HARD-HARD" prose from a MEDIUM-HARD-HARD race,
+    and nothing caught it.
+    """
+    if not narrative:
+        return []
+    actual = [r.get("compound_sequence") or "" for r in results]
+    prose = " ".join(str(v) for v in narrative.values() if isinstance(v, str))
+    alt = "|".join(_COMPOUND_WORDS)
+    claims = re.findall(rf"\b(?:{alt})(?:\s*[-–—]\s*(?:{alt}))+", prose, re.I)
+    warnings = []
+    for claim in set(claims):
+        parts = [p.strip().upper() for p in re.split(r"[-–—]", claim)]
+        needle = "-".join(parts)
+        if not any(needle in seq for seq in actual):
+            warnings.append(f"tyre sequence '{needle}' matches no driver's actual stints")
+    return warnings
+
+
 def generate_narrative(pack: dict) -> dict | None:
-    return generate_structured_narrative(
+    """Generate the narrative, and if it asserts a tyre sequence that no driver
+    actually ran, retry once with the violation pointed out. A second failure is
+    surfaced as a warning on the briefing rather than silently published."""
+    narrative = generate_structured_narrative(
         pack, NARRATIVE_SYSTEM, NARRATIVE_SCHEMA,
         "Write the race briefing for this data pack.")
+    problems = validate_tyre_claims(narrative, pack.get("results") or [])
+    if problems:
+        print(f"[briefing] tyre-claim violations, regenerating once: {problems}")
+        narrative = generate_structured_narrative(
+            pack, NARRATIVE_SYSTEM, NARRATIVE_SCHEMA,
+            "Write the race briefing for this data pack. Your previous attempt "
+            "stated tyre sequences that no driver ran: "
+            + "; ".join(problems)
+            + ". Use each driver's compound_sequence field verbatim.")
+        still = validate_tyre_claims(narrative, pack.get("results") or [])
+        if still:
+            print(f"[briefing] tyre-claim violations persist: {still}")
+            if isinstance(narrative, dict):
+                narrative["_warnings"] = still
+    return narrative
 
 
 def get_briefing(session_key: int, regenerate: bool = False) -> dict:
