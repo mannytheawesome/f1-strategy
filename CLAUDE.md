@@ -26,15 +26,17 @@ engine (`engine/predictor.py`) and validating it via the backtest harness.
 Everything else (briefings UI, live board) is supporting surface. When making
 changes, prefer ones that are measurable against the backtest.
 
-Current backtested accuracy (`cache/backtest_results.json`, 58 races,
-2023–2026, 198 checkpoints) — winner-hit / podium-of-3 / mean absolute
+Current backtested accuracy (`cache/backtest_results.json`, 73 races,
+2023–2026, 243 checkpoints) — winner-hit / podium-of-3 / mean absolute
 position error:
 
 | Race distance | Winner | Podium | MAE |
 |---|---|---|---|
-| 25% | 76% | 2.36 | 1.92 |
-| 50% | 77% | 2.45 | 1.51 |
-| 75% | 89% | 2.56 | 1.04 |
+| 25% | 74% | 2.35 | 1.89 |
+| 50% | 78% | 2.42 | 1.57 |
+| 75% | 91% | 2.57 | 1.08 |
+
+Overall: 81.1% winner-hit, MAE 1.52 over 243 checkpoints.
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
 
@@ -224,6 +226,11 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
   top-10 intersection, MAE over finishers (retirements after the prediction lap
   are excluded — not predictable from pace/strategy).
 - `backtest.py` is the alternate HTTP path (needs a running server on `:8001`).
+- The harness sanitises stint rows exactly as `data.live.get_stints` does, so it
+  measures the engine on the same repaired data production sees. Evaluating raw
+  OpenF1 stints (with their 1-lap fragments) quietly inflates stop counts.
+- `python audit_strategies.py` checks every cached weekend's generated plans for
+  structural sanity and flags saturated deg fits.
 - Compare against the headline table above; a change that lowers MAE / raises
   winner-hit across fractions is a real improvement.
 - For UI/live behaviour, use **replay mode** (`/api/replay?session_key&lap`) to
