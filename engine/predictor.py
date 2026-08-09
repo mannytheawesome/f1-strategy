@@ -52,8 +52,13 @@ DEG_FALLBACK = (1.05, 5)
 # genuine long run (SOFT 1.78 direct, 1.75 from clean-curve medians — two
 # independent estimates agreeing). Used to price a compound nobody ran long.
 DEG_RATIO = {"SOFT": 1.75, "MEDIUM": 1.0, "HARD": 0.6}
-# Last resort when NOTHING was measured at an event: median of strict long-run
-# fits across 2023-2026.
+# Floor for a compound with NO long run at all. Deliberately the p75 of measured
+# rates, not the median: a compound nobody could run long is self-selecting
+# evidence that it wears hard here, so assuming median wear systematically
+# flatters it. Using the median had the optimiser recommending SOFT in 86% of
+# races against the 27% teams actually ran it in.
+DEG_UNMEASURED = {"SOFT": 0.24, "MEDIUM": 0.13, "HARD": 0.07}
+# Last resort when NOTHING was measured at an event.
 DEG_PRIOR = {"SOFT": 0.12, "MEDIUM": 0.07, "HARD": 0.04}
 
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
@@ -351,6 +356,9 @@ def build_deg_curves(
             if c in measured or c not in DEG_RATIO:
                 continue
             est = measured[ref] * (DEG_RATIO[c] / DEG_RATIO[ref])
+            # The ratio itself is measured only where the compound DID get a
+            # long run, so it under-states wear for one that never did.
+            est = max(est, DEG_UNMEASURED.get(c, 0.0))
             curves[c] = DegCurve(c, est, cur.baseline, cur.data_points,
                                  cur.confidence.rstrip("*") + "*", cur.sessions)
     else:
