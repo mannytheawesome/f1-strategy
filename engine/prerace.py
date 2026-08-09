@@ -23,10 +23,14 @@ from data.live import (
 from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
-    PIT_LOSS, DRY, _lap_t, _cliff_life,
+    PIT_LOSS, DRY, SC_PIT_FACTOR, _lap_t, _cliff_life,
 )
 
-PACK_VERSION = 12   # 12: robust circuit->total_laps; regenerates stale wrong-distance briefings
+# A plan within this much of the optimum is genuinely in play; race-day noise
+# (traffic, a slow stop, deg running hot) covers a gap this size.
+LIVE_MARGIN_S = 10.0
+
+PACK_VERSION = 13   # 13: strategy candidates carry a viability label
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -845,8 +849,24 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             "total_time": tot,
         })
     strategies.sort(key=lambda s: s["total_time"])
+    best_stops = strategies[0]["stops"] if strategies else 1
     for s in strategies:
         s["time_delta"] = round(s["total_time"] - strategies[0]["total_time"], 1)
+        # Candidates are generated at a forced 1, 2 and 3 stops, so a plan that
+        # is nowhere near the optimum still appears in the table. Say plainly
+        # which ones are actually on the table: a deficit inside a stop's worth
+        # of noise is live, and a bigger one is only reachable if a
+        # neutralisation refunds the extra stops (measured at (1-SC_PIT_FACTOR)
+        # of the pit loss each). Anything beyond that is not a real option.
+        extra_stops = max(0, s["stops"] - best_stops)
+        sc_refund = round(extra_stops * (1 - SC_PIT_FACTOR) * pit_loss, 1)
+        s["sc_refund_s"] = sc_refund
+        if s["time_delta"] <= LIVE_MARGIN_S:
+            s["viability"] = "in play"
+        elif s["time_delta"] <= sc_refund + LIVE_MARGIN_S:
+            s["viability"] = "needs a Safety Car"
+        else:
+            s["viability"] = "not on the table"
 
     # ── tyre inventory: what the top 10 actually hold ────────────────────────
     inventory_summary = None
