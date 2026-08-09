@@ -26,23 +26,30 @@ engine (`engine/predictor.py`) and validating it via the backtest harness.
 Everything else (briefings UI, live board) is supporting surface. When making
 changes, prefer ones that are measurable against the backtest.
 
-Current backtested accuracy (`cache/backtest_results.json`, 57 races,
-2023–2026, 192 checkpoints) — winner-hit / podium-of-3 / mean absolute
+Current backtested accuracy (`cache/backtest_results.json`, 58 races,
+2023–2026, 198 checkpoints) — winner-hit / podium-of-3 / mean absolute
 position error:
 
 | Race distance | Winner | Podium | MAE |
 |---|---|---|---|
-| 25% | 70% | 2.38 | 1.91 |
-| 50% | 69% | 2.47 | 1.67 |
-| 75% | 84% | 2.52 | 1.12 |
+| 25% | 76% | 2.36 | 1.92 |
+| 50% | 77% | 2.45 | 1.51 |
+| 75% | 89% | 2.56 | 1.04 |
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
 
-These supersede an older 53-race table (68/68/87% winner, MAE 1.95/1.63/1.05).
-The engine is unchanged — the cache was rebuilt from scratch, so the numbers
-moved only because the underlying OpenF1 data was re-fetched and the race set
-grew. Verified by A/B: the same 81-weekend cache evaluated at the pre- and
-post-SC-fix commits produces a byte-identical fingerprint.
+These supersede a 74.5%-winner / 1.56-MAE baseline. The gain came from fixing
+degradation estimation (see below), verified on identical checkpoints (n=171):
+winner 74.9% -> 80.1%, MAE 1.540 -> 1.494, with the largest gain at 50% distance
+(68.4% -> 75.4% winner) — the weak spot this file previously called out.
+
+Degradation is fitted PER STINT, not pooled across drivers. A stint is one car
+on one fuel programme, so a slope fitted inside it measures wear; pooling mixed
+low-fuel qualifying simulations on fresh tyres with high-fuel long runs on old
+ones and read that as degradation, saturating the 0.30 s/lap clamp on most
+weekends. Only laps within `DEG_LONGRUN` (1.02x the stint's best, >=8 clean laps)
+count as representative running, so practice cool-down laps are excluded, and
+stint slopes are aggregated by weighted median rather than mean.
 
 ---
 

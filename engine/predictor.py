@@ -38,6 +38,16 @@ FUEL_RATE = 0.035        # s/lap improvement from fuel burn-off
 # FP deg rates 2-3x higher than what actually materialises in the race
 FP_WEIGHTS = {"FP1": 0.3, "FP2": 1.0, "FP3": 0.9, "RACE": 3.0}
 
+# Degradation is fitted per stint. A stint needs this many clean laps to give a
+# trustworthy slope, and laps slower than this ratio of the stint median are
+# treated as traffic/mistakes rather than wear.
+# Practice stints interleave push laps with much slower cool-down laps, so a
+# lap only counts as representative running if it is within this ratio of the
+# stint's own best lap. The strict pass is what a genuine long run looks like;
+# the loose pass is a fallback for compounds with no long run at all.
+DEG_LONGRUN = (1.02, 8)    # (max ratio to stint best, min clean laps)
+DEG_FALLBACK = (1.05, 5)
+
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
 
@@ -211,59 +221,105 @@ def sc_probability(sc_events: list[SCEvent], current_lap: int,
 
 # ── Deg curves from FP data ───────────────────────────────────────────────────
 
+def _stint_deg_samples(laps_raw, stints_raw, weight, session_name,
+                       ratio=DEG_LONGRUN[0], min_laps=DEG_LONGRUN[1]):
+    """Per-stint degradation slopes, grouped by compound.
+
+    One stint is one car on one fuel programme, so a slope fitted INSIDE it
+    measures tyre wear. Pooling every driver's laps together (as this used to)
+    mixes low-fuel qualifying simulations on fresh tyres with high-fuel long runs
+    on old ones and reads that difference as degradation — which is why practice
+    deg saturated the 0.30 s/lap clamp on most weekends.
+    """
+    by_driver: dict[int, dict[int, float]] = {}
+    for lap in laps_raw:
+        dur = lap.get("lap_duration")
+        if not dur or dur > 200 or dur < 55 or lap.get("is_pit_out_lap"):
+            continue
+        by_driver.setdefault(lap["driver_number"], {})[lap["lap_number"]] = dur
+
+    out: dict[str, list[tuple]] = {}
+    for st in stints_raw:
+        c = st.get("compound", "")
+        if c not in DRY or st.get("lap_start") is None:
+            continue
+        laps = by_driver.get(st["driver_number"], {})
+        lo, hi = st["lap_start"], (st.get("lap_end") or st["lap_start"])
+        # Drop the in-lap: a stint's final lap ends in the pit lane.
+        pts = [(ln, laps[ln]) for ln in range(lo, hi) if ln in laps]
+        if len(pts) < min_laps:
+            continue
+        # Keep only representative running: cool-down laps, traffic and mistakes
+        # are all one-sided and slow, so measure against the stint's best lap.
+        ref = min(d for _, d in pts)
+        pts = [(ln, d) for ln, d in pts if d <= ref * ratio]
+        if len(pts) < min_laps:
+            continue
+
+        age0 = st.get("tyre_age_at_start") or 0
+        xs = [float(age0 + ln - lo) for ln, _ in pts]
+        # Fuel burn-off makes later laps faster; add it back so the slope is wear
+        # only. This applies to practice long runs too, not just the race.
+        ys = [d + FUEL_RATE * ln for ln, d in pts]
+        n = len(xs)
+        mx = sum(xs) / n
+        denom = sum((x - mx) ** 2 for x in xs)
+        if denom == 0:
+            continue
+        my = sum(ys) / n
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom
+        # Baseline: lap time at age 0 in this stint's own fuel state (raw, so it
+        # stays comparable with the compound-offset sanity check further down).
+        raw_med = statistics.median(d for _, d in pts)
+        base = raw_med - slope * statistics.median(xs)
+        out.setdefault(c, []).append((slope, base, weight, n, session_name))
+    return out
+
+
+def _weighted_median(pairs: list[tuple[float, float]]) -> float:
+    """Median of values under sample weights — robust to one wild stint in a way
+    the old weighted mean was not."""
+    pairs = sorted(pairs)
+    total = sum(w for _, w in pairs)
+    if total <= 0:
+        return pairs[len(pairs) // 2][0]
+    acc = 0.0
+    for v, w in pairs:
+        acc += w
+        if acc >= total / 2:
+            return v
+    return pairs[-1][0]
+
+
 def build_deg_curves(
     fp_data: list[tuple[str, list[dict], list[dict]]]
 ) -> dict[str, DegCurve]:
 
     samples: dict[str, list[tuple]] = {}
-
     for name, laps_raw, stints_raw in fp_data:
         w = FP_WEIGHTS.get(name, 0.5)
+        for c, rows in _stint_deg_samples(laps_raw, stints_raw, w, name).items():
+            samples.setdefault(c, []).extend(rows)
+    # A compound with no genuine long run (short practice programme, wet FP)
+    # would otherwise have no curve at all — retake it on looser terms.
+    for name, laps_raw, stints_raw in fp_data:
+        w = FP_WEIGHTS.get(name, 0.5)
+        loose = _stint_deg_samples(laps_raw, stints_raw, w, name,
+                                   ratio=DEG_FALLBACK[0], min_laps=DEG_FALLBACK[1])
+        for c, rows in loose.items():
+            if not samples.get(c):
+                samples.setdefault(c, []).extend(rows)
 
-        stint_map: dict[tuple, dict] = {}
-        for s in stints_raw:
-            end = s.get("lap_end") or 9999
-            for ln in range(s["lap_start"], end + 1):
-                stint_map[(s["driver_number"], ln)] = s
-
-        is_race = name == "RACE"
-        by_c: dict[str, list[tuple]] = {}
-        for lap in laps_raw:
-            dur = lap.get("lap_duration")
-            if not dur or dur > 200 or dur < 55 or lap.get("is_pit_out_lap"):
-                continue
-            s = stint_map.get((lap["driver_number"], lap["lap_number"]))
-            if not s:
-                continue
-            c = s.get("compound", "")
-            if c not in DRY:
-                continue
-            age = float(s.get("tyre_age_at_start", 0) + lap["lap_number"] - s["lap_start"])
-            # Undo the fuel lightening effect so regression slope reflects tyre
-            # wear only. Without this, long Medium/Hard stints in race data have
-            # near-zero or negative slopes (fuel saving > deg).
-            fuel_adj = FUEL_RATE * lap["lap_number"] if is_race else 0.0
-            by_c.setdefault(c, []).append((age, dur + fuel_adj))
-
-        for c, data in by_c.items():
-            if len(data) < 5:
-                continue
-            xs, ys = zip(*data)
-            n = len(xs)
-            mx, my = sum(xs)/n, sum(ys)/n
-            denom = sum((x-mx)**2 for x in xs)
-            if denom == 0:
-                continue
-            slope = sum((x-mx)*(y-my) for x,y in zip(xs,ys)) / denom
-            samples.setdefault(c, []).append((slope, my - slope*mx, w, n, name))
 
     curves: dict[str, DegCurve] = {}
     for c, samps in samples.items():
         tw = sum(s[2] for s in samps)
         if tw == 0:
             continue
-        deg  = sum(s[0]*s[2] for s in samps) / tw
-        base = sum(s[1]*s[2] for s in samps) / tw
+        # Median over stints, not a mean: a single traffic-wrecked run should
+        # not drag the whole compound's deg rate up.
+        deg  = _weighted_median([(s[0], s[2]) for s in samps])
+        base = _weighted_median([(s[1], s[2]) for s in samps])
         pts  = sum(s[3] for s in samps)
         conf = "HIGH" if pts >= 20 else "MEDIUM" if pts >= 8 else "LOW"
         curves[c] = DegCurve(c, max(deg, 0.0), base, pts, conf, [s[4] for s in samps])
