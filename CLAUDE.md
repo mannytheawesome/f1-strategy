@@ -53,6 +53,13 @@ weekends. Only laps within `DEG_LONGRUN` (1.02x the stint's best, >=8 clean laps
 count as representative running, so practice cool-down laps are excluded, and
 stint slopes are aggregated by weighted median rather than mean.
 
+A compound nobody ran long (SOFT is often only used on a qualifying simulation)
+has no wear signal. Rather than fit that data anyway — which produced a garbage
+slope pinned to `MAX_DEG` — its rate is derived from a compound that WAS
+measured at the same event via `DEG_RATIO` (SOFT 1.75x MEDIUM, HARD 0.6x),
+falling back to `DEG_PRIOR` only if nothing was measured. This lifted stop-count
+agreement with what teams actually ran from 55% to 61% exact.
+
 ---
 
 ## How to run
