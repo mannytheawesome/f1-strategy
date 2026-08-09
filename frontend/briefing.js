@@ -419,10 +419,18 @@
         stints.push({ compound: c, lap_start: lap + 1, lap_end: lap + s.stint_lengths[i] });
         lap += s.stint_lengths[i];
       });
-      sRows += `<tr><td><b>${s.compound_sequence.join('-')}</b></td><td>${s.stops}</td>
+      // A forced 1/2/3-stop sweep always yields three plans, so say which are
+      // genuinely on the table rather than listing a fantasy 3-stopper as a peer.
+      const via = s.viability || 'in play';
+      const dim = via === 'not on the table';
+      const tag = via === 'in play' ? ''
+        : via === 'needs a Safety Car'
+          ? ` <span style="color:#ffd700">· needs a Safety Car${s.sc_refund_s ? ' (worth ~' + s.sc_refund_s + 's)' : ''}</span>`
+          : ` <span style="color:#777">· not on the table</span>`;
+      sRows += `<tr${dim ? ' style="opacity:0.5"' : ''}><td><b>${s.compound_sequence.join('-')}</b></td><td>${s.stops}</td>
         <td>${s.pit_laps.map(l => 'L' + l).join(', ') || '—'}</td>
         <td>${stintBarHTML(stints, m.total_laps_assumed)}</td>
-        <td>${s.time_delta === 0 ? 'fastest on paper' : '+' + s.time_delta + 's'}</td></tr>`;
+        <td>${s.time_delta === 0 ? 'fastest on paper' : '+' + s.time_delta + 's'}${tag}</td></tr>`;
     }
     const sd = d.stop_decision, xo = sd && sd.crossover;
     stratCard.innerHTML = `<h2>One stop on paper — the candidates</h2>
