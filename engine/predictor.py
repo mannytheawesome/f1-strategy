@@ -48,6 +48,14 @@ FP_WEIGHTS = {"FP1": 0.3, "FP2": 1.0, "FP3": 0.9, "RACE": 3.0}
 DEG_LONGRUN = (1.02, 8)    # (max ratio to stint best, min clean laps)
 DEG_FALLBACK = (1.05, 5)
 
+# Wear relative to MEDIUM, measured from races where both compounds had a
+# genuine long run (SOFT 1.78 direct, 1.75 from clean-curve medians — two
+# independent estimates agreeing). Used to price a compound nobody ran long.
+DEG_RATIO = {"SOFT": 1.75, "MEDIUM": 1.0, "HARD": 0.6}
+# Last resort when NOTHING was measured at an event: median of strict long-run
+# fits across 2023-2026.
+DEG_PRIOR = {"SOFT": 0.12, "MEDIUM": 0.07, "HARD": 0.04}
+
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
 
@@ -295,21 +303,26 @@ def build_deg_curves(
     fp_data: list[tuple[str, list[dict], list[dict]]]
 ) -> dict[str, DegCurve]:
 
-    samples: dict[str, list[tuple]] = {}
+    # Strict pass = genuine long runs, the only data wear can be read from.
+    strict: dict[str, list[tuple]] = {}
     for name, laps_raw, stints_raw in fp_data:
         w = FP_WEIGHTS.get(name, 0.5)
         for c, rows in _stint_deg_samples(laps_raw, stints_raw, w, name).items():
-            samples.setdefault(c, []).extend(rows)
-    # A compound with no genuine long run (short practice programme, wet FP)
-    # would otherwise have no curve at all — retake it on looser terms.
+            strict.setdefault(c, []).extend(rows)
+
+    # Loose pass = whatever running exists (qualifying simulations, short runs).
+    # Good enough to place a compound's fresh-lap BASELINE, useless for wear.
+    loose: dict[str, list[tuple]] = {}
     for name, laps_raw, stints_raw in fp_data:
         w = FP_WEIGHTS.get(name, 0.5)
-        loose = _stint_deg_samples(laps_raw, stints_raw, w, name,
-                                   ratio=DEG_FALLBACK[0], min_laps=DEG_FALLBACK[1])
-        for c, rows in loose.items():
-            if not samples.get(c):
-                samples.setdefault(c, []).extend(rows)
+        for c, rows in _stint_deg_samples(laps_raw, stints_raw, w, name,
+                                          ratio=DEG_FALLBACK[0],
+                                          min_laps=DEG_FALLBACK[1]).items():
+            loose.setdefault(c, []).extend(rows)
 
+    samples = {c: rows for c, rows in strict.items()}
+    for c, rows in loose.items():
+        samples.setdefault(c, rows)
 
     curves: dict[str, DegCurve] = {}
     for c, samps in samples.items():
@@ -323,6 +336,29 @@ def build_deg_curves(
         pts  = sum(s[3] for s in samps)
         conf = "HIGH" if pts >= 20 else "MEDIUM" if pts >= 8 else "LOW"
         curves[c] = DegCurve(c, max(deg, 0.0), base, pts, conf, [s[4] for s in samps])
+
+    # A compound with no long run (SOFT is usually only ever run on a
+    # qualifying simulation) has no wear signal at all. Fitting the loose data
+    # anyway produced a garbage slope that then pinned to MAX_DEG — 19 of 20
+    # saturated fits in the 2023-2026 cache had ZERO long-run stints behind
+    # them. Estimate those from a compound that WAS measured at this event
+    # instead, using the measured cross-compound ratios, and fall back to the
+    # global prior only if nothing was measured.
+    measured = {c: cur.deg_rate for c, cur in curves.items() if strict.get(c)}
+    if measured:
+        ref = "MEDIUM" if "MEDIUM" in measured else next(iter(measured))
+        for c, cur in list(curves.items()):
+            if c in measured or c not in DEG_RATIO:
+                continue
+            est = measured[ref] * (DEG_RATIO[c] / DEG_RATIO[ref])
+            curves[c] = DegCurve(c, est, cur.baseline, cur.data_points,
+                                 cur.confidence.rstrip("*") + "*", cur.sessions)
+    else:
+        for c, cur in list(curves.items()):
+            if c in DEG_PRIOR:
+                curves[c] = DegCurve(c, DEG_PRIOR[c], cur.baseline,
+                                     cur.data_points,
+                                     cur.confidence.rstrip("*") + "*", cur.sessions)
 
     # Sanity-check against physical reality. FP data is frequently polluted
     # (track evolution, wet running, traffic, fuel loads), which corrupts
