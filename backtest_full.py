@@ -39,6 +39,7 @@ EVAL_FRACTIONS = [0.25, 0.50, 0.75]
 
 from engine.circuits import STREET_CIRCUITS as _CANONICAL_STREET
 from engine.pit_loss import pit_loss_for
+from data.live import _merge_stint_fragments
 # The offline harness matches a couple of extra name spellings that show up in
 # historical OpenF1 circuit_short_name values.
 STREET_CIRCUITS = _CANONICAL_STREET | {"las vegas", "marina bay"}
@@ -118,6 +119,24 @@ def enumerate_weekends() -> list[dict]:
 
 # ── Data assembly per race ────────────────────────────────────────────────────
 
+def _sanitise_stints(rows: list[dict]) -> list[dict]:
+    """Same cleaning the app applies in data.live.get_stints.
+
+    The harness reads raw cached rows, so without this it evaluates on OpenF1's
+    fragmented stints — 1-lap slivers that invent extra stops — while the live
+    app sees the repaired ones. Measuring the engine on data the engine never
+    sees in production makes the backtest quietly wrong.
+    """
+    rows = [s for s in rows if s.get("lap_start") is not None]
+    rows = [s for s in rows
+            if not (s.get("lap_end") is not None and s["lap_end"] < s["lap_start"])]
+    rows = [{**s,
+             "compound": s.get("compound") or "UNKNOWN",
+             "tyre_age_at_start": s.get("tyre_age_at_start") or 0}
+            for s in rows]
+    return _merge_stint_fragments(rows)
+
+
 def load_weekend(w: dict, cache_only: bool = False) -> dict | None:
     """Fetch all needed data for one weekend. Returns None if unusable."""
     _fetch = lambda ep, **kw: fetch(ep, cache_only=cache_only, **kw)
@@ -138,14 +157,14 @@ def load_weekend(w: dict, cache_only: bool = False) -> dict | None:
         try:
             fl = _fetch("laps", session_key=k)
             fs = _fetch("stints", session_key=k)
-            fp_data.append((names[i] if i < 3 else f"FP{i+1}", fl, fs))
+            fp_data.append((names[i] if i < 3 else f"FP{i+1}", fl, _sanitise_stints(fs)))
         except (RuntimeError, FileNotFoundError):
             pass
 
     return {
         "weekend": w,
         "race_laps": race_laps,
-        "race_stints": race_stints,
+        "race_stints": _sanitise_stints(race_stints),
         "drivers": {d["driver_number"]: d for d in drivers_raw},
         "positions": positions,
         "intervals": intervals,

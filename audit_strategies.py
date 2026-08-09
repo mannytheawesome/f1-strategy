@@ -15,10 +15,11 @@ Checks per candidate plan:
 And per race:
   has-live-plan     at least one plan is "in play"
   distance          race distance came from the circuit table, not the default
-  deg-implausible   practice-derived degradation is not wildly above the field
-                    norm. Street circuits especially (traffic, track evolution)
-                    can saturate the regression, and an inflated deg rate is what
-                    makes the optimiser recommend a fantasy 3-stop.
+  deg-saturated     the deg regression hit the MAX_DEG clamp, i.e. it could not
+                    measure wear and fell back to the ceiling. (A merely HIGH deg
+                    rate is not flagged: races with elevated deg turn out to have
+                    LOWER stop-count error than average, so a high reading is
+                    usually real, not noise.)
 
 Usage:
   python audit_strategies.py            # summary, exits 1 if anything fails
@@ -40,9 +41,9 @@ from engine.prerace import CIRCUIT_LAPS, DEFAULT_LAPS, LIVE_MARGIN_S
 
 STOP_COUNTS = (1, 2, 3)
 
-# Field-median dry deg is ~0.025 s/lap across 2023-2026. Anything past this is
-# not a real tyre reading, it is a saturated regression.
-DEG_IMPLAUSIBLE = 0.15
+# The clamp values in build_deg_curves. Landing exactly on one means the
+# regression saturated rather than measured anything.
+DEG_CLAMP = (0.30, 0.39)
 
 
 def candidates_for(curves, field_baseline, pit_loss, total_laps):
@@ -132,9 +133,10 @@ def main(verbose=False):
         total_laps = CIRCUIT_LAPS.get(circuit, DEFAULT_LAPS)
 
         hot = {c: cu.deg_rate for c, cu in curves.items()
-               if c in DRY and cu.baseline > 0 and cu.deg_rate > DEG_IMPLAUSIBLE}
+               if c in DRY and cu.baseline > 0
+               and any(abs(cu.deg_rate - v) < 1e-6 for v in DEG_CLAMP)}
         if hot:
-            warnings["deg-implausible (inflates the stop count)"].append(
+            warnings["deg-saturated (regression hit the clamp)"].append(
                 f"{label}: " + ", ".join(f"{c} {r:.3f}" for c, r in sorted(hot.items())))
 
         plans = candidates_for(curves, statistics.median(baselines),
@@ -167,10 +169,9 @@ def main(verbose=False):
             print(f"  {name}: {len(items)} of {audited} races")
             for x in (items if verbose else items[:5]):
                 print(f"      {x}")
-            if "deg-implausible" in name:
-                print(f"      -> practice deg saturates the {DEG_IMPLAUSIBLE:.2f}+ range and is")
-                print("         clamped at MAX_DEG=0.30 in build_deg_curves; an inflated rate is")
-                print("         what makes the optimiser propose extra stops.")
+            if "deg-saturated" in name:
+                print("      -> the fit hit MAX_DEG in build_deg_curves, so wear was not")
+                print("         measured for that compound; the clamp value stands in for it.")
     return 1 if failures else 0
 
 
