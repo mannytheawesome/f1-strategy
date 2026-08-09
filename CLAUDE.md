@@ -66,12 +66,14 @@ compound nobody could run long is self-selecting evidence that it wears hard
 here. Using the median flattered SOFT into 86% of optimal plans against the 27%
 of races teams actually raced it in.
 
-**Known gap:** even corrected, SOFT appears in ~65% of optimal plans vs ~27% in
-reality. The optimiser minimises race time and ignores tyre AVAILABILITY — after
-qualifying most drivers have new Hards and Mediums saved but few new Softs, which
-is why real strategies are Medium/Hard. `engine/tyre_inventory.py` already
-computes what the field holds; wiring it into the strategy search is the next
-step.
+Tyre availability is now part of the search. `optimize_strategy(available=...)`
+takes the new sets left per compound and refuses to fit a tyre the driver does
+not hold; the pre-race sweep feeds it the field's median remaining stock (from
+`engine/tyre_inventory.py`, which counts qualifying, not just practice) and skips
+start compounds nobody has. At Spa the top 10 hold 10 new Hards but only 2 new
+Softs, and the optimum moves from SOFT-MEDIUM to MEDIUM-HARD — matching what
+teams actually run there. Availability defaults to None, so the prediction path
+is unaffected.
 
 ---
 
