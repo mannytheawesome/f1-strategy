@@ -30,7 +30,7 @@ from engine.predictor import (
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 13   # 13: strategy candidates carry a viability label
+PACK_VERSION = 14   # 14: strategy search respects the field's tyre stock
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -819,17 +819,63 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     baselines = [c.baseline for c in curves.values() if c.baseline > 0]
     field_baseline = statistics.median(baselines) if baselines else 90.0
     pit_loss = get_avg_pit_loss(sprint_key, HIST_TTL) if sprint_key else PIT_LOSS
+    # ── tyre inventory: what the top 10 actually hold ────────────────────────
+    inventory_summary = None
+    try:
+        drivers_raw = get_drivers(grid_source["session_key"], HIST_TTL)
+        stints_by_session = []
+        for s in sources:
+            try:
+                stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+            except Exception:
+                pass
+        invs = {i.driver_number: i for i in
+                compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend)}
+        top10 = [g for g in grid[:10]]
+        top10_nums = [d.driver_number for d in grid_state.values()
+                      if d.position and d.position <= 10]
+        rows = [invs[n] for n in top10_nums if n in invs]
+        if rows:
+            inventory_summary = {
+                "top10_with_new_hard":   sum(1 for i in rows if i.remaining("HARD") >= 1),
+                "top10_with_new_medium": sum(1 for i in rows if i.remaining("MEDIUM") >= 1),
+                "top10_with_new_soft":   sum(1 for i in rows if i.remaining("SOFT") >= 1),
+                "top10_count": len(rows),
+            }
+    except Exception:
+        pass
+
+    # What the field can actually fit. Pure lap-time optimisation recommends
+    # Softs the garage no longer has: after qualifying most drivers hold new
+    # Hards and Mediums but few new Softs, which is why real strategies are
+    # Medium/Hard. Take the field's median remaining sets as the stock a
+    # representative car is working with.
+    field_stock = None
+    try:
+        if rows:
+            field_stock = {c: int(statistics.median([i.remaining(c) for i in rows]))
+                           for c in ("SOFT", "MEDIUM", "HARD")}
+    except Exception:
+        field_stock = None
+
     strategies = []
     for stops in (1, 2, 3):
         best = None
         for start_c in DRY:
             if start_c not in curves or not curves[start_c].baseline:
                 continue
+            # The car has to start on a set it actually holds. Without this the
+            # sweep opens on a Soft at tracks where the field has none left.
+            if field_stock is not None and field_stock.get(start_c, 0) < 1:
+                continue
             strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
                                       field_baseline, pit_loss,
                                       needs_compound_change=True,
                                       force_stops=stops,
-                                      forbid_repeat_compound=True)
+                                      forbid_repeat_compound=True,
+                                      available=(dict(field_stock,
+                                                      **{start_c: field_stock.get(start_c, 0) - 1})
+                                                 if field_stock else None))
             if len(strat.pits_remaining) != stops:
                 continue   # no legal plan at this stop count
             if best is None or strat.total_time_from_now < best[1]:
@@ -867,32 +913,6 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             s["viability"] = "needs a Safety Car"
         else:
             s["viability"] = "not on the table"
-
-    # ── tyre inventory: what the top 10 actually hold ────────────────────────
-    inventory_summary = None
-    try:
-        drivers_raw = get_drivers(grid_source["session_key"], HIST_TTL)
-        stints_by_session = []
-        for s in sources:
-            try:
-                stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
-            except Exception:
-                pass
-        invs = {i.driver_number: i for i in
-                compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend)}
-        top10 = [g for g in grid[:10]]
-        top10_nums = [d.driver_number for d in grid_state.values()
-                      if d.position and d.position <= 10]
-        rows = [invs[n] for n in top10_nums if n in invs]
-        if rows:
-            inventory_summary = {
-                "top10_with_new_hard":   sum(1 for i in rows if i.remaining("HARD") >= 1),
-                "top10_with_new_medium": sum(1 for i in rows if i.remaining("MEDIUM") >= 1),
-                "top10_with_new_soft":   sum(1 for i in rows if i.remaining("SOFT") >= 1),
-                "top10_count": len(rows),
-            }
-    except Exception:
-        pass
 
     sc_prob = sc_probability([], 0, total_laps, circuit)
 

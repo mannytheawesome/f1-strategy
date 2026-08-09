@@ -742,6 +742,7 @@ def optimize_strategy(
     needs_compound_change: bool = False,   # F1 rule: must use 2 dry compounds
     force_stops:      int | None = None,   # constrain to exactly N stops
     forbid_repeat_compound: bool = False,  # no pitting onto the same compound back-to-back
+    available:        dict[str, int] | None = None,  # new sets left per compound
 ) -> DriverStrategy:
 
     remaining = total_laps - current_lap
@@ -755,6 +756,20 @@ def optimize_strategy(
 
     def allow(n: int) -> bool:
         return force_stops is None or force_stops == n
+
+    def in_stock(*fitted: str) -> bool:
+        """A plan can only fit tyres the driver still has.
+
+        Pure lap-time optimisation happily recommends three Softs at a track
+        where the field has none left after qualifying; this is what keeps the
+        search inside the garage's actual stock.
+        """
+        if not available:
+            return True
+        need: dict[str, int] = {}
+        for c in fitted:
+            need[c] = need.get(c, 0) + 1
+        return all(available.get(c, 0) >= n for c, n in need.items())
 
     best = float("inf")
     best_pits: list[PitPlan] = []
@@ -775,6 +790,8 @@ def optimize_strategy(
                 continue
             if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
                 continue
+            if not in_stock(c2):
+                continue
             t = (stint_t(current_compound, current_age, pit, current_lap)
                  + stop_cost + stint_t(c2, 0, remaining - pit, current_lap + pit))
             if t < best:
@@ -793,6 +810,8 @@ def optimize_strategy(
                     if forbid_repeat_compound and (c2 == current_compound or c3 == c2):
                         continue
                     if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
+                        continue
+                    if not in_stock(c2, c3):
                         continue
                     t = (stint_t(current_compound, current_age, p1, current_lap) + stop_cost
                          + stint_t(c2, 0, p2, current_lap + p1) + stop_cost
@@ -832,6 +851,8 @@ def optimize_strategy(
                                     and seq_lens[j - 1] > SOFT_SPLASH_MAX
                                     for j in range(1, 4))
                                 if bad:
+                                    continue
+                                if not in_stock(c2, c3, c4):
                                     continue
                                 t = (stint_t(current_compound, current_age, p1, current_lap) + stop_cost
                                      + stint_t(c2, 0, p2, current_lap + p1) + stop_cost
