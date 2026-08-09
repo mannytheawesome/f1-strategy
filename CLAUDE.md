@@ -57,8 +57,21 @@ A compound nobody ran long (SOFT is often only used on a qualifying simulation)
 has no wear signal. Rather than fit that data anyway — which produced a garbage
 slope pinned to `MAX_DEG` — its rate is derived from a compound that WAS
 measured at the same event via `DEG_RATIO` (SOFT 1.75x MEDIUM, HARD 0.6x),
-falling back to `DEG_PRIOR` only if nothing was measured. This lifted stop-count
-agreement with what teams actually ran from 55% to 61% exact.
+floored at `DEG_UNMEASURED` and falling back to `DEG_PRIOR` only if nothing was
+measured. This lifted stop-count agreement with what teams actually ran from 55%
+to 61% exact.
+
+`DEG_UNMEASURED` is the p75 of measured rates, not the median, on purpose: a
+compound nobody could run long is self-selecting evidence that it wears hard
+here. Using the median flattered SOFT into 86% of optimal plans against the 27%
+of races teams actually raced it in.
+
+**Known gap:** even corrected, SOFT appears in ~65% of optimal plans vs ~27% in
+reality. The optimiser minimises race time and ignores tyre AVAILABILITY — after
+qualifying most drivers have new Hards and Mediums saved but few new Softs, which
+is why real strategies are Medium/Hard. `engine/tyre_inventory.py` already
+computes what the field holds; wiring it into the strategy search is the next
+step.
 
 ---
 
