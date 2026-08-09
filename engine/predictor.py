@@ -1089,12 +1089,17 @@ def simulate_race(
     pit_loss:       float = PIT_LOSS,
     track_position_weight: float = 0.6,  # 0.75 street / 0.6 normal — tuned on 76-race backtest
     prescribed_strategies: dict[int, list[PitPlan]] | None = None,
+    inventory: dict[int, dict[str, int]] | None = None,  # per-driver sets left
 ) -> list[DriverForecast]:
     """
     track_position_weight: how much current position (gap) influences the
     final predicted order vs pure pace simulation (0=pure pace, 1=pure position).
     At Monaco ~0.8 (almost impossible to overtake without pit stop).
     On normal circuits ~0.4–0.5.
+
+    inventory: {driver_number: {compound: new sets left}}. A driver can only be
+    planned onto tyres they still hold — one who spent their Softs in Q3 cannot
+    be sent back out on them, while a team-mate who saved a set can.
 
     prescribed_strategies: drivers listed here run the given fixed pit plan
     (costed via evaluate_prescribed_strategy) instead of the DP optimizer —
@@ -1149,7 +1154,8 @@ def simulate_race(
         else:
             strat = optimize_strategy(current_lap, total_laps, compound, age,
                                       pd, curves, field_baseline, effective_pit_loss,
-                                      needs_compound_change=needs_change)
+                                      needs_compound_change=needs_change,
+                                      available=(inventory or {}).get(num))
             strat.driver_number = num
             strat.acronym = acronym
 
