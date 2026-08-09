@@ -30,7 +30,7 @@ from engine.predictor import (
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 15   # 15: projection plans each driver on their own tyre stock
+PACK_VERSION = 16   # 16: projection resolves real driver ids so stock actually binds
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -281,10 +281,16 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
     start_c = strategies[0]["start_compound"]
     serialised, pace_model = [], {}
     for g in grid:
-        num = next((r["driver_number"] for r in pace_rows
-                    if r["acronym"] == g["acronym"]), None)
+        # Prefer the grid's own driver number. Resolving it from pace_rows
+        # instead silently dropped every car with no long-run data onto a
+        # placeholder id, which then matched no tyre inventory — so those cars
+        # were planned onto compounds they did not have.
+        num = g.get("driver_number")
         if num is None:
-            num = g["position"] * 1000  # placeholder for cars with no long-run data
+            num = next((r["driver_number"] for r in pace_rows
+                        if r["acronym"] == g["acronym"]), None)
+        if num is None:
+            num = g["position"] * 1000  # placeholder for cars with no data at all
         pr = pace_by_num.get(num)
         # Start on the planned compound only if this driver still has one.
         stock = (inventory or {}).get(num)
@@ -819,6 +825,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                              session=grid_source)
     grid = [
         {"position": d.position, "acronym": d.acronym, "team": d.team,
+         "driver_number": d.driver_number,
          "team_colour": d.team_colour, "gap": d.gap_to_leader}
         for d in sorted(grid_state.values(),
                         key=lambda d: (d.position is None, d.position or 99))

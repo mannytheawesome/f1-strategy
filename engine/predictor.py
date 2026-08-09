@@ -867,7 +867,15 @@ def optimize_strategy(
     # Fallback: compound change still required but no legal plan found
     # (too few laps left for MIN_STINT windows) — force a late splash stop
     if best == float("inf"):
-        alt = "SOFT" if current_compound != "SOFT" else "MEDIUM"
+        # Prefer a compound still in stock. If the garage genuinely has no new
+        # set of another compound the driver still has to satisfy the
+        # two-compound rule, and does it on a scrubbed set — our inventory only
+        # counts NEW sets, so fall back to any different compound.
+        alt = next((c for c in ("MEDIUM", "HARD", "SOFT")
+                    if c != current_compound and (available or {}).get(c, 0) >= 1),
+                   None)
+        if alt is None:
+            alt = "SOFT" if current_compound != "SOFT" else "MEDIUM"
         splash = min(3, max(1, remaining - 1))
         pit_at = remaining - splash
         t = (stint_t(current_compound, current_age, pit_at, current_lap) + stop_cost
