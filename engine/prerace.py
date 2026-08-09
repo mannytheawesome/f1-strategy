@@ -30,7 +30,7 @@ from engine.predictor import (
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 14   # 14: strategy search respects the field's tyre stock
+PACK_VERSION = 15   # 15: projection plans each driver on their own tyre stock
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit
@@ -270,7 +270,7 @@ GRID_SPREAD_S = 1.0   # assumed first-lap spread per grid slot for projection
 
 def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                     strategies: list[dict], total_laps: int, pit_loss: float,
-                    circuit: str) -> list:
+                    circuit: str, inventory: dict | None = None) -> list:
     """Run the race model from lap 0 for a given grid order and return the full
     field of DriverForecast objects (Monte Carlo already applied). The grid is
     spread at GRID_SPREAD_S per slot to give the track-position anchor something
@@ -286,12 +286,18 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
         if num is None:
             num = g["position"] * 1000  # placeholder for cars with no long-run data
         pr = pace_by_num.get(num)
+        # Start on the planned compound only if this driver still has one.
+        stock = (inventory or {}).get(num)
+        own_start = start_c
+        if stock and stock.get(start_c, 0) < 1:
+            own_start = next((c for c in ("MEDIUM", "HARD", "SOFT")
+                              if stock.get(c, 0) >= 1), start_c)
         serialised.append({
             "driver_number": num, "acronym": g["acronym"],
-            "position": g["position"], "compound": start_c, "tyre_age": 0,
+            "position": g["position"], "compound": own_start, "tyre_age": 0,
             "gap_to_leader": f"+{(g['position'] - 1) * GRID_SPREAD_S:.3f}",
             "interval": f"+{GRID_SPREAD_S:.3f}" if g["position"] > 1 else "LEADER",
-            "retired": False, "compounds_used": [start_c], "current_lap": 0,
+            "retired": False, "compounds_used": [own_start], "current_lap": 0,
         })
         pace_model[num] = DriverPace(
             driver_number=num, acronym=g["acronym"],
@@ -299,17 +305,27 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
             pace_delta=pr["pace_delta"] if pr else 0.0,
             laps_counted=pr["laps"] if pr else 0)
     is_street = is_street_circuit(circuit)
+    # Each car is planned against its own garage: subtract the set it starts on.
+    inv_left = None
+    if inventory:
+        inv_left = {}
+        for d in serialised:
+            stock = inventory.get(d["driver_number"])
+            if stock:
+                inv_left[d["driver_number"]] = {
+                    c: (n - 1 if c == d["compound"] else n) for c, n in stock.items()}
     return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
                          pit_loss=pit_loss,
-                         track_position_weight=0.75 if is_street else 0.6)
+                         track_position_weight=0.75 if is_street else 0.6,
+                         inventory=inv_left)
 
 
 def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
                   strategies: list[dict], total_laps: int, pit_loss: float,
-                  circuit: str) -> dict | None:
+                  circuit: str, inventory: dict | None = None) -> dict | None:
     """Lap-0 projection for the display: top-10 forecasts with win/podium odds."""
     forecasts = _run_projection(grid, pace_rows, curves, strategies,
-                                total_laps, pit_loss, circuit)
+                                total_laps, pit_loss, circuit, inventory)
     if not forecasts:
         return None
     return {
@@ -851,12 +867,18 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     # Medium/Hard. Take the field's median remaining sets as the stock a
     # representative car is working with.
     field_stock = None
+    driver_stock = None
     try:
         if rows:
             field_stock = {c: int(statistics.median([i.remaining(c) for i in rows]))
                            for c in ("SOFT", "MEDIUM", "HARD")}
+        if invs:
+            # Per-car stock for the projection: a driver who saved a set is not
+            # the same as a team-mate who burned theirs in Q3.
+            driver_stock = {n: {c: i.remaining(c) for c in ("SOFT", "MEDIUM", "HARD")}
+                            for n, i in invs.items()}
     except Exception:
-        field_stock = None
+        pass
 
     strategies = []
     for stops in (1, 2, 3):
@@ -930,7 +952,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     projection = None
     try:
         projection = _project_race(grid, pace_rows, curves, strategies,
-                                   total_laps, pit_loss, circuit)
+                                   total_laps, pit_loss, circuit,
+                                   inventory=driver_stock)
     except Exception:
         pass
 

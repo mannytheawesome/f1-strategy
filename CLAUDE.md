@@ -72,8 +72,14 @@ not hold; the pre-race sweep feeds it the field's median remaining stock (from
 `engine/tyre_inventory.py`, which counts qualifying, not just practice) and skips
 start compounds nobody has. At Spa the top 10 hold 10 new Hards but only 2 new
 Softs, and the optimum moves from SOFT-MEDIUM to MEDIUM-HARD — matching what
-teams actually run there. Availability defaults to None, so the prediction path
-is unaffected.
+teams actually run there.
+
+The lap-0 projection goes further and plans each car on ITS OWN garage:
+`simulate_race(inventory={driver_number: {compound: sets left}})` passes each
+driver's stock to their strategy search, and a driver who cannot start on the
+paper compound is started on one they hold. A driver who saved a Soft is planned
+onto it; a team-mate who spent theirs in Q3 is not. Both `available` and
+`inventory` default to None, so the prediction path and backtest are unaffected.
 
 ---
 
