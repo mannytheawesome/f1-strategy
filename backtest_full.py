@@ -38,6 +38,8 @@ YEARS = [2023, 2024, 2025, 2026]
 EVAL_FRACTIONS = [0.25, 0.50, 0.75]
 
 from engine.circuits import STREET_CIRCUITS as _CANONICAL_STREET
+from engine.circuits import (STREET_TRACK_POSITION_WEIGHT,
+                             NORMAL_TRACK_POSITION_WEIGHT)
 from engine.pit_loss import pit_loss_for
 from data.live import _merge_stint_fragments
 # The offline harness matches a couple of extra name spellings that show up in
@@ -335,7 +337,8 @@ def phase_collect():
     print(f"\nCollected {ok}/{len(weekends)} weekends into {CACHE_DIR}")
 
 
-def phase_evaluate(tpw_street=0.75, tpw_normal=0.6, quiet=False):
+def phase_evaluate(tpw_street=STREET_TRACK_POSITION_WEIGHT,
+                   tpw_normal=NORMAL_TRACK_POSITION_WEIGHT, quiet=False):
     weekends = enumerate_weekends()
     all_results = []
     for w in weekends:

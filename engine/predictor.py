@@ -1095,7 +1095,7 @@ def simulate_race(
     pace_model:     dict[int, DriverPace],
     sc_events:      list[SCEvent],
     pit_loss:       float = PIT_LOSS,
-    track_position_weight: float = 0.6,  # 0.75 street / 0.6 normal — tuned on 76-race backtest
+    track_position_weight: float = 0.5,  # 0.75 street / 0.5 normal — tuned on 81-race backtest
     prescribed_strategies: dict[int, list[PitPlan]] | None = None,
     inventory: dict[int, dict[str, int]] | None = None,  # per-driver sets left
 ) -> list[DriverForecast]:

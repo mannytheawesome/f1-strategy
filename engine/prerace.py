@@ -33,7 +33,7 @@ LIVE_MARGIN_S = 10.0
 PACK_VERSION = 16   # 16: projection resolves real driver ids so stock actually binds
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
-from engine.circuits import is_street_circuit
+from engine.circuits import is_street_circuit, track_position_weight
 
 # Scheduled race distance per circuit_short_name (lowercased). OpenF1 has no
 # scheduled-laps field, so this mirrors the calendar; DEFAULT_LAPS covers
@@ -310,7 +310,6 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
             pace_median=0.0, pace_std=0.3,
             pace_delta=pr["pace_delta"] if pr else 0.0,
             laps_counted=pr["laps"] if pr else 0)
-    is_street = is_street_circuit(circuit)
     # Each car is planned against its own garage: subtract the set it starts on.
     inv_left = None
     if inventory:
@@ -322,7 +321,7 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                     c: (n - 1 if c == d["compound"] else n) for c, n in stock.items()}
     return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
                          pit_loss=pit_loss,
-                         track_position_weight=0.75 if is_street else 0.6,
+                         track_position_weight=track_position_weight(circuit),
                          inventory=inv_left)
 
 
@@ -354,7 +353,7 @@ def _overtaking_cost(total_laps: int, circuit: str) -> dict:
     i.e. d > gap / ((1-w) * window). Street circuits (higher w) resist hardest.
     This is a model quantity, not an empirical DRS measurement."""
     is_street = is_street_circuit(circuit)
-    w = 0.75 if is_street else 0.6
+    w = track_position_weight(circuit)
     gap = 1.0
     threshold = gap / ((1 - w) * BATTLE_WINDOW_LAPS)
     return {

@@ -26,19 +26,32 @@ engine (`engine/predictor.py`) and validating it via the backtest harness.
 Everything else (briefings UI, live board) is supporting surface. When making
 changes, prefer ones that are measurable against the backtest.
 
-Current backtested accuracy (`cache/backtest_results.json`, 73 races,
+Current backtested accuracy (`cache/backtest_results.json`, 81 races,
 2023–2026, 243 checkpoints) — winner-hit / podium-of-3 / mean absolute
 position error:
 
 | Race distance | Winner | Podium | MAE |
 |---|---|---|---|
-| 25% | 74% | 2.35 | 1.89 |
-| 50% | 78% | 2.42 | 1.57 |
-| 75% | 91% | 2.57 | 1.08 |
+| 25% | 74% | 2.37 | 1.87 |
+| 50% | 79% | 2.42 | 1.58 |
+| 75% | 90% | 2.54 | 1.09 |
 
-Overall: 81.1% winner-hit, MAE 1.52 over 243 checkpoints.
+Overall: 81.1% winner-hit, MAE 1.51 over 243 checkpoints.
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
+
+`track_position_weight` was re-swept 2026-08-10 on this full 81-race cache
+(`python backtest_full.py sweep`, grid over street x normal weight): the normal
+value moved 0.6 -> 0.5, holding winner-hit at 81.1% while cutting MAE 1.516 ->
+1.513 in the sweep's coarser 16-point grid (1.52 -> 1.51 in the full evaluate
+run). The pure-MAE optimum in the grid (`street=0.65, normal=0.5`, MAE 1.505)
+was rejected: it costs a full point of winner-hit (80.2%) for a marginal MAE
+gain, and winner-hit is the metric this product is graded on. The value now
+lives in one place, `engine.circuits.NORMAL_TRACK_POSITION_WEIGHT` — three
+other files (`engine/prerace.py` x2, `backtest_full.py`) had hardcoded their
+own stale copies of 0.75/0.6 instead of importing it; all three now call
+`track_position_weight(circuit)` / import the constants, so a future re-sweep
+only requires editing `engine/circuits.py`.
 
 These supersede a 74.5%-winner / 1.56-MAE baseline. The gain came from fixing
 degradation estimation (see below), verified on identical checkpoints (n=171):
@@ -164,10 +177,10 @@ Key tunables (all in `predictor.py`, tuned on the backtest):
 - `FP_WEIGHTS = {FP1:0.3, FP2:1.0, FP3:0.9, RACE:3.0}`
 - `COMPOUND_DELTA = {SOFT:-0.6, MEDIUM:0.0, HARD:+0.4}` vs fresh Medium
 - `SC_RATE_DEFAULT=0.0067`, `SC_RATE_STREET=0.0120`, `SC_LAP_MULT=1.35`
-- **`track_position_weight=0.6`** (0.75 for street circuits): final finish time
-  is `w·position_time + (1-w)·pace_time`. This blend was the biggest accuracy
-  lever in the sweep — early in a race, current track position predicts the
-  finish better than pace simulation alone.
+- **`track_position_weight=0.5`** (0.75 for street circuits), from
+  `engine/circuits.py`: final finish time is `w·position_time + (1-w)·pace_time`.
+  This blend was the biggest accuracy lever in the sweep — early in a race,
+  current track position predicts the finish better than pace simulation alone.
 
 ### Session modes (frontend auto-switches on `session_mode`)
 | Mode | Left panel | Key columns |
@@ -269,10 +282,11 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ## Roadmap / open work
 
 ### Prediction accuracy (priority)
-- [ ] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
+- [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
-- [ ] Improve early-race accuracy (25%/50% winner-hit is stuck at 68% vs 87% at
-      75%) — this is where the model is weakest.
+      Done 2026-08-10: `normal` 0.6 -> 0.5 (street unchanged at 0.75).
+- [ ] Improve early-race accuracy (25%/50% winner-hit is stuck at 74%/79% vs 90%
+      at 75%) — this is where the model is weakest.
 - [ ] Better DNF / reliability modelling beyond the flat `DNF_RATE=0.04`.
 - [ ] Sharper SC modelling — timing of SC windows, not just per-lap probability.
 - [ ] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track

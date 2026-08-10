@@ -10,9 +10,11 @@ position weight lived, duplicated, in five different files — they live here no
 STREET_CIRCUITS = {"monaco", "baku", "singapore", "jeddah", "las_vegas", "miami"}
 
 # Share of the finish-time estimate given to current track position vs pace sim.
-# Tuned on the full-history backtest: 0.75 street / 0.6 normal.
+# Tuned on the full-history backtest (81 weekends, 2023-2026): 0.75 street /
+# 0.5 normal — re-swept 2026-08-10, normal moved 0.6 -> 0.5 (MAE 1.516 -> 1.513
+# at equal 81.1% winner-hit; see backtest_full.py sweep).
 STREET_TRACK_POSITION_WEIGHT = 0.75
-NORMAL_TRACK_POSITION_WEIGHT = 0.6
+NORMAL_TRACK_POSITION_WEIGHT = 0.5
 
 
 def is_street_circuit(circuit: str) -> bool:
