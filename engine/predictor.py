@@ -27,7 +27,8 @@ STOP_RISK       = 6.0    # extra penalty per stop: traffic, out-lap, execution r
 SC_LAP_MULT     = 1.35   # median lap time > 35% above session median → SC
 MIN_STINT       = 8      # minimum viable stint length
 SOFT_SPLASH_MAX = 15     # Soft allowed as final compound only if ≤ this many laps
-DNF_RATE        = 0.04   # ~4% per driver per race (historical base rate)
+# DNF_RATE_DEFAULT (below, next to its SC counterparts) replaced the old flat
+# 0.04 here — that understated measured risk by >3x.
 
 # Fuel correction: cars improve ~0.035s/lap as fuel burns off (100kg load, ~0.3kg/km).
 # Applied to RACE laps before deg regression so the slope reflects tyre wear, not
@@ -75,20 +76,46 @@ SC_RATE_STREET  = 0.0120
 
 # Per-circuit SC rates (events per lap) from 2018-2025 historical data.
 # Circuits not listed fall back to SC_RATE_DEFAULT or SC_RATE_STREET.
+#
+# Keys are matched as substrings of OpenF1's circuit_short_name (lowercased) —
+# see _circuit_rate below. Four entries never actually matched the real
+# values ("red_bull_ring" / "albert_park" / "bahrain" / "Catalunya" vs the
+# true "Spielberg" / "Melbourne" / "Sakhir" & "Kuala Lumpur" / "catalunya"),
+# so Melbourne, Bahrain and Catalunya silently fell back to SC_RATE_DEFAULT
+# for as long as this table has existed. Fixed 2026-08-11; "kuala lumpur" is
+# a second key for Bahrain because OpenF1 mislabels some Sakhir sessions that
+# way, not a real Malaysia entry.
 SC_RATE_CIRCUIT: dict[str, float] = {
-    "red_bull_ring":    0.0105,   # Austria (alt name)
     "spielberg":        0.0105,   # Austria — gravel traps, fast lap = frequent SC
     "silverstone":      0.0080,   # Britain — high speed, above-average
     "spa":              0.0090,   # Belgium — long lap, Eau Rouge incidents
     "monza":            0.0080,   # Italy — slipstream battles, high speed
     "suzuka":           0.0075,   # Japan — one-lap incidents, tight first sector
     "interlagos":       0.0090,   # Brazil — unpredictable weather, Senna S
-    "albert_park":      0.0085,   # Australia — street-ish, first race incidents
-    "bahrain":          0.0060,   # Bahrain — clean, low SC rate
-    "Catalunya":        0.0055,   # Spain — low SC rate historically
+    "melbourne":        0.0085,   # Australia — street-ish, first race incidents
+    "sakhir":           0.0060,   # Bahrain — clean, low SC rate
+    "kuala lumpur":     0.0060,   # Bahrain, mislabeled by OpenF1 on some sessions
+    "catalunya":        0.0055,   # Spain — low SC rate historically
     "hungaroring":      0.0060,   # Hungary — low SC rate, easy to defend
     "zandvoort":        0.0085,   # Netherlands — barriers close, VSC common
 }
+
+# DNF rate (retired or disqualified, per driver-start), measured from OpenF1
+# session_result across the 81-race 2023-2026 backtest cache — see CLAUDE.md.
+# The old flat 0.04 used everywhere understated true risk by >3x. A per-circuit
+# table (Melbourne 0.235 down to Monza 0.050) was tried and measurably WORSENED
+# win-probability Brier score (0.0148 -> 0.0153) despite improving nothing
+# else — each circuit only has 3-4 races (60-82 driver-starts) in the cache,
+# too thin to estimate a real per-circuit rate from; the table was mostly
+# fitting noise. Flat field-wide default only.
+DNF_RATE_DEFAULT = 0.129
+
+
+def _circuit_rate(table: dict[str, float], default: float, circuit: str) -> float:
+    """Substring-match circuit against a per-circuit rate table, case-
+    insensitively, falling back to `default` if nothing matches."""
+    cl = (circuit or "").lower()
+    return next((v for k, v in table.items() if k in cl or cl in k), default)
 
 
 # ── Data classes ─────────────────────────────────────────────────────────────
@@ -221,11 +248,7 @@ def sc_probability(sc_events: list[SCEvent], current_lap: int,
     if any(c in cl for c in STREET_CIRCUITS):
         rate = SC_RATE_STREET
     else:
-        # Check per-circuit lookup (partial match on circuit short name)
-        rate = next(
-            (v for k, v in SC_RATE_CIRCUIT.items() if k in cl or cl in k),
-            SC_RATE_DEFAULT
-        )
+        rate = _circuit_rate(SC_RATE_CIRCUIT, SC_RATE_DEFAULT, circuit)
     p_no = (1 - rate) ** remaining
     if sc_events:
         p_no = min(p_no * 1.15, 0.95)
@@ -1095,9 +1118,10 @@ def simulate_race(
     pace_model:     dict[int, DriverPace],
     sc_events:      list[SCEvent],
     pit_loss:       float = PIT_LOSS,
-    track_position_weight: float = 0.5,  # 0.75 street / 0.5 normal — tuned on 81-race backtest
+    track_position_weight: float = 0.5,  # 0.85 street / 0.5 normal — tuned on 81-race backtest
     prescribed_strategies: dict[int, list[PitPlan]] | None = None,
     inventory: dict[int, dict[str, int]] | None = None,  # per-driver sets left
+    circuit:        str = "",   # feeds the Monte Carlo SC/DNF rate lookups
 ) -> list[DriverForecast]:
     """
     track_position_weight: how much current position (gap) influences the
@@ -1112,6 +1136,11 @@ def simulate_race(
     prescribed_strategies: drivers listed here run the given fixed pit plan
     (costed via evaluate_prescribed_strategy) instead of the DP optimizer —
     used for counterfactual/what-if simulation against known stint histories.
+
+    circuit: raw circuit_short_name, used only by the Monte Carlo pass to look
+    up the per-circuit SC rate (SC_RATE_CIRCUIT). Optional and separate from
+    track_position_weight/pit_loss, which callers already pre-resolve from
+    circuit themselves.
     """
     if total_laps <= current_lap:
         return []
@@ -1218,8 +1247,7 @@ def simulate_race(
 
     # Monte Carlo pass adds probability distributions
     run_monte_carlo(forecasts, scored, current_lap, total_laps,
-                    sc_events, field_baseline, pit_loss,
-                    circuit_street=track_position_weight >= 0.7)
+                    sc_events, field_baseline, pit_loss, circuit=circuit)
 
     return forecasts
 
@@ -1235,7 +1263,7 @@ def run_monte_carlo(
     field_baseline: float,
     pit_loss:       float,
     n_runs:         int = 500,
-    circuit_street: bool = False,
+    circuit:        str = "",
 ) -> None:
     """
     Perturb each driver's deterministic finish time with:
@@ -1243,19 +1271,30 @@ def run_monte_carlo(
       2. SC lottery        — if a random SC falls in the remaining laps,
                              drivers who haven't pitted yet gain ~half the
                              pit loss (cheap stop), others lose nothing
-      3. Reliability/error — small chance (~2% per driver) of a big loss
+      3. Minor incident      — flat ~2% chance per driver of a smaller time
+                             loss (traffic, slow stop, light damage)
+      4. DNF                — chance from the measured field-wide rate
+                             (DNF_RATE_DEFAULT), scaled by how much race
+                             distance remains
 
     Mutates forecasts in place with win/podium/points probabilities and
     P5–P95 position range.
     """
     import random
+    from engine.circuits import is_street_circuit
 
     if not scored:
         return
 
     remaining = total_laps - current_lap
-    sc_rate   = SC_RATE_STREET if circuit_street else SC_RATE_DEFAULT
-    p_sc      = 1 - (1 - sc_rate) ** max(0, remaining)
+    sc_rate  = (SC_RATE_STREET if is_street_circuit(circuit)
+               else _circuit_rate(SC_RATE_CIRCUIT, SC_RATE_DEFAULT, circuit))
+    dnf_rate = DNF_RATE_DEFAULT
+    p_sc     = 1 - (1 - sc_rate) ** max(0, remaining)
+    # dnf_rate is measured as a whole-race probability; scale it down by how
+    # much of the race is left so a driver 2 laps from the flag doesn't carry
+    # the same DNF odds as one on the formation lap.
+    p_dnf    = 1 - (1 - dnf_rate) ** (max(0, remaining) / max(1, total_laps))
 
     base_times = {fc.driver_number: ft for ft, fc in scored}
     has_stop_planned = {
@@ -1283,7 +1322,7 @@ def run_monte_carlo(
                 t -= pit_loss * 0.6
             if random.random() < 0.02:
                 t += random.uniform(20, 80)   # incident / slow stop / damage
-            if random.random() < DNF_RATE:
+            if random.random() < p_dnf:
                 # Mechanical failure / crash — place behind all finishers
                 t += 1000 + dnf_count
                 dnf_count += 1

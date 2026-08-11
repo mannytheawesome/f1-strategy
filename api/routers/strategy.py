@@ -181,6 +181,7 @@ def predict(session_key: int = None, lap: int = None):
             serialised, max_lap, total_laps, curves, pace_model, sc_events,
             track_position_weight=track_pos_weight,
             pit_loss=pit_loss,
+            circuit=circuit,
         )
 
         weather = get_weather_summary(session_key, HIST_TTL)

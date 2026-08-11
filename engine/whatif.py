@@ -265,7 +265,7 @@ def run_whatif(session_key: int, driver_number: int, edited_stints: list[dict]) 
 
     common = dict(current_lap=anchor, total_laps=total_laps, curves=curves,
                   pace_model=pace_model, sc_events=sc_events, pit_loss=pit_loss,
-                  track_position_weight=track_pos_weight)
+                  track_position_weight=track_pos_weight, circuit=circuit)
     baseline = simulate_race(serialised_base, prescribed_strategies=actual_plans, **common)
     modified = simulate_race(serialised_mod, prescribed_strategies=edited_plans, **common)
 

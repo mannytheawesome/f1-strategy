@@ -34,11 +34,83 @@ position error:
 |---|---|---|---|
 | 25% | 78% | 2.30 | 1.83 |
 | 50% | 83% | 2.43 | 1.54 |
-| 75% | 93% | 2.57 | 1.07 |
+| 75% | 94% | 2.57 | 1.07 |
 
-Overall: 84.4% winner-hit, MAE 1.48 over 243 checkpoints.
+Overall: 84.8% winner-hit, MAE 1.48 over 243 checkpoints. Win-probability
+Brier score 0.0149, podium-probability Brier 0.0479 (lower is better; see
+Testing) — these are new, see the Monte Carlo calibration note below.
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
+
+**Monaco and Las Vegas were silently misclassified as normal (non-street)
+circuits everywhere — production and backtest — until 2026-08-11.**
+`STREET_CIRCUITS` matched `"monaco"` and `"las_vegas"` (underscore), but
+OpenF1's real `circuit_short_name` values are `"Monte Carlo"` and
+`"Las Vegas"` (space); neither ever matched. Every Monaco checkpoint in the
+backtest cache had `street=False` up to that point. Fixed in
+`engine/circuits.py` by adding the real spellings (old aliases kept, harmless
+if unused). Impact was concentrated exactly where expected — street-circuit
+metrics went from winner 81%/MAE 1.68 (n=48, missing Monaco) to winner
+88%/MAE 1.59 (n=60, Monaco correctly included) — with only a small move in
+the overall numbers since Monaco is 12 of 243 checkpoints. Re-sweeping
+afterward moved the street optimum 0.75 -> 0.85 (see below); Monaco's extreme
+overtaking difficulty was pulling the whole street cohort's ideal weight up
+once it was actually being counted.
+
+A second, related bug: `SC_RATE_CIRCUIT` (per-circuit safety-car rate,
+`engine/predictor.py`) had the same problem plus a casing bug — `"Catalunya"`
+(capitalized) never matches its own lowercased self, and `"albert_park"` /
+`"bahrain"` don't match the real `circuit_short_name` values (`"Melbourne"` /
+`"Sakhir"` and `"Kuala Lumpur"`, the latter a pre-existing OpenF1 mislabeling
+of some Bahrain sessions). Only 6 of 26 real circuits were ever actually
+matching this table; the rest silently fell back to `SC_RATE_DEFAULT`. Fixed
+2026-08-11 with the same researched rates, corrected keys only. Measured
+impact on the Monte Carlo Brier score was negligible (SC events are rare
+enough per lap that this barely moves win/podium probability) — kept as a
+correctness fix for the `sc_probability()` stat shown on the live board, not
+for a backtest-measurable gain.
+
+`track_position_weight` was re-swept three times: 2026-08-10 (pre quali-prior
+fix), 2026-08-11 (post quali-prior fix, pre Monaco fix), and 2026-08-11 again
+(post Monaco fix). `normal` has held at 0.5 throughout. `street` moved
+0.6 (original) -> 0.75 -> 0.85, with the last move driven entirely by Monaco
+finally being counted in the street cohort — checked up to 1.0 to confirm
+0.85 is a real peak (winner-hit 84.8% at 0.85 vs 84.0% at 0.9, 83.5% at 1.0),
+not a grid-edge artifact. Every re-sweep has picked the config that maximises
+winner-hit first, MAE second among ties — the pure-MAE optimum has
+consistently been ~1 point of winner-hit worse for a marginal MAE gain, and
+this product is graded on winner-hit. The value lives in one place,
+`engine.circuits.{STREET,NORMAL}_TRACK_POSITION_WEIGHT` — `engine/prerace.py`
+and `backtest_full.py` used to hardcode their own stale copies; both now
+import the constants, so a future re-sweep only requires editing
+`engine/circuits.py`.
+
+**DNF modelling.** The flat `DNF_RATE = 0.04` used in the Monte Carlo pass
+(`run_monte_carlo`, `engine/predictor.py`) understated real risk by >3x —
+measured from OpenF1 `session_result`'s `dnf`/`dsq` flags across the 81-race
+cache, the true field-wide rate is 12.9% per driver-start. Fixed 2026-08-11:
+`DNF_RATE_DEFAULT = 0.129`, applied flat. A per-circuit table was also built
+(Melbourne 0.235 down to Monza 0.050) and tried, since `SC_RATE_CIRCUIT`
+already does this for safety cars — it measurably *worsened* the win Brier
+score (0.0148 -> 0.0153) despite no gain elsewhere. Each circuit only has 3-4
+races (60-82 driver-starts) in the cache, too thin to fit real circuit-level
+variation from; the table was mostly noise. Deliberately not reintroduced —
+see `engine/predictor.py` history if revisiting with a larger cache. The DNF
+check was also previously applied at the same full-race odds regardless of
+laps remaining (a driver 2 laps from the flag carried the same DNF chance as
+one on the formation lap); now scaled by remaining-lap fraction, matching how
+the SC lottery already worked.
+
+This DNF fix is the reason `backtest_full.py evaluate` now reports a Brier
+score at all — winner-hit/podium/MAE are fixed before `run_monte_carlo` runs
+(`predicted_position` is set from the deterministic sort), so they are blind
+to *any* change inside Monte Carlo. There was previously no way to validate
+a DNF or SC-lottery change; `evaluate_weekend` now also scores
+`win_probability`/`podium_probability` against actual outcomes via Brier
+score, closing that gap. Old flat 0.04 DNF: win Brier 0.0149, podium Brier
+0.0495. New flat 0.129: win Brier ~0.0148-9, podium Brier 0.0479 — a real,
+if modest, calibration improvement, and the only lever here Brier score
+endorsed.
 
 `backtest_full.py`'s `evaluate`/`sweep` never passed `quali_times` into
 `build_pace_model`, unlike every production caller (`api/routers/strategy.py`,
@@ -189,12 +261,14 @@ drivers, produce ranked forecasts) → `calc_undercut` + `detect_sc` /
 
 Key tunables (all in `predictor.py`, tuned on the backtest):
 - `PIT_LOSS=22.0`s, `STOP_RISK=6.0`s/stop, `MIN_STINT=8`, `SOFT_SPLASH_MAX=15`
-- `DNF_RATE=0.04`, `FUEL_RATE=0.035` s/lap, `FUEL_WEAR_COUPLING=0.3`,
-  `CLIFF_ACCEL=0.045`
+- `DNF_RATE_DEFAULT=0.129` (flat; measured from OpenF1 `session_result`, see
+  above — a per-circuit table was tried and rejected, too noisy), `FUEL_RATE=
+  0.035` s/lap, `FUEL_WEAR_COUPLING=0.3`, `CLIFF_ACCEL=0.045`
 - `FP_WEIGHTS = {FP1:0.3, FP2:1.0, FP3:0.9, RACE:3.0}`
 - `COMPOUND_DELTA = {SOFT:-0.6, MEDIUM:0.0, HARD:+0.4}` vs fresh Medium
-- `SC_RATE_DEFAULT=0.0067`, `SC_RATE_STREET=0.0120`, `SC_LAP_MULT=1.35`
-- **`track_position_weight=0.5`** (0.75 for street circuits), from
+- `SC_RATE_DEFAULT=0.0067`, `SC_RATE_STREET=0.0120`, `SC_RATE_CIRCUIT` (12
+  circuits, keys fixed 2026-08-11 — see above), `SC_LAP_MULT=1.35`
+- **`track_position_weight=0.5`** (0.85 for street circuits), from
   `engine/circuits.py`: final finish time is `w·position_time + (1-w)·pace_time`.
   This blend was the biggest accuracy lever in the sweep — early in a race,
   current track position predicts the finish better than pace simulation alone.
@@ -282,7 +356,15 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 - Evaluate calls the engine directly (no server needed) at 25/50/75% race
   distance for every cached race. Metrics: winner-hit, podium intersection,
   top-10 intersection, MAE over finishers (retirements after the prediction lap
-  are excluded — not predictable from pace/strategy).
+  are excluded — not predictable from pace/strategy), plus a win/podium
+  **Brier score** for the Monte Carlo probability outputs.
+- The Brier score is the only metric that exercises `run_monte_carlo` —
+  `predicted_position` (winner-hit/podium/MAE) is fixed by the deterministic
+  sort *before* Monte Carlo runs, so a change to `DNF_RATE_DEFAULT`, the SC
+  lottery, or pace noise (`sigma` in `run_monte_carlo`) is invisible to those
+  three metrics no matter how wrong it is. Use Brier score (lower is better)
+  to validate anything inside `run_monte_carlo`; use winner-hit/MAE for
+  anything in `optimize_strategy`/`simulate_race`'s deterministic path.
 - `backtest.py` is the alternate HTTP path (needs a running server on `:8001`).
 - The harness sanitises stint rows exactly as `data.live.get_stints` does, so it
   measures the engine on the same repaired data production sees. Evaluating raw
@@ -301,17 +383,31 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ### Prediction accuracy (priority)
 - [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
-      Done 2026-08-10, reconfirmed 2026-08-11: `normal` 0.6 -> 0.5 (street
-      unchanged at 0.75).
+      Done 2026-08-10, re-swept twice more on 2026-08-11 (quali-prior fix,
+      then Monaco-classification fix): `normal` 0.6 -> 0.5, `street`
+      0.6 -> 0.75 -> 0.85.
 - [x] Improve early-race accuracy (25%/50% winner-hit was stuck at 74%/79% vs
       90% at 75%). Done 2026-08-11 — root cause was the backtest harness
       itself: it never fed `quali_times` into `build_pace_model`, unlike every
       production caller. Fixing that (not an engine change) moved 25%/50% to
-      78%/83%. Still the model's relative weak point vs 75% (93%), so more
+      78%/83%. Still the model's relative weak point vs 75% (94%), so more
       genuine engine gains may exist here, but the easy measurement bug is
       fixed.
-- [ ] Better DNF / reliability modelling beyond the flat `DNF_RATE=0.04`.
-- [ ] Sharper SC modelling — timing of SC windows, not just per-lap probability.
+- [x] Better DNF / reliability modelling beyond the flat `DNF_RATE=0.04`. Done
+      2026-08-11: measured true rate (12.9%) from OpenF1 `session_result`,
+      replaced the flat constant, and scaled the Monte Carlo DNF check by
+      remaining race distance. Also built the Brier-score infrastructure
+      needed to validate this class of change at all (see Testing) — winner-
+      hit/MAE can't see anything inside `run_monte_carlo`. A per-circuit DNF
+      table was tried and rejected: it measurably worsened win Brier score
+      (sample too thin per circuit, 3-4 races each). Flat rate only.
+- [x] Sharper SC modelling. Partially done 2026-08-11: found and fixed
+      `SC_RATE_CIRCUIT`'s matching bugs (only 6/26 circuits were ever actually
+      matching — see above) and wired the Monte Carlo SC lottery to use the
+      real per-circuit table instead of a street/normal binary. Brier-score
+      impact was negligible (SC is rare enough per lap not to move win/podium
+      probability much) — kept as a correctness fix, not a measured gain.
+      Actual SC *window timing* (vs. flat per-lap probability) is still open.
 - [ ] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track
       backtest error.
 

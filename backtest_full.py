@@ -6,7 +6,10 @@ Phase 1 (collect): download and disk-cache raw OpenF1 data for every race
   anything already cached in ./cache/.
 
 Phase 2 (evaluate): run the prediction engine directly (no HTTP) at 25/50/75%
-  distance for every race, computing winner/podium/top10/MAE metrics.
+  distance for every race, computing winner/podium/top10/MAE metrics, plus a
+  Brier score for the Monte Carlo win/podium probabilities (the only metric
+  here that actually exercises run_monte_carlo — winner/podium/MAE are fixed
+  before it runs).
 
 Phase 3 (sweep): grid-search track_position_weight (street vs normal) and
   other knobs over the cached data, reporting the best configuration.
@@ -42,9 +45,9 @@ from engine.circuits import (STREET_TRACK_POSITION_WEIGHT,
                              NORMAL_TRACK_POSITION_WEIGHT)
 from engine.pit_loss import pit_loss_for
 from data.live import _merge_stint_fragments
-# The offline harness matches a couple of extra name spellings that show up in
-# historical OpenF1 circuit_short_name values.
-STREET_CIRCUITS = _CANONICAL_STREET | {"las vegas", "marina bay"}
+# The offline harness matches one extra historical spelling not in the
+# canonical set ("las vegas" is now covered there directly).
+STREET_CIRCUITS = _CANONICAL_STREET | {"marina bay"}
 
 
 # ── Disk-cached OpenF1 fetch ──────────────────────────────────────────────────
@@ -308,7 +311,8 @@ def evaluate_weekend(data: dict, tpw_street: float, tpw_normal: float) -> list[d
             state = state_at_lap(data, eval_lap)
             forecasts = simulate_race(state, eval_lap, total_laps, curves,
                                       pace, sc, track_position_weight=tpw,
-                                      pit_loss=pit_loss_for(w["circuit"]))
+                                      pit_loss=pit_loss_for(w["circuit"]),
+                                      circuit=w["circuit"])
         except Exception as e:
             results.append({"race": f"{w['year']} {w['country']}", "lap": eval_lap,
                             "error": str(e)[:80]})
@@ -330,6 +334,20 @@ def evaluate_weekend(data: dict, tpw_street: float, tpw_normal: float) -> list[d
         pred_order = sorted(pred, key=lambda n: pred[n])
         act_order = sorted(final_pos, key=lambda n: final_pos[n])
 
+        # Brier score for the Monte Carlo win/podium probabilities. winner-hit
+        # and MAE above are blind to this — predicted_position is fixed by the
+        # deterministic sort before run_monte_carlo runs, so a wrong DNF/SC
+        # rate never shows up there even though it directly reshapes
+        # win_probability/podium_probability, the numbers actually shown on
+        # the live board and used in briefings.
+        actual_winner = act_order[0]
+        actual_podium = set(act_order[:3])
+        by_num = {f.driver_number: f for f in forecasts}
+        win_sq  = [(by_num[n].win_probability - (1.0 if n == actual_winner else 0.0)) ** 2
+                   for n in comparable if n in by_num]
+        pod_sq  = [(by_num[n].podium_probability - (1.0 if n in actual_podium else 0.0)) ** 2
+                   for n in comparable if n in by_num]
+
         results.append({
             "race": f"{w['year']} {w['country']}",
             "circuit": w["circuit"],
@@ -341,6 +359,8 @@ def evaluate_weekend(data: dict, tpw_street: float, tpw_normal: float) -> list[d
             "podium": len(set(pred_order[:3]) & set(act_order[:3])),
             "top10": len(set(pred_order[:10]) & set(act_order[:10])),
             "mae": sum(errors) / len(errors),
+            "win_brier": sum(win_sq) / len(win_sq) if win_sq else None,
+            "podium_brier": sum(pod_sq) / len(pod_sq) if pod_sq else None,
             "n": len(comparable),
         })
     return results
@@ -395,12 +415,17 @@ def phase_evaluate(tpw_street=STREET_TRACK_POSITION_WEIGHT,
 
 def summarize(results: list[dict]) -> dict:
     n = len(results)
+    briers = [r for r in results if r.get("win_brier") is not None]
+    pod_briers = [r for r in results if r.get("podium_brier") is not None]
     return {
         "n": n,
         "winner_rate": sum(r["winner"] for r in results) / n,
         "podium_avg": sum(r["podium"] for r in results) / n,
         "top10_avg": sum(r["top10"] for r in results) / n,
         "mae": sum(r["mae"] for r in results) / n,
+        "win_brier": sum(r["win_brier"] for r in briers) / len(briers) if briers else None,
+        "podium_brier": (sum(r["podium_brier"] for r in pod_briers) / len(pod_briers)
+                         if pod_briers else None),
     }
 
 
@@ -411,6 +436,10 @@ def print_summary(s: dict, results: list[dict]):
     print(f"  podium avg:  {s['podium_avg']:.2f}/3")
     print(f"  top10 avg:   {s['top10_avg']:.2f}/10")
     print(f"  MAE:         {s['mae']:.2f} positions")
+    if s.get("win_brier") is not None:
+        print(f"  win Brier:    {s['win_brier']:.4f}  (lower is better)")
+    if s.get("podium_brier") is not None:
+        print(f"  podium Brier: {s['podium_brier']:.4f}  (lower is better)")
     for frac in EVAL_FRACTIONS:
         sub = [r for r in results if r["frac"] == frac]
         if sub:

@@ -322,7 +322,7 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
     return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
                          pit_loss=pit_loss,
                          track_position_weight=track_position_weight(circuit),
-                         inventory=inv_left)
+                         inventory=inv_left, circuit=circuit)
 
 
 def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
