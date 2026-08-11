@@ -32,24 +32,41 @@ position error:
 
 | Race distance | Winner | Podium | MAE |
 |---|---|---|---|
-| 25% | 74% | 2.37 | 1.87 |
-| 50% | 79% | 2.42 | 1.58 |
-| 75% | 90% | 2.54 | 1.09 |
+| 25% | 78% | 2.30 | 1.83 |
+| 50% | 83% | 2.43 | 1.54 |
+| 75% | 93% | 2.57 | 1.07 |
 
-Overall: 81.1% winner-hit, MAE 1.51 over 243 checkpoints.
+Overall: 84.4% winner-hit, MAE 1.48 over 243 checkpoints.
 
 Re-run and beat these before claiming an accuracy improvement (see Testing).
 
-`track_position_weight` was re-swept 2026-08-10 on this full 81-race cache
-(`python backtest_full.py sweep`, grid over street x normal weight): the normal
-value moved 0.6 -> 0.5, holding winner-hit at 81.1% while cutting MAE 1.516 ->
-1.513 in the sweep's coarser 16-point grid (1.52 -> 1.51 in the full evaluate
-run). The pure-MAE optimum in the grid (`street=0.65, normal=0.5`, MAE 1.505)
-was rejected: it costs a full point of winner-hit (80.2%) for a marginal MAE
-gain, and winner-hit is the metric this product is graded on. The value now
-lives in one place, `engine.circuits.NORMAL_TRACK_POSITION_WEIGHT` — three
-other files (`engine/prerace.py` x2, `backtest_full.py`) had hardcoded their
-own stale copies of 0.75/0.6 instead of importing it; all three now call
+`backtest_full.py`'s `evaluate`/`sweep` never passed `quali_times` into
+`build_pace_model`, unlike every production caller (`api/routers/strategy.py`,
+`engine/whatif.py`, `engine/briefing.py`). Qualifying pace is blended in as a
+prior specifically so the model isn't relying on a handful of noisy heavy-fuel
+laps early in a race — exactly the checkpoints (25%/50% distance) this file
+called out as the model's weak spot. The harness was silently benchmarking a
+crippled build. Fixed 2026-08-11: `enumerate_weekends` now also captures each
+weekend's `Qualifying` session key (excluding `Sprint Qualifying`, which has a
+different `session_name`), `load_weekend` fetches its laps and computes best
+lap per driver, and `evaluate_weekend` passes it through. Winner-hit jumped
+81.1% -> 84.4% and MAE 1.51 -> 1.48 overall, with the largest gains exactly at
+25% (74% -> 78%) and 50% (79% -> 83%) distance — this was measurement error,
+not a real engine change.
+
+`track_position_weight` was re-swept 2026-08-10 (before the quali-prior fix)
+and again 2026-08-11 (after) on the full 81-race cache (`python
+backtest_full.py sweep`, grid over street x normal weight). Both times the
+normal value's optimum (holding winner-hit at its max while minimising MAE
+among ties) landed on 0.5, unchanged from the pre-fix value — current defaults
+(`street=0.75, normal=0.5`) are confirmed optimal post-fix too (MAE 1.481,
+winner 84.4%, tied for best winner-hit in the grid). The pure-MAE optimum
+(`street=0.65, normal=0.5`, MAE 1.479) was rejected both times: it trades
+~1 point of winner-hit for a marginal MAE gain, and winner-hit is the metric
+this product is graded on. The value lives in one place,
+`engine.circuits.NORMAL_TRACK_POSITION_WEIGHT` — three other files
+(`engine/prerace.py` x2, `backtest_full.py`) had hardcoded their own stale
+copies of 0.75/0.6 instead of importing it; all three now call
 `track_position_weight(circuit)` / import the constants, so a future re-sweep
 only requires editing `engine/circuits.py`.
 
@@ -284,9 +301,15 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ### Prediction accuracy (priority)
 - [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
-      Done 2026-08-10: `normal` 0.6 -> 0.5 (street unchanged at 0.75).
-- [ ] Improve early-race accuracy (25%/50% winner-hit is stuck at 74%/79% vs 90%
-      at 75%) — this is where the model is weakest.
+      Done 2026-08-10, reconfirmed 2026-08-11: `normal` 0.6 -> 0.5 (street
+      unchanged at 0.75).
+- [x] Improve early-race accuracy (25%/50% winner-hit was stuck at 74%/79% vs
+      90% at 75%). Done 2026-08-11 — root cause was the backtest harness
+      itself: it never fed `quali_times` into `build_pace_model`, unlike every
+      production caller. Fixing that (not an engine change) moved 25%/50% to
+      78%/83%. Still the model's relative weak point vs 75% (93%), so more
+      genuine engine gains may exist here, but the easy measurement bug is
+      fixed.
 - [ ] Better DNF / reliability modelling beyond the flat `DNF_RATE=0.04`.
 - [ ] Sharper SC modelling — timing of SC windows, not just per-lap probability.
 - [ ] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track

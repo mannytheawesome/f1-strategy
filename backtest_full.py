@@ -94,7 +94,7 @@ def fetch(endpoint: str, max_retries: int = 6, cache_only: bool = False, **param
 # ── Race weekend enumeration ──────────────────────────────────────────────────
 
 def enumerate_weekends() -> list[dict]:
-    """Returns [{year, country, circuit, race_key, fp_keys, total_laps?}]"""
+    """Returns [{year, country, circuit, race_key, fp_keys, quali_key, total_laps?}]"""
     weekends = []
     for year in YEARS:
         sessions = fetch("sessions", year=year)
@@ -109,12 +109,20 @@ def enumerate_weekends() -> list[dict]:
                 (s for s in sess if s.get("session_type") == "Practice"),
                 key=lambda s: s.get("date_start", "")
             )
+            # Same selection as data.live.get_quali_times: earliest Qualifying
+            # session at the meeting (skips Sprint Qualifying/Shootout, which
+            # sort after the classic one on a sprint weekend).
+            qualis = sorted(
+                (s for s in sess if s.get("session_name") == "Qualifying"),
+                key=lambda s: s.get("date_start", "")
+            )
             weekends.append({
                 "year": year,
                 "country": race.get("country_name", ""),
                 "circuit": race.get("circuit_short_name", ""),
                 "race_key": race["session_key"],
                 "fp_keys": [s["session_key"] for s in fps],
+                "quali_key": qualis[0]["session_key"] if qualis else None,
             })
     return weekends
 
@@ -163,6 +171,20 @@ def load_weekend(w: dict, cache_only: bool = False) -> dict | None:
         except (RuntimeError, FileNotFoundError):
             pass
 
+    # Best qualifying lap per driver — mirrors data.live.get_quali_times so the
+    # harness can blend the same prior build_pace_model uses in production.
+    quali_times: dict[int, float] = {}
+    if w.get("quali_key"):
+        try:
+            q_laps = _fetch("laps", session_key=w["quali_key"])
+            for lap in q_laps:
+                t, n = lap.get("lap_duration"), lap.get("driver_number")
+                if t and 55 < t < 200 and n:
+                    if n not in quali_times or t < quali_times[n]:
+                        quali_times[n] = t
+        except (RuntimeError, FileNotFoundError):
+            pass
+
     return {
         "weekend": w,
         "race_laps": race_laps,
@@ -170,6 +192,7 @@ def load_weekend(w: dict, cache_only: bool = False) -> dict | None:
         "drivers": {d["driver_number"]: d for d in drivers_raw},
         "positions": positions,
         "intervals": intervals,
+        "quali_times": quali_times,
         "fp_data": fp_data,
     }
 
@@ -280,7 +303,8 @@ def evaluate_weekend(data: dict, tpw_street: float, tpw_normal: float) -> list[d
             curves = build_deg_curves(fp_plus_race)
             sc = detect_sc(laps_to_now)
             pace = build_pace_model(laps_to_now, sc, data["drivers"],
-                                    curves, data["race_stints"])
+                                    curves, data["race_stints"],
+                                    quali_times=data.get("quali_times") or None)
             state = state_at_lap(data, eval_lap)
             forecasts = simulate_race(state, eval_lap, total_laps, curves,
                                       pace, sc, track_position_weight=tpw,
