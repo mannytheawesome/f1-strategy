@@ -408,8 +408,20 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       impact was negligible (SC is rare enough per lap not to move win/podium
       probability much) — kept as a correctness fix, not a measured gain.
       Actual SC *window timing* (vs. flat per-lap probability) is still open.
-- [ ] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track
-      backtest error.
+- [x] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track
+      backtest error. Done 2026-08-11, no code change. Coordinate-wise sweep
+      (each weight x0/x0.5/x1.5/x2, others held at current values, full
+      81-race cache): current `{FP1:0.3, FP2:1.0, FP3:0.9, RACE:3.0}` sits at
+      a genuine local optimum — no single-axis perturbation beats 84.8%
+      winner-hit. `RACE` dominance is load-bearing (zeroing it drops winner-
+      hit to 82.3%, MAE 1.480 -> 1.536); `FP1`/`FP3` barely move anything
+      even at x0 or x2; `FP2` is at a sweet spot (both directions are flat-
+      to-worse). Per-track MAE does vary for real (0.95 Suzuka to 2.30
+      Zandvoort), but every circuit has only 6-12 checkpoints (2-4 races) in
+      this cache — the same sample size that made the per-circuit DNF table
+      overfit above. Fitting per-track `FP_WEIGHTS` from this cache would
+      hit the identical wall; would need materially more seasons cached, or
+      a shrinkage/pooling approach, to attempt responsibly.
 
 ### Product / UI
 - [ ] Wire `/api/tyre_inventory` into the FP/Race left panel (backend done).
