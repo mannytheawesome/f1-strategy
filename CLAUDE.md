@@ -424,7 +424,20 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       a shrinkage/pooling approach, to attempt responsibly.
 
 ### Product / UI
-- [ ] Wire `/api/tyre_inventory` into the FP/Race left panel (backend done).
+- [x] Wire `/api/tyre_inventory` into the FP/Race left panel (backend done). Done
+      2026-08-17: the panel markup, CSS, and render function already existed but
+      nothing actually called them for the common case — `fetchLeftPanel`'s
+      inventory fetch used the global `sessionKey`, which is `null` on the
+      default live session (no explicit key entered), and the only call site for
+      RACE/SPRINT was `render()`'s mode-*change* branch, which never fires when
+      a session loads directly into RACE (the default `currentMode`). Fixed by
+      adding a dedicated `fetchInventory()` gated on leader-lap change (same
+      pattern already used for the prediction panel, which had hit this exact
+      class of bug before — see its "setMode may not have fired" comment),
+      fed the actual resolved `session.session_key` from live data instead of
+      the raw input field. Verified in-browser via replay mode against a cached
+      Imola race (`session_key=9987`): inventory panel now populates on load and
+      updates lap-to-lap.
 - [ ] Track map: per-driver position dots on a circuit SVG (blocked on OpenF1
       location endpoint reliability).
 - [ ] Live-session validation across a full weekend (Quali + Race) for all three

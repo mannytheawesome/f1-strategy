@@ -294,6 +294,12 @@
       const leaderLap = Math.max(...data.drivers.map(d => d.current_lap || 0));
       fetchPredictions(leaderLap);
     }
+
+    // Tyre inventory panel: refetch when the leader's lap changes (max 1/lap)
+    if (currentMode === 'RACE' || currentMode === 'SPRINT' || currentMode === 'FP') {
+      const leaderLap = Math.max(...data.drivers.map(d => d.current_lap || 0));
+      fetchInventory(s.session_key, leaderLap);
+    }
   }
 
   // ── Prediction panel ──────────────────────────────────────────────────────
@@ -314,6 +320,25 @@
       renderPredictions(data);
     } catch(e) {} finally {
       predictInFlight = false;
+    }
+  }
+
+  // ── Tyre inventory panel ────────────────────────────────────────────────
+  // New sets only ever appear when a driver pits, so gate on lap like predictions.
+  let inventoryLastLap = -1;
+  let inventoryInFlight = false;
+
+  async function fetchInventory(resolvedSessionKey, leaderLap) {
+    if (!resolvedSessionKey || inventoryInFlight || leaderLap === inventoryLastLap) return;
+    inventoryInFlight = true;
+    try {
+      const res = await fetch(`/api/tyre_inventory?session_key=${resolvedSessionKey}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      inventoryLastLap = leaderLap;
+      renderInventoryPanel(data);
+    } catch(e) {} finally {
+      inventoryInFlight = false;
     }
   }
 
@@ -537,13 +562,6 @@
 
   async function fetchLeftPanel(mode) {
     if (!sessionKey) return;
-    // Always fetch tyre inventory for FP/Race
-    if (mode === 'FP' || mode === 'RACE' || mode === 'SPRINT') {
-      try {
-        const res = await fetch(`/api/tyre_inventory?session_key=${sessionKey}`);
-        if (res.ok) renderInventoryPanel(await res.json());
-      } catch(e) {}
-    }
     if (mode === 'FP') {
       try {
         const res = await fetch(`/api/fp_analysis?session_key=${sessionKey}`);
