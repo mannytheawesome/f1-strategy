@@ -70,6 +70,44 @@ enough per lap that this barely moves win/podium probability) — kept as a
 correctness fix for the `sc_probability()` stat shown on the live board, not
 for a backtest-measurable gain.
 
+**SC window timing.** The per-lap SC hazard was flat — same probability on
+lap 2 as lap 55 — despite real SC/VSC deployments clustering hard at race
+starts. Measured 2026-08-18 by running `detect_sc` on the FULL race laps (not
+the usual laps-to-now) for all 81 cached races: 18 of 69 total SC/VSC events
+fell in the opening 5% of race distance (4.44 events/race/unit-distance) vs
+0.66 for the rest of the race — a ~5.2x spike, and 18 observed against ~3.5
+expected under a flat rate is too large a gap to be noise. The other five
+buckets checked across the remaining 95% (5-15% through 85-100%) were flat/
+noisy with no trend (0.56-0.74, ~9 events each) — matching the sample-size
+wall the per-circuit DNF table hit, so only two buckets were fit, not a finer
+curve. Added `SC_OPENING_WINDOW_FRAC=0.05` / `SC_OPENING_MULT=5.2` in
+`engine/predictor.py`; `SC_REST_MULT` is derived (not independently fit) so
+the reshape integrates to 1 over the full race and provably cannot change the
+total expected SC count per race — it only corrects *when* the already-tuned
+`SC_RATE_CIRCUIT`/street/default rates land. `_sc_p_no()` replaces the flat
+`(1-rate)**remaining` in both `sc_probability()` and `run_monte_carlo`'s SC
+lottery. Winner-hit/MAE are unaffected (fixed before Monte Carlo runs, as
+always) and the Brier score barely moves (0.0149→0.0150 win, 0.0479 podium,
+within run-to-run noise) — same finding as the SC_RATE_CIRCUIT fix above,
+since the MC lottery only checks *whether* an SC falls in the remaining race,
+not when. The real payoff is `sc_probability()`'s own accuracy: P(SC) in the
+first 3 laps of a 70-lap race goes from 0.02 (flat model) to 0.054 (windowed)
+— a ~2.7x correction concentrated where it belongs instead of smeared flat
+across the whole race.
+
+Fixing this also surfaced a latent bug in `_sc_refund()` (`engine/prerace.py`,
+the pre-race "early-yellow refund" briefing stat): it queried a truncated
+lookahead window by passing the window length itself as `total_laps` — safe
+under the old flat model (position-independent), but wrong once hazard
+depends on real race position, since laps 2-12 of a truncated 12-lap "race"
+no longer land inside the true opening spike of the actual ~70-lap race.
+`sc_probability()` gained an explicit `window_laps` parameter so `total_laps`
+always stays the genuine race distance; `_sc_p_no()` takes a separate
+`window_end`. Fixed the one call site that relied on the truncation
+(`_sc_refund`) — nearly doubled its estimate for a 70-lap race, first 12 laps
+(0.105 -> 0.197), since laps 2-4 are now correctly priced at the opening rate
+instead of the flat rest-of-race rate.
+
 `track_position_weight` was re-swept three times: 2026-08-10 (pre quali-prior
 fix), 2026-08-11 (post quali-prior fix, pre Monaco fix), and 2026-08-11 again
 (post Monaco fix). `normal` has held at 0.5 throughout. `street` moved
@@ -268,6 +306,9 @@ Key tunables (all in `predictor.py`, tuned on the backtest):
 - `COMPOUND_DELTA = {SOFT:-0.6, MEDIUM:0.0, HARD:+0.4}` vs fresh Medium
 - `SC_RATE_DEFAULT=0.0067`, `SC_RATE_STREET=0.0120`, `SC_RATE_CIRCUIT` (12
   circuits, keys fixed 2026-08-11 — see above), `SC_LAP_MULT=1.35`
+- `SC_OPENING_WINDOW_FRAC=0.05`, `SC_OPENING_MULT=5.2` — opening-lap SC hazard
+  spike, measured 2026-08-18 (see above); `SC_REST_MULT` is derived from these
+  two, not independently tuned
 - **`track_position_weight=0.5`** (0.85 for street circuits), from
   `engine/circuits.py`: final finish time is `w·position_time + (1-w)·pace_time`.
   This blend was the biggest accuracy lever in the sweep — early in a race,
@@ -401,13 +442,16 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       hit/MAE can't see anything inside `run_monte_carlo`. A per-circuit DNF
       table was tried and rejected: it measurably worsened win Brier score
       (sample too thin per circuit, 3-4 races each). Flat rate only.
-- [x] Sharper SC modelling. Partially done 2026-08-11: found and fixed
-      `SC_RATE_CIRCUIT`'s matching bugs (only 6/26 circuits were ever actually
-      matching — see above) and wired the Monte Carlo SC lottery to use the
-      real per-circuit table instead of a street/normal binary. Brier-score
-      impact was negligible (SC is rare enough per lap not to move win/podium
-      probability much) — kept as a correctness fix, not a measured gain.
-      Actual SC *window timing* (vs. flat per-lap probability) is still open.
+- [x] Sharper SC modelling. Done 2026-08-11 + 2026-08-18. 2026-08-11: found and
+      fixed `SC_RATE_CIRCUIT`'s matching bugs (only 6/26 circuits were ever
+      actually matching — see above) and wired the Monte Carlo SC lottery to
+      use the real per-circuit table instead of a street/normal binary.
+      2026-08-18: added the opening-lap hazard spike (`SC_OPENING_WINDOW_FRAC`/
+      `SC_OPENING_MULT`, see above) closing out the window-timing gap this item
+      previously flagged as open. Both fixes moved the Brier score negligibly
+      (SC is rare enough per lap, and the MC lottery only checks whether an SC
+      falls in the remaining race, not when) — kept for `sc_probability()`'s
+      own accuracy, which the Brier score can't see either.
 - [x] Validate deg-curve blending weights (`FP_WEIGHTS`) against per-track
       backtest error. Done 2026-08-11, no code change. Coordinate-wise sweep
       (each weight x0/x0.5/x1.5/x2, others held at current values, full

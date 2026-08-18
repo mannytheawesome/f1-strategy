@@ -100,6 +100,51 @@ SC_RATE_CIRCUIT: dict[str, float] = {
     "zandvoort":        0.0085,   # Netherlands — barriers close, VSC common
 }
 
+# SC/VSC deployments cluster hard at race starts (Lap-1/Turn-1 incidents,
+# multi-car pileups) rather than spreading evenly across the race. Measured by
+# running detect_sc() on the FULL race laps (not just laps-to-now) for all 81
+# cached races 2023-2026: events in the opening 5% of race distance land at
+# 4.44 events/race/unit-distance vs 0.66 for the rest of the race — a ~5.2x
+# spike. 18 events fell in that opening window against ~3.5 expected under a
+# flat rate, too large a gap to be sampling noise. The other five buckets
+# checked across the remaining 95% of the race (5-15%, 15-30%, 30-50%, 50-70%,
+# 70-85%, 85-100%) were flat/noisy with no trend (0.56-0.74, ~9 events each) —
+# finer-grained shaping there would hit the same overfitting wall the
+# per-circuit DNF table did on this sample size. Two buckets only.
+#
+# SC_RATE_CIRCUIT/STREET/DEFAULT above still set each circuit's overall
+# expected SC count per race; these two constants only reshape WHEN within the
+# race that risk lands. SC_REST_MULT is derived, not independently fit, so the
+# reshape provably cannot change the total expected event count per race (it
+# integrates to 1 over the full race) — it can't silently invalidate the
+# already-tuned per-circuit rates, only correct their timing.
+SC_OPENING_WINDOW_FRAC = 0.05    # first ~2-4 laps depending on race distance
+SC_OPENING_MULT        = 5.2     # hazard multiplier inside the opening window
+SC_REST_MULT = (1 - SC_OPENING_WINDOW_FRAC * SC_OPENING_MULT) / (1 - SC_OPENING_WINDOW_FRAC)
+
+
+def _sc_p_no(rate: float, current_lap: int, total_laps: int,
+             window_end: Optional[int] = None) -> float:
+    """P(no SC/VSC) over laps (current_lap, window_end], using the measured
+    opening-lap hazard spike instead of a flat per-lap rate applied uniformly.
+
+    total_laps is the REAL race distance — it fixes where the opening-window
+    boundary falls and must never be a truncated lookahead length. window_end
+    (default total_laps) lets a caller ask about a shorter window ("SC risk in
+    the next 12 laps") while still shaping hazard off the real race distance,
+    e.g. laps 2-3 of a 70-lap race stay inside the opening spike even when the
+    caller only wants a 12-lap-deep answer.
+    """
+    if total_laps <= 0:
+        return 1.0
+    end = total_laps if window_end is None else min(window_end, total_laps)
+    opening_end = max(1, round(total_laps * SC_OPENING_WINDOW_FRAC))
+    p_no = 1.0
+    for lap in range(max(1, current_lap + 1), end + 1):
+        mult = SC_OPENING_MULT if lap <= opening_end else SC_REST_MULT
+        p_no *= 1 - min(0.99, rate * mult)
+    return p_no
+
 # DNF rate (retired or disqualified, per driver-start), measured from OpenF1
 # session_result across the 81-race 2023-2026 backtest cache — see CLAUDE.md.
 # The old flat 0.04 used everywhere understated true risk by >3x. A per-circuit
@@ -240,7 +285,12 @@ def detect_sc(laps_raw: list[dict]) -> list[SCEvent]:
 
 
 def sc_probability(sc_events: list[SCEvent], current_lap: int,
-                   total_laps: int, circuit: str = "") -> float:
+                   total_laps: int, circuit: str = "",
+                   window_laps: Optional[int] = None) -> float:
+    """window_laps: look only at the next N laps from current_lap instead of
+    all the way to total_laps (e.g. an early-race window), while still shaping
+    hazard off the REAL total_laps so the opening-lap spike lands correctly —
+    total_laps must stay the genuine race distance, never a truncated one."""
     remaining = max(0, total_laps - current_lap)
     if remaining <= 0:
         return 0.0
@@ -249,7 +299,8 @@ def sc_probability(sc_events: list[SCEvent], current_lap: int,
         rate = SC_RATE_STREET
     else:
         rate = _circuit_rate(SC_RATE_CIRCUIT, SC_RATE_DEFAULT, circuit)
-    p_no = (1 - rate) ** remaining
+    window_end = total_laps if window_laps is None else current_lap + window_laps
+    p_no = _sc_p_no(rate, current_lap, total_laps, window_end=window_end)
     if sc_events:
         p_no = min(p_no * 1.15, 0.95)
     return round(1 - p_no, 3)
@@ -1290,7 +1341,7 @@ def run_monte_carlo(
     sc_rate  = (SC_RATE_STREET if is_street_circuit(circuit)
                else _circuit_rate(SC_RATE_CIRCUIT, SC_RATE_DEFAULT, circuit))
     dnf_rate = DNF_RATE_DEFAULT
-    p_sc     = 1 - (1 - sc_rate) ** max(0, remaining)
+    p_sc     = 1 - _sc_p_no(sc_rate, current_lap, total_laps)
     # dnf_rate is measured as a whole-race probability; scale it down by how
     # much of the race is left so a driver 2 laps from the flag doesn't carry
     # the same DNF odds as one on the formation lap.

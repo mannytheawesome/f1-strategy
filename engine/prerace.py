@@ -381,7 +381,7 @@ def _sc_refund(total_laps: int, circuit: str, pit_loss: float) -> dict:
     opening laps — the upside that makes a pit-lane/penalty start a better bet
     than the raw grid-slot cost suggests."""
     early = min(EARLY_SC_LAPS, total_laps)
-    p_early = sc_probability([], 0, early, circuit)
+    p_early = sc_probability([], 0, total_laps, circuit, window_laps=early)
     refund_s = round(0.55 * pit_loss, 1)   # a stop taken under SC vs at green-flag speed
     return {
         "early_window_laps": early,
