@@ -433,7 +433,7 @@
         <td>${s.time_delta === 0 ? 'fastest on paper' : '+' + s.time_delta + 's'}${tag}</td></tr>`;
     }
     const sd = d.stop_decision, xo = sd && sd.crossover;
-    stratCard.innerHTML = `<h2>One stop on paper — the candidates</h2>
+    stratCard.innerHTML = `<h2>The strategies on paper — the candidates</h2>
       <table class="results"><tr><th>PLAN</th><th>STOPS</th><th>PITS</th><th>SHAPE</th><th>Δ</th></tr>${sRows}</table>
       ${sd ? `<div class="meta-row" style="margin-top:8px"><span><b>${sd.optimal_stops}-stop optimal.</b>${xo && xo.runner_stops ? ` A ${xo.runner_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.` : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;

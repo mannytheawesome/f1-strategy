@@ -766,7 +766,10 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
     }
 
 
-def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
+def _prerace_sources(meeting_key: int) -> list[dict]:
+    """The completed, pre-GP sessions this briefing is built from — cheap
+    (one cached /sessions lookup), so the cache check in get_prerace_briefing
+    can call this without paying for the rest of the pipeline."""
     sessions = _meeting_sessions(meeting_key)
     if not sessions:
         raise ValueError("unknown meeting")
@@ -774,6 +777,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sources = [s for s in completed if not _is_grand_prix(s)]
     if not sources:
         raise ValueError("no completed sessions for this meeting yet — check back after FP1")
+    return sources
+
+
+def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
+    sessions = _meeting_sessions(meeting_key)
+    sources = _prerace_sources(meeting_key)
 
     race = next((s for s in sessions if _is_grand_prix(s)), None)
     meta = race or sources[-1]
@@ -1027,8 +1036,11 @@ def _prerace_cache_path(meeting_key: int) -> str:
 def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
                          regenerate: bool = False) -> dict:
     path = _prerace_cache_path(meeting_key)
-    pack = build_prerace_data(meeting_key, total_laps)
-    source_keys = [s["session_key"] for s in pack["sources"]]
+    # Cheap freshness check first: which sessions is a from-scratch build for
+    # this meeting keyed on right now. Only if that misses do we pay for the
+    # full pipeline (strategy search + Monte Carlo projection + door cards)
+    # below — a cache hit used to run all of that just to throw it away.
+    source_keys = [s["session_key"] for s in _prerace_sources(meeting_key)]
 
     if not regenerate and os.path.exists(path):
         with open(path) as f:
@@ -1038,6 +1050,7 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
                 and cached.get("pack_version") == PACK_VERSION):
             return cached
 
+    pack = build_prerace_data(meeting_key, total_laps)
     narrative = generate_structured_narrative(
         pack, PRERACE_SYSTEM, PRERACE_SCHEMA,
         "Write the race-morning strategy briefing for this data pack.")
