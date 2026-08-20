@@ -202,10 +202,12 @@
     }
   }
 
-  // Poll every 2s — only fires during live sessions
-  setInterval(fetchSectors, 2000);
-  setInterval(fetchIntervals, 2000);
-  setInterval(fetchLocations, 2000);
+  // Poll every 2s — only fires during live sessions, and only while the tab
+  // is actually visible (backgrounded/minimized tabs stop pulling from
+  // OpenF1 entirely rather than burning rate-limit budget unwatched).
+  setInterval(() => { if (!document.hidden) fetchSectors(); }, 2000);
+  setInterval(() => { if (!document.hidden) fetchIntervals(); }, 2000);
+  setInterval(() => { if (!document.hidden) fetchLocations(); }, 2000);
 
   function computeOverallBest(drivers) {
     overallBest = { s1: null, s2: null, s3: null };
@@ -1039,7 +1041,7 @@
 
   // ── Live mode auto-refresh ──────────────────────────────────────────────
   setInterval(() => {
-    if (replayMode) return;
+    if (replayMode || document.hidden) return;   // paused in background — resumed below on refocus
     countdown--;
     document.getElementById('countdown').textContent = countdown;
     if (countdown <= 0) {
@@ -1050,6 +1052,16 @@
       });
     }
   }, 1000);
+
+  // Refresh immediately on refocus rather than waiting out the rest of a
+  // stale countdown — a tab backgrounded for 10 minutes shouldn't show data
+  // that's 10 minutes old for another 5 seconds after you look back at it.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !replayMode) {
+      countdown = 5;
+      fetchData();
+    }
+  });
 
   // ── Replay mode ─────────────────────────────────────────────────────────
   let replayMode  = false;

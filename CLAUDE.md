@@ -382,6 +382,17 @@ Debug: `/api/debug/openf1_auth`, `/api/debug/anthropic_auth`.
   finished races don't hammer the API.
 - Strategy chart is fixed at race start (`strategyFetched` flag) — don't
   regenerate it every render.
+- All four of `/live`'s pollers (the 5s `fetchData` tick, and the 2s
+  `fetchSectors`/`fetchIntervals`/`fetchLocations`) are gated on
+  `!document.hidden`, fixed 2026-08-18. `fetchLocations` in particular had no
+  `isLiveSession` gate at all (only `replayMode` — it deliberately still shows
+  a snapshot for finished sessions), so simply leaving `/live` open on ANY
+  session, live or long-finished, polled OpenF1 every 2s forever even in a
+  backgrounded tab. A `visibilitychange` listener triggers one immediate
+  refetch on refocus so the view isn't stale after being backgrounded.
+  Verified in-browser: patching `window.fetch` to count matching calls and
+  forcing `document.hidden` via `Object.defineProperty` showed polling fully
+  paused while hidden and resumed immediately on refocus.
 
 ---
 
