@@ -277,14 +277,31 @@ def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -
     return rows
 
 
+
+# Tolerance for _pit_window, below — deliberately NOT LIVE_MARGIN_S (10s).
+# That figure prices a whole extra PIT STOP (~22-28s) against staying out, so
+# a 10s budget is right for comparing 1-stop vs 2-stop vs 3-stop. Shifting one
+# stop's lap by 1 only changes two stints' wear by a fraction of a second, so
+# the same 10s budget lets the window balloon to dozens of laps on any track
+# with a flat degradation curve — measured directly: a 44-lap race with a
+# near-zero HARD deg rate produced a ~28-lap window that swallowed the entire
+# middle stint of a 2-stop plan, visually erasing its colour on the chart.
+# PIT_WINDOW_MARGIN_S is sized for the single-stop question instead, and
+# PIT_WINDOW_MAX_SHIFT is a hard display cap so no degenerate curve (e.g. a
+# compound with no measured wear at all, deg_rate effectively 0) can blow the
+# window out no matter how flat the sensitivity genuinely is.
+PIT_WINDOW_MARGIN_S = 2.0
+PIT_WINDOW_MAX_SHIFT = 3   # laps either side — window is at most 7 laps wide
+
+
 def _pit_window(seq: list[str], lens: list[int], pit_index: int,
                 curves: dict, field_baseline: float, pit_loss: float,
-                total_laps: int, margin_s: float = LIVE_MARGIN_S) -> list[int]:
+                total_laps: int, margin_s: float = PIT_WINDOW_MARGIN_S,
+                max_shift: int = PIT_WINDOW_MAX_SHIFT) -> list[int]:
     """Range of laps [lo, hi] around one pit stop's optimal lap that stays
     within `margin_s` of the strategy's actual time — moving only this stop
-    and adjusting its two adjacent stints, all others held fixed. Same
-    "genuinely in play" tolerance LIVE_MARGIN_S already uses for stop-count
-    viability, just applied to a single stop's timing instead."""
+    and adjusting its two adjacent stints, all others held fixed — capped at
+    `max_shift` laps either side (see module comment above for why)."""
     starts = [0]
     for l in lens[:-1]:
         starts.append(starts[-1] + l)
@@ -307,14 +324,14 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
     base = time_at(0)
     lo = hi = 0
     shift = -1
-    while True:
+    while shift >= -max_shift:
         t = time_at(shift)
         if t is None or t - base > margin_s:
             break
         lo = shift
         shift -= 1
     shift = 1
-    while True:
+    while shift <= max_shift:
         t = time_at(shift)
         if t is None or t - base > margin_s:
             break

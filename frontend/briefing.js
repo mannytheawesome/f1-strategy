@@ -384,7 +384,7 @@
   }
 
   // ── expected pit stop strategies & windows (Gantt) ───────────────────────
-  const LIVE_MARGIN_S_DISPLAY = 10;   // mirrors engine.prerace.LIVE_MARGIN_S — display only
+  const PIT_WINDOW_MAX_SHIFT_DISPLAY = 3;   // mirrors engine.prerace.PIT_WINDOW_MAX_SHIFT — display only
 
   function pitStrategyGanttCard(strategies, totalLaps) {
     const c = document.createElement('div');
@@ -421,7 +421,7 @@
         <div class="gantt-row">${segHTML}</div>`;
     }).join('');
     c.innerHTML = `<h2>Expected pit stop strategies &amp; windows</h2>
-      <div class="meta-row"><span>each row is the best plan at that stop count · green = pit window, the range of laps that stays within ${LIVE_MARGIN_S_DISPLAY}s of the optimal stop</span></div>
+      <div class="meta-row"><span>each row is the best plan at that stop count · green = pit window, the practical range of laps (within ${PIT_WINDOW_MAX_SHIFT_DISPLAY} laps either way) that stays close to the optimal stop's time</span></div>
       <div class="gantt-chart">${rows}<div class="gantt-axis">${tickHTML}</div></div>`;
     return c;
   }

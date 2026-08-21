@@ -550,9 +550,22 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       - `team_pace`: per-team gap to the fastest team, re-based from
         `_long_run_pace`'s per-driver deltas (quicker of each team's two cars).
       - `strategies[].pit_windows`: for each pit stop, the `[lo, hi]` lap range
-        that stays within `LIVE_MARGIN_S` of the strategy's actual time — new
-        `_pit_window()`, holding every other stop fixed and re-evaluating via
-        `predictor._stint_time` as the one stop's lap shifts either way.
+        around the optimal stop — new `_pit_window()`, holding every other
+        stop fixed and re-evaluating via `predictor._stint_time` as the one
+        stop's lap shifts either way. **Shipped with a scale bug**, caught
+        2026-08-22 from a user screenshot after deploy: it originally reused
+        `LIVE_MARGIN_S` (10s), which prices a whole extra PIT STOP against
+        staying out — right for comparing 1-/2-/3-stop plans, wrong for a
+        single stint-boundary shift, where each lap only costs a fraction of
+        a second of degradation. On a race with a flat deg curve this let the
+        window balloon to ~28 of 44 laps, visually erasing the middle stint's
+        colour entirely. Fixed with `PIT_WINDOW_MARGIN_S=2.0` (scaled for the
+        single-stop question) plus a hard `PIT_WINDOW_MAX_SHIFT=3` lap cap so
+        no degenerate curve (e.g. a compound with ~zero measured wear) can
+        blow it out regardless of the time-sensitivity math — verified against
+        a synthetic near-flat curve, and proved analytically that adjacent
+        windows can no longer overlap and erase a middle stint (`max_shift=3`
+        vs `MIN_STINT=8` guarantees at least 2 laps stay visible either way).
       - `grid[].tyres`: full per-driver new/used set counts per compound (not
         just the existing top-10 boolean summary). "Used" is capped at the
         compound's total allocation — `DriverInventory.used` is a raw stint
