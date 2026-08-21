@@ -221,6 +221,52 @@ paper compound is started on one they hold. A driver who saved a Soft is planned
 onto it; a team-mate who spent theirs in Q3 is not. Both `available` and
 `inventory` default to None, so the prediction path and backtest are unaffected.
 
+**`_long_run_pace()` (`engine/prerace.py`) had no clean-lap filter.** User-
+reported 2026-08-21: the pre-race "real pace order" table and the lap-0
+"Grid → flag" projection both looked badly wrong at Spain 2026 — Hamilton
+(P2 on the grid, went on to win) was missing from the projection's top 10
+entirely, with Norris shown at an 89% win probability. Traced to
+`_long_run_pace`: it fed every lap of a qualifying >=6-lap stint into the
+per-driver median with no outlier filtering beyond pit-out/yellow-flag laps —
+practice stints mix genuine push laps with slower non-representative ones
+(traffic, installation-style laps, backing off) that aren't flagged either
+way. For Hamilton specifically this produced a **+5.08s/lap** pace delta
+(rank 21st of 28), which `_run_projection` feeds directly into the Monte
+Carlo pace model — explaining exactly why he'd vanish from the forecast.
+Fixed by adding the same idea `predictor._stint_deg_samples` already uses
+for degradation fitting (keep only laps within a ratio of the stint's own
+best lap) plus dropping each stint's in-lap (which `_stint_deg_samples`
+already does but this function didn't) — but NOT the same ratio.
+`DEG_LONGRUN`'s 1.02 is tuned for isolating a wear *slope*, where the fitted
+laps need to be nearly flat; `_long_run_pace` measures a single pace
+*level* across a whole stint, which legitimately drifts a few percent from
+wear. Applying 1.02 here dropped Hamilton from the table entirely (10 of 28
+drivers survived) despite him winning the race. Checked candidate ratios
+directly against this session's raw laps: 1.05 already recovers him
+(-0.04s/lap) with 20/28 coverage; 1.10 (`PACE_ORDER_CLEAN_RATIO`) gives full,
+clean coverage (25/28, sensible order, no outliers); 1.15 already re-admits
+one (a driver jumping to an implausible -3.7s/lap) — 1.10 was the widest
+safe margin found. Post-fix, Hamilton ranks 6th (-1.24s/lap) and the
+projection shows him P2 with a real podium share; Antonelli (P3 on the grid)
+was also missing from the pace table before (rank 13, cut by the frontend's
+top-10 display) and now ranks 8th, inside it. Not covered by the backtest
+harness — `backtest_full.py` never calls into `engine/prerace.py` at all, so
+this had no automated test to catch it; validated by hand against the one
+reported race plus a ratio sweep on its real lap data.
+
+Also fixed alongside: `frontend/briefing.js`'s grid card was hardcoded to
+`d.grid.slice(0, 10)` despite the backend already returning the full field
+(20 cars) — a separate, purely cosmetic truncation, not a calculation bug.
+
+Not a bug, by design: the "strategies on paper" table shows only the single
+fastest plan at each forced stop count (1/2/3), not an exhaustive list, and
+`optimize_strategy`'s `SOFT_SPLASH_MAX=15` deliberately forbids a long final
+stint on a softer compound (e.g. Medium-Hard-**Soft** as a full-length
+closer) unless it's short enough to be a genuine splash-to-the-flag — real
+teams essentially never run a long stint on the faster-degrading compound
+that late. A user report expecting to see that ordering as a "viable
+option" reflects this intentional constraint, not a defect.
+
 ---
 
 ## How to run

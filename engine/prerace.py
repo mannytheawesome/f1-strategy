@@ -26,6 +26,12 @@ from engine.predictor import (
     PIT_LOSS, DRY, SC_PIT_FACTOR, _lap_t, _cliff_life,
 )
 
+# Clean-lap filter for _long_run_pace (below): keep only laps within this
+# ratio of a stint's own best lap, same idea as predictor.DEG_LONGRUN but
+# looser — see _long_run_pace's comment for why 1.02 (tuned for slope-fitting)
+# is too strict for measuring a single pace level across a stint.
+PACE_ORDER_CLEAN_RATIO = 1.10
+
 # A plan within this much of the optimum is genuinely in play; race-day noise
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
@@ -118,8 +124,29 @@ def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
                 continue
             compound = st.get("compound")
             curve = curves.get(compound)
+            # Drop the in-lap (final lap of the stint ends in the pit lane —
+            # same exclusion predictor._stint_deg_samples applies).
             stint_laps = [(ln, t) for ln, t in laps_by_driver.get(num, {}).items()
-                          if ls < ln <= le]
+                          if ls < ln < le]
+            if len(stint_laps) < 5:
+                continue
+            # Keep only representative running: cool-down laps, traffic, and
+            # one-off slow laps (not caught by the yellow-flag/pit-out filters
+            # above — practice is full of them) are all one-sided and slow.
+            # Measure against the stint's own best lap, but with a looser
+            # tolerance than degradation fitting's DEG_LONGRUN (1.02): that
+            # ratio is tuned for isolating a wear SLOPE, where the fitted
+            # laps must be nearly flat. Here we want a single pace LEVEL
+            # across a whole stint, which legitimately drifts a few percent
+            # from tyre wear — DEG_LONGRUN's 1.02 rejected that normal drift
+            # too, e.g. it dropped Hamilton from this table entirely at Spain
+            # 2026 (down to 10 of 28 drivers) despite him going on to win the
+            # race. PACE_ORDER_CLEAN_RATIO=1.10 was checked against that same
+            # session: it recovers full-field coverage (25/28) with no
+            # reintroduced outliers, whereas 1.15 already re-admits one
+            # (a driver's median jumping to an implausible -3.7s/lap).
+            ref = min(t for _, t in stint_laps)
+            stint_laps = [(ln, t) for ln, t in stint_laps if t <= ref * PACE_ORDER_CLEAN_RATIO]
             if len(stint_laps) < 5:
                 continue
             age0 = st.get("tyre_age_at_start") or 0
