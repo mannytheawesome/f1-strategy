@@ -3,6 +3,10 @@
   let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
   let whatifTimer = null;
   let whatifSeq = 0;
+  // Customize-panel open/closed — not persisted, just resets to collapsed on
+  // page load. Separate per page type since recap and prerace have different
+  // section sets and are toggled independently.
+  let customizeOpen = { recap: false, prerace: false };
 
   // ── race list ──────────────────────────────────────────────────────────────
   async function loadRaces() {
@@ -80,6 +84,86 @@
     if (p && ctx.meetingKey) p.onclick = () => loadPrerace(ctx.meetingKey, ctx.sessionKey);
   }
 
+  // ── customizable section layout (per-browser, via localStorage) ───────────
+  // Each briefing's optional/content cards can be shown/hidden and reordered.
+  // The header and (for the recap page) the results table + what-if editor
+  // stay fixed — the editor is wired directly to specific driver rows in that
+  // table, so pulling them apart or hiding either would break the click-to-
+  // open interaction. Layout choices are saved on this browser only; there's
+  // no account system in this app to sync them across devices.
+  function loadLayout(key) {
+    try { return JSON.parse(localStorage.getItem('briefingLayout:' + key)) || {}; }
+    catch { return {}; }
+  }
+
+  function saveLayout(key, layout) {
+    localStorage.setItem('briefingLayout:' + key, JSON.stringify(layout));
+  }
+
+  // sections: [{id, title, node}] in default order. Returns the subset that
+  // isn't hidden, reordered per the saved layout — unknown/removed ids are
+  // dropped and any new ids not yet in a saved order are appended at the end.
+  function applyLayout(key, sections) {
+    const layout = loadLayout(key);
+    const hidden = new Set(layout.hidden || []);
+    const known = new Set(sections.map(sec => sec.id));
+    const order = (layout.order || []).filter(id => known.has(id));
+    for (const sec of sections) if (!order.includes(sec.id)) order.push(sec.id);
+    const byId = Object.fromEntries(sections.map(sec => [sec.id, sec]));
+    return order.map(id => byId[id]).filter(sec => !hidden.has(sec.id));
+  }
+
+  function renderCustomizePanel(root, key, sections, rerender) {
+    const layout = loadLayout(key);
+    const hidden = new Set(layout.hidden || []);
+    const order = (layout.order || []).filter(id => sections.some(sec => sec.id === id));
+    for (const sec of sections) if (!order.includes(sec.id)) order.push(sec.id);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'card';
+
+    function persist() { saveLayout(key, { order, hidden: [...hidden] }); }
+
+    function paint() {
+      const rows = order.map((id, i) => {
+        const sec = sections.find(s => s.id === id);
+        return `<div class="layout-row" data-id="${id}">
+          <label><input type="checkbox" ${hidden.has(id) ? '' : 'checked'}> ${sec.title}</label>
+          <span class="layout-controls">
+            <button class="mv-up" ${i === 0 ? 'disabled' : ''} title="move up">▲</button>
+            <button class="mv-down" ${i === order.length - 1 ? 'disabled' : ''} title="move down">▼</button>
+          </span>
+        </div>`;
+      }).join('');
+      wrap.innerHTML = `<h2>Customize this layout</h2>
+        <div class="meta-row"><span>show/hide and reorder sections — saved on this browser only</span></div>
+        <div id="layout-rows">${rows}</div>
+        <div class="btnrow"><button id="layout-reset">reset to default</button></div>`;
+
+      wrap.querySelectorAll('.layout-row').forEach(row => {
+        const id = row.dataset.id;
+        row.querySelector('input').onchange = e => {
+          if (e.target.checked) hidden.delete(id); else hidden.add(id);
+          persist(); rerender();
+        };
+        row.querySelector('.mv-up').onclick = () => {
+          const i = order.indexOf(id);
+          if (i > 0) { [order[i - 1], order[i]] = [order[i], order[i - 1]]; persist(); paint(); rerender(); }
+        };
+        row.querySelector('.mv-down').onclick = () => {
+          const i = order.indexOf(id);
+          if (i < order.length - 1) { [order[i + 1], order[i]] = [order[i], order[i + 1]]; persist(); paint(); rerender(); }
+        };
+      });
+      wrap.querySelector('#layout-reset').onclick = () => {
+        localStorage.removeItem('briefingLayout:' + key);
+        rerender();
+      };
+    }
+    paint();
+    root.appendChild(wrap);
+  }
+
   function renderBriefing(b) {
     const d = b.data, n = b.narrative, s = d.session, st = d.stats;
     const root = document.getElementById('briefing');
@@ -98,15 +182,17 @@
         <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}${st.vsc_count ? ' · VSC: ' + st.vsc_count : ''}</span>
       </div>
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
-      ${toggleHTML('debrief')}`;
+      ${toggleHTML('debrief')}
+      <div class="btnrow" style="margin-top:8px"><button id="btn-customize">⚙ CUSTOMIZE LAYOUT</button></div>`;
     root.appendChild(head);
     wireToggle(head);
+    head.querySelector('#btn-customize').onclick = () => {
+      customizeOpen.recap = !customizeOpen.recap;
+      renderBriefing(b);
+    };
 
-    if (n) {
-      root.appendChild(proseCard('The race', n.race_story));
-    }
-
-    // results + stint bars
+    // results + stint bars — fixed, not part of the customizable layout: the
+    // what-if editor right below is wired directly to these rows' onclick.
     const resCard = document.createElement('div');
     resCard.className = 'card';
     let rows = '';
@@ -138,20 +224,26 @@
       <div class="notice">Pick a driver above, then drag the pit-stop boundaries or click a stint to change compound. The race is re-simulated with everyone else on their actual strategy.</div>`;
     root.appendChild(ed);
 
+    // ── customizable sections below (order/visibility saved per-browser) ───
+    const sections = [];
+
     if (n) {
-      root.appendChild(proseCard('The tyres', n.tyre_story));
+      sections.push({ id: 'race-story', title: 'The race', node: proseCard('The race', n.race_story) });
     }
-    root.appendChild(degCurveCard(d.deg_curves));
+    if (n) {
+      sections.push({ id: 'tyre-story', title: 'The tyres', node: proseCard('The tyres', n.tyre_story) });
+    }
+    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves) });
 
     // Race in charts — RSS-style panels, fetched separately so they never block
-    // or bloat the LLM briefing pack.
+    // or bloat the LLM briefing pack. Fetch is skipped below if this section
+    // ends up hidden — no point pulling chart data nobody will see.
     const rcCard = document.createElement('div');
     rcCard.className = 'card';
     rcCard.id = 'race-charts-card';
     rcCard.innerHTML = '<h2>The race in charts</h2>'
       + '<div id="race-charts-body"><span class="notice spin">building race charts…</span></div>';
-    root.appendChild(rcCard);
-    if (currentContext && currentContext.sessionKey) loadRaceCharts(currentContext.sessionKey);
+    sections.push({ id: 'race-charts', title: 'The race in charts', node: rcCard });
 
     // stint pace — the "which tyre was a rock" read
     if (d.stint_pace && d.stint_pace.field && d.stint_pace.field.length) {
@@ -174,7 +266,7 @@
         <div class="meta-row"><span>best-managed long stints (≥8 clean laps)</span></div>
         <table class="results">
           <tr><th>DRV</th><th>TYRE</th><th>LAPS</th><th>MEDIAN</th><th>SLOPE</th></tr>${bRows}</table>`;
-      root.appendChild(spCard);
+      sections.push({ id: 'stint-pace', title: 'Stint pace — fuel-corrected deg slopes', node: spCard });
     }
 
     // the stops, graded
@@ -197,14 +289,14 @@
         <table class="results" style="margin-bottom:12px"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${best.map(row).join('')}</table>
         <div class="meta-row"><span>worst calls</span></div>
         <table class="results"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${worst.map(row).join('')}</table>`;
-      root.appendChild(gCard);
+      sections.push({ id: 'stops-graded', title: 'The stops, graded', node: gCard });
     }
     if (n && n.the_stops) {
-      root.appendChild(proseCard('The stops', n.the_stops));
+      sections.push({ id: 'stops-story', title: 'The stops (narrative)', node: proseCard('The stops', n.the_stops) });
     }
 
     if (n) {
-      root.appendChild(proseCard('Strategy verdicts', n.strategy_verdicts));
+      sections.push({ id: 'strategy-verdicts', title: 'Strategy verdicts', node: proseCard('Strategy verdicts', n.strategy_verdicts) });
     }
 
     // prior check — grade the race-morning briefing against the result
@@ -226,9 +318,22 @@
           <span>door/mover calls: ${mv.correct}/${mv.total}</span>
         </div>
         ${moverRows ? `<table class="results" style="margin-top:8px"><tr><th>DRV</th><th>GRID→FIN</th><th>CALL</th><th></th></tr>${moverRows}</table>` : ''}`;
-      root.appendChild(scCard);
+      sections.push({ id: 'prior-check', title: 'Prior check — race-morning call', node: scCard });
     }
-    if (n && n.prior_check) root.appendChild(proseCard('Prior check', n.prior_check));
+    if (n && n.prior_check) {
+      sections.push({ id: 'prior-check-story', title: 'Prior check (narrative)', node: proseCard('Prior check', n.prior_check) });
+    }
+
+    if (customizeOpen.recap) {
+      renderCustomizePanel(root, 'recap', sections, () => renderBriefing(b));
+    }
+
+    const filtered = applyLayout('recap', sections);
+    for (const sec of filtered) root.appendChild(sec.node);
+
+    if (filtered.some(sec => sec.id === 'race-charts') && currentContext && currentContext.sessionKey) {
+      loadRaceCharts(currentContext.sessionKey);
+    }
   }
 
   function proseCard(title, text) {
@@ -285,22 +390,30 @@
       </div>
       <div class="meta-row"><span>built from: ${d.sources.map(s => s.name).join(' · ')}</span></div>
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
-      ${toggleHTML('prerace')}`;
+      ${toggleHTML('prerace')}
+      <div class="btnrow" style="margin-top:8px"><button id="btn-customize">⚙ CUSTOMIZE LAYOUT</button></div>`;
     root.appendChild(head);
     wireToggle(head);
+    head.querySelector('#btn-customize').onclick = () => {
+      customizeOpen.prerace = !customizeOpen.prerace;
+      renderPrerace(b);
+    };
+
+    // ── customizable sections (order/visibility saved per-browser) ─────────
+    const sections = [];
 
     // grid
     const gridCard = document.createElement('div');
     gridCard.className = 'card';
     let gRows = '';
-    for (const g of d.grid.slice(0, 10)) {
+    for (const g of d.grid) {
       gRows += `<tr><td>${g.position}</td><td><b>${g.acronym}</b></td>
         <td>${g.team || ''}</td><td>${g.gap ?? ''}</td></tr>`;
     }
     gridCard.innerHTML = `<h2>The grid — from ${d.grid_source}</h2>
       <table class="results"><tr><th>POS</th><th>DRV</th><th>TEAM</th><th>GAP</th></tr>${gRows}</table>`;
-    root.appendChild(gridCard);
-    if (n) root.appendChild(proseCard('Reading the grid', n.grid_story));
+    sections.push({ id: 'grid', title: 'The grid', node: gridCard });
+    if (n) sections.push({ id: 'grid-story', title: 'Reading the grid (narrative)', node: proseCard('Reading the grid', n.grid_story) });
 
     // the real pace order — long runs vs grid slots
     if (d.long_run_pace && d.long_run_pace.length) {
@@ -319,42 +432,50 @@
       pCard.innerHTML = `<h2>The real pace order — long runs, fuel &amp; age corrected</h2>
         <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable)</span></div>
         <table class="results"><tr><th>RANK</th><th>DRV</th><th>PACE</th><th>GRID</th><th>OUT OF POSITION</th><th>SAMPLE</th></tr>${pRows}</table>`;
-      root.appendChild(pCard);
+      sections.push({ id: 'pace-order', title: 'The real pace order', node: pCard });
     }
 
-    // long-run boards — one per practice/sprint session
-    for (const tb of (d.long_run_tables || [])) {
-      if (!tb.drivers.length) continue;
-      const maxLaps = Math.max(...tb.drivers.map(r => r.laps.length));
-      const minute = Math.floor(Math.min(...tb.drivers.map(r => r.avg)) / 60);
-      const strip = t => {
-        const m = Math.floor(t / 60);
-        const rest = (t - m * 60).toFixed(3).padStart(6, '0');
-        return m === minute ? rest : `${m}:${rest}`;   // minute shown only when it differs
-      };
-      const lrCard = document.createElement('div');
-      lrCard.className = 'card';
-      let head2 = tb.drivers.map(r =>
-        `<th style="background:#${r.team_colour.replace('#','')};color:#000;padding:3px 6px">${r.acronym} (${r.compound})</th>`).join('');
-      let body = '';
-      for (let i = 0; i < maxLaps; i++) {
-        body += '<tr>' + tb.drivers.map(r => {
-          const c = r.laps[i];
-          if (!c) return '<td style="background:#161616"></td>';
-          return c.x ? '<td style="color:var(--muted);text-align:center">X</td>'
-                     : `<td style="text-align:center">${strip(c.t)}</td>`;
-        }).join('') + '</tr>';
+    // long-run boards — one per practice/sprint session, grouped as one
+    // toggleable/reorderable section since they're all views of the same data.
+    {
+      const group = document.createElement('div');
+      group.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+      for (const tb of (d.long_run_tables || [])) {
+        if (!tb.drivers.length) continue;
+        const maxLaps = Math.max(...tb.drivers.map(r => r.laps.length));
+        const minute = Math.floor(Math.min(...tb.drivers.map(r => r.avg)) / 60);
+        const strip = t => {
+          const m = Math.floor(t / 60);
+          const rest = (t - m * 60).toFixed(3).padStart(6, '0');
+          return m === minute ? rest : `${m}:${rest}`;   // minute shown only when it differs
+        };
+        const lrCard = document.createElement('div');
+        lrCard.className = 'card';
+        let head2 = tb.drivers.map(r =>
+          `<th style="background:#${r.team_colour.replace('#','')};color:#000;padding:3px 6px">${r.acronym} (${r.compound})</th>`).join('');
+        let body = '';
+        for (let i = 0; i < maxLaps; i++) {
+          body += '<tr>' + tb.drivers.map(r => {
+            const c = r.laps[i];
+            if (!c) return '<td style="background:#161616"></td>';
+            return c.x ? '<td style="color:var(--muted);text-align:center">X</td>'
+                       : `<td style="text-align:center">${strip(c.t)}</td>`;
+          }).join('') + '</tr>';
+        }
+        const avgRow = tb.drivers.map(r =>
+          `<td style="color:var(--green);font-weight:700;text-align:center">${strip(r.avg)}</td>`).join('');
+        lrCard.innerHTML = `<h2>Long runs — ${tb.session_name}</h2>
+          <div class="meta-row"><span>each driver's longest run · times shown without the ${minute}-minute prefix · X = out-lap, traffic spike (>5% over run median) or track-wide yellow — excluded from the average</span></div>
+          <div style="overflow-x:auto"><table class="results" style="min-width:${tb.drivers.length * 74}px">
+            <tr>${head2}</tr>${body}
+            <tr><td colspan="${tb.drivers.length}" style="text-align:center;color:var(--green);font-weight:700;border-top:1px solid var(--border)">AVERAGE STINT PACE</td></tr>
+            <tr>${avgRow}</tr>
+          </table></div>`;
+        group.appendChild(lrCard);
       }
-      const avgRow = tb.drivers.map(r =>
-        `<td style="color:var(--green);font-weight:700;text-align:center">${strip(r.avg)}</td>`).join('');
-      lrCard.innerHTML = `<h2>Long runs — ${tb.session_name}</h2>
-        <div class="meta-row"><span>each driver's longest run · times shown without the ${minute}-minute prefix · X = out-lap, traffic spike (>5% over run median) or track-wide yellow — excluded from the average</span></div>
-        <div style="overflow-x:auto"><table class="results" style="min-width:${tb.drivers.length * 74}px">
-          <tr>${head2}</tr>${body}
-          <tr><td colspan="${tb.drivers.length}" style="text-align:center;color:var(--green);font-weight:700;border-top:1px solid var(--border)">AVERAGE STINT PACE</td></tr>
-          <tr>${avgRow}</tr>
-        </table></div>`;
-      root.appendChild(lrCard);
+      if (group.children.length) {
+        sections.push({ id: 'long-run-tables', title: 'Long runs (practice/sprint)', node: group });
+      }
     }
 
     // where the lap lives — quali sectors & top speed
@@ -379,7 +500,7 @@
       sCard.innerHTML = `<h2>Where the lap lives — qualifying sectors</h2>
         <div class="meta-row"><span>purple = field best · "left on table" = best lap minus theoretical best</span></div>
         <table class="results"><tr><th>DRV</th><th>BEST</th><th>S1</th><th>S2</th><th>S3</th><th>THEORY</th><th>LEFT</th><th>TRAP</th></tr>${sRows}</table>`;
-      root.appendChild(sCard);
+      sections.push({ id: 'quali-sectors', title: 'Where the lap lives — qualifying sectors', node: sCard });
     }
 
     // the trade, calculated
@@ -405,8 +526,8 @@
         ${pairRows}</table>
       <div class="meta-row"><span>max tolerable deg gap (s/lap) = 2 × offset / N</span></div>
       <table class="cmp-table" style="border:1px solid var(--border)">${lut}</table>`;
-    root.appendChild(tradeCard);
-    if (n) root.appendChild(proseCard('The trade', n.the_trade));
+    sections.push({ id: 'trade', title: 'The trade, calculated', node: tradeCard });
+    if (n) sections.push({ id: 'trade-story', title: 'The trade (narrative)', node: proseCard('The trade', n.the_trade) });
 
     // paper strategies
     const stratCard = document.createElement('div');
@@ -437,8 +558,8 @@
       <table class="results"><tr><th>PLAN</th><th>STOPS</th><th>PITS</th><th>SHAPE</th><th>Δ</th></tr>${sRows}</table>
       ${sd ? `<div class="meta-row" style="margin-top:8px"><span><b>${sd.optimal_stops}-stop optimal.</b>${xo && xo.runner_stops ? ` A ${xo.runner_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.` : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
-    root.appendChild(stratCard);
-    if (n) root.appendChild(proseCard('Race shape', n.race_shape));
+    sections.push({ id: 'strategies', title: 'The strategies on paper', node: stratCard });
+    if (n) sections.push({ id: 'race-shape-story', title: 'Race shape (narrative)', node: proseCard('Race shape', n.race_shape) });
 
     // undercut vs overcut
     if (d.undercut) {
@@ -455,9 +576,11 @@
           <span>verdict: <b style="color:${col}">${u.verdict.toUpperCase()}</b></span>
         </div>
         <div class="meta-row" style="margin-top:6px"><span>${u.note}</span></div>`;
-      root.appendChild(uCard);
+      sections.push({ id: 'undercut', title: 'Undercut vs overcut', node: uCard });
     }
-    if (n && n.the_undercut) root.appendChild(proseCard('The undercut', n.the_undercut));
+    if (n && n.the_undercut) {
+      sections.push({ id: 'undercut-story', title: 'The undercut (narrative)', node: proseCard('The undercut', n.the_undercut) });
+    }
 
     // grid → flag projection
     if (d.projection && d.projection.forecasts && d.projection.forecasts.length) {
@@ -477,9 +600,11 @@
       jCard.innerHTML = `<h2>Grid → flag — the model's projection</h2>
         <div class="meta-row"><span>full race sim + Monte Carlo · assumes everyone starts on ${pj.start_compound_assumption} · grid spread ${pj.grid_spread_assumption_s}s/slot · range = P5–P95</span></div>
         <table class="results"><tr><th>PROJ</th><th>DRV</th><th>GRID</th><th>Δ</th><th>WIN</th><th>PODIUM</th><th>RANGE</th></tr>${jRows}</table>`;
-      root.appendChild(jCard);
+      sections.push({ id: 'projection', title: "Grid → flag — the model's projection", node: jCard });
     }
-    if (n && n.projection) root.appendChild(proseCard('The projection', n.projection));
+    if (n && n.projection) {
+      sections.push({ id: 'projection-story', title: 'The projection (narrative)', node: proseCard('The projection', n.projection) });
+    }
 
     // the doors — what a grid slot is worth + overtaking difficulty
     if (d.doors && d.doors.cards && d.doors.cards.length) {
@@ -510,11 +635,13 @@
         ${dr.sc_refund ? `<div class="meta-row" style="margin-top:6px"><span>early-SC refund: ~${(dr.sc_refund.p_sc_in_window * 100).toFixed(0)}% chance of a Safety Car in the first ${dr.sc_refund.early_window_laps} laps, worth ~${dr.sc_refund.full_refund_s}s off a pit-lane start if it falls</span></div>` : ''}
         ${d.weather_outlook && d.weather_outlook.rain_risk !== 'low' ? `<div class="meta-row" style="margin-top:6px"><span>⛅ rain risk ${d.weather_outlook.rain_risk.toUpperCase()} — ${d.weather_outlook.implication}</span></div>` : ''}
         ${d.recovery_prior ? `<div class="meta-row" style="margin-top:6px"><span>history: cars starting P${d.recovery_prior.back_grid_threshold}+ here finished ~P${d.recovery_prior.avg_finish_from_back} on average (${d.recovery_prior.sample_size} cars, ${(d.recovery_prior.races_sampled || []).join('/')}) · best recovery ${d.recovery_prior.best_recovery.acronym} ${d.recovery_prior.best_recovery.year} P${d.recovery_prior.best_recovery.grid}→P${d.recovery_prior.best_recovery.finish}</span></div>` : ''}`;
-      root.appendChild(dCard);
+      sections.push({ id: 'doors', title: 'The doors — what a grid slot is worth', node: dCard });
     }
-    if (n && n.the_doors) root.appendChild(proseCard('The doors', n.the_doors));
+    if (n && n.the_doors) {
+      sections.push({ id: 'doors-story', title: 'The doors (narrative)', node: proseCard('The doors', n.the_doors) });
+    }
 
-    root.appendChild(degCurveCard(d.deg_curves));
+    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves) });
 
     // watch list
     const wCard = document.createElement('div');
@@ -523,8 +650,15 @@
       `<tr><td><b>${u.name}</b></td><td>${u.watch}</td></tr>`).join('');
     wCard.innerHTML = `<h2>Fill in the blanks live</h2>
       <table class="results"><tr><th>UNKNOWN</th><th>WATCH FOR</th></tr>${wRows}</table>`;
-    root.appendChild(wCard);
-    if (n) root.appendChild(proseCard('The watch list', n.watch_list));
+    sections.push({ id: 'watch-list', title: 'Fill in the blanks live', node: wCard });
+    if (n) sections.push({ id: 'watch-list-story', title: 'The watch list (narrative)', node: proseCard('The watch list', n.watch_list) });
+
+    if (customizeOpen.prerace) {
+      renderCustomizePanel(root, 'prerace', sections, () => renderPrerace(b));
+    }
+
+    const filtered = applyLayout('prerace', sections);
+    for (const sec of filtered) root.appendChild(sec.node);
   }
 
   // ── deg curve chart ────────────────────────────────────────────────────────

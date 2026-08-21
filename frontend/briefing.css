@@ -107,6 +107,21 @@
     /* Wide tables scroll inside their card rather than stretching the page */
     .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    /* customize-layout panel */
+    #layout-rows { display: flex; flex-direction: column; gap: 2px; }
+    .layout-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 8px; border-bottom: 1px solid var(--border);
+    }
+    .layout-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .layout-controls { display: flex; gap: 4px; }
+    .layout-controls button {
+      background: #222; color: var(--text); border: 1px solid var(--border);
+      font-family: inherit; font-size: 10px; padding: 2px 8px; cursor: pointer;
+    }
+    .layout-controls button:hover:not(:disabled) { background: #333; }
+    .layout-controls button:disabled { opacity: 0.3; cursor: default; }
+
     /* ── mobile ── */
     @media (max-width: 760px) {
       header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
