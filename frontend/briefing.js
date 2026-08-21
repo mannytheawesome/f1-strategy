@@ -356,6 +356,124 @@
     return `<div class="stintbar">${inner}</div>`;
   }
 
+  // ── race simulation pace — by team ───────────────────────────────────────
+  function teamPaceCard(teamPace) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    if (!teamPace || !teamPace.length) {
+      c.innerHTML = '<h2>Race simulation pace — by team</h2><div class="notice">Not enough long-run data yet.</div>';
+      return c;
+    }
+    const MAX_BAR_PX = 420;
+    const maxGap = Math.max(...teamPace.map(t => t.gap_s), 0.01);
+    const rows = teamPace.map(t => {
+      const w = Math.round(t.gap_s / maxGap * MAX_BAR_PX);
+      const label = `+${t.gap_s.toFixed(2)}s (${t.gap_pct.toFixed(2)}%)`;
+      return `<div class="pace-row">
+        <span class="pace-team">${t.team}</span>
+        <div class="pace-track">
+          <div class="pace-bar" style="width:${w}px;background:#${(t.team_colour || '888888').replace('#', '')}"></div>
+          <span class="pace-label">${label}</span>
+        </div>
+      </div>`;
+    }).join('');
+    c.innerHTML = `<h2>Race simulation pace — by team</h2>
+      <div class="meta-row"><span>fuel- &amp; age-corrected long-run pace, quicker of each team's two cars · gap to the fastest team</span></div>
+      <div class="pace-chart">${rows}</div>`;
+    return c;
+  }
+
+  // ── expected pit stop strategies & windows (Gantt) ───────────────────────
+  const LIVE_MARGIN_S_DISPLAY = 10;   // mirrors engine.prerace.LIVE_MARGIN_S — display only
+
+  function pitStrategyGanttCard(strategies, totalLaps) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    if (!strategies || !strategies.length) {
+      c.innerHTML = '<h2>Expected pit stop strategies &amp; windows</h2><div class="notice">No viable strategy found.</div>';
+      return c;
+    }
+    const ticks = [];
+    for (let l = 10; l < totalLaps; l += 10) ticks.push(l);
+    const tickHTML = ticks.map(l =>
+      `<span class="gantt-tick" style="left:${(l / totalLaps * 100).toFixed(2)}%">${l}</span>`).join('');
+    const rows = strategies.map(s => {
+      const segs = [];
+      let cursor = 0;
+      for (let i = 0; i < s.compound_sequence.length; i++) {
+        const isLast = i === s.compound_sequence.length - 1;
+        const win = !isLast ? s.pit_windows[i] : null;
+        const stintEnd = isLast ? totalLaps : win[0];
+        segs.push({ type: 'c-' + s.compound_sequence[i], start: cursor, end: stintEnd, label: '' });
+        cursor = stintEnd;
+        if (win) {
+          segs.push({ type: 'gantt-window', start: win[0], end: win[1],
+                     label: `${win[0]}<span>${win[1]}</span>` });
+          cursor = win[1];
+        }
+      }
+      const segHTML = segs.map(seg => {
+        const left = (seg.start / totalLaps * 100).toFixed(2);
+        const width = ((seg.end - seg.start) / totalLaps * 100).toFixed(2);
+        return `<div class="gantt-seg ${seg.type}" style="left:${left}%;width:${width}%">${seg.label}</div>`;
+      }).join('');
+      return `<div class="gantt-row-label">Strategy ${s.stops}-stop</div>
+        <div class="gantt-row">${segHTML}</div>`;
+    }).join('');
+    c.innerHTML = `<h2>Expected pit stop strategies &amp; windows</h2>
+      <div class="meta-row"><span>each row is the best plan at that stop count · green = pit window, the range of laps that stays within ${LIVE_MARGIN_S_DISPLAY}s of the optimal stop</span></div>
+      <div class="gantt-chart">${rows}<div class="gantt-axis">${tickHTML}</div></div>`;
+    return c;
+  }
+
+  // ── tyres available for race ──────────────────────────────────────────────
+  const TYRE_AVAIL_COLOUR = {
+    SOFT:   { new: '#e8002d', used: '#f28ca0' },
+    MEDIUM: { new: '#ffd700', used: '#fff3b0' },
+    HARD:   { new: '#ffffff', used: '#9a9a9a' },
+  };
+  const TYRE_AVAIL_TEXT = { SOFT_new: '#fff' };   // everything else reads fine in black
+
+  function tyreAvailabilityCard(grid) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const rows = grid.filter(g => g.tyres);
+    if (!rows.length) {
+      c.innerHTML = '<h2>Tyres available for race</h2><div class="notice">No tyre inventory data yet.</div>';
+      return c;
+    }
+    const PX_PER_SET = 22;
+    const bodyRows = rows.map(g => {
+      let segs = '';
+      for (const compound of ['SOFT', 'MEDIUM', 'HARD']) {
+        for (const cond of ['new', 'used']) {
+          const n = g.tyres[compound][cond];
+          if (!n) continue;
+          const bg = TYRE_AVAIL_COLOUR[compound][cond];
+          const fg = TYRE_AVAIL_TEXT[compound + '_' + cond] || '#000';
+          segs += `<div class="tyre-seg" style="width:${n * PX_PER_SET}px;background:${bg};color:${fg}"
+                    title="${compound} (${cond}): ${n}">${n}</div>`;
+        }
+      }
+      return `<div class="tyre-row">
+        <span class="tyre-driver">${g.acronym}</span>
+        <div class="tyre-track">${segs}</div>
+      </div>`;
+    }).join('');
+    c.innerHTML = `<h2>Tyres available for race</h2>
+      <div class="meta-row"><span>new = never fitted this weekend · used = already fitted at least once, assumed still holdable (OpenF1 has no per-set ID, so a scrubbed set can't be told apart from a discarded one)</span></div>
+      <div class="tyre-chart">${bodyRows}</div>
+      <div class="tyre-legend">
+        <span><i style="background:${TYRE_AVAIL_COLOUR.SOFT.new}"></i>SN</span>
+        <span><i style="background:${TYRE_AVAIL_COLOUR.SOFT.used}"></i>SU</span>
+        <span><i style="background:${TYRE_AVAIL_COLOUR.MEDIUM.new}"></i>MN</span>
+        <span><i style="background:${TYRE_AVAIL_COLOUR.MEDIUM.used}"></i>MU</span>
+        <span><i style="background:${TYRE_AVAIL_COLOUR.HARD.new}"></i>HN</span>
+        <span><i style="background:${TYRE_AVAIL_COLOUR.HARD.used}"></i>HU</span>
+      </div>`;
+    return c;
+  }
+
   // ── pre-race briefing ──────────────────────────────────────────────────────
   async function loadPrerace(meetingKey, sessionKey) {
     const root = document.getElementById('briefing');
@@ -433,6 +551,11 @@
         <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable)</span></div>
         <table class="results"><tr><th>RANK</th><th>DRV</th><th>PACE</th><th>GRID</th><th>OUT OF POSITION</th><th>SAMPLE</th></tr>${pRows}</table>`;
       sections.push({ id: 'pace-order', title: 'The real pace order', node: pCard });
+    }
+
+    if (d.team_pace && d.team_pace.length) {
+      sections.push({ id: 'team-pace', title: 'Race simulation pace — by team',
+                     node: teamPaceCard(d.team_pace) });
     }
 
     // long-run boards — one per practice/sprint session, grouped as one
@@ -560,6 +683,16 @@
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     sections.push({ id: 'strategies', title: 'The strategies on paper', node: stratCard });
     if (n) sections.push({ id: 'race-shape-story', title: 'Race shape (narrative)', node: proseCard('Race shape', n.race_shape) });
+
+    if (d.strategies && d.strategies.length) {
+      sections.push({ id: 'pit-strategy-gantt', title: 'Expected pit stop strategies & windows',
+                     node: pitStrategyGanttCard(d.strategies, m.total_laps_assumed) });
+    }
+
+    if (d.grid.some(g => g.tyres)) {
+      sections.push({ id: 'tyre-availability', title: 'Tyres available for race',
+                     node: tyreAvailabilityCard(d.grid) });
+    }
 
     // undercut vs overcut
     if (d.undercut) {

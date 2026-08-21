@@ -107,6 +107,43 @@
     /* Wide tables scroll inside their card rather than stretching the page */
     .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    /* race simulation pace — by team */
+    .pace-chart { display: flex; flex-direction: column; gap: 5px; }
+    .pace-row { display: flex; align-items: center; gap: 10px; }
+    .pace-team { flex: 0 0 110px; text-align: right; font-size: 11px; }
+    .pace-track { display: flex; align-items: center; height: 20px; }
+    .pace-bar { height: 14px; border-radius: 0 3px 3px 0; flex: 0 0 auto; }
+    .pace-label { margin-left: 8px; font-size: 11px; color: var(--text); white-space: nowrap; }
+
+    /* expected pit stop strategies & windows (Gantt) */
+    .gantt-chart { display: flex; flex-direction: column; gap: 2px; }
+    .gantt-row-label { font-size: 11px; color: var(--muted); margin-top: 10px; }
+    .gantt-row { position: relative; height: 42px; background: #111; border: 1px solid var(--border); }
+    .gantt-seg {
+      position: absolute; top: 0; height: 100%; box-sizing: border-box;
+      border-right: 2px solid var(--surface);
+    }
+    .gantt-window {
+      background: #7ed957; display: flex; align-items: center; justify-content: space-between;
+      font-size: 10px; color: #063; padding: 0 4px; font-weight: 700;
+    }
+    .gantt-axis { position: relative; height: 18px; margin-top: 4px; border-top: 1px solid var(--border); }
+    .gantt-tick { position: absolute; top: 4px; font-size: 10px; color: var(--muted); transform: translateX(-50%); }
+
+    /* tyres available for race */
+    .tyre-chart { display: flex; flex-direction: column; gap: 3px; }
+    .tyre-row { display: flex; align-items: center; gap: 8px; }
+    .tyre-driver { flex: 0 0 40px; font-size: 11px; font-weight: 700; }
+    .tyre-track { display: flex; height: 18px; }
+    .tyre-seg {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; border-right: 2px solid var(--surface);
+      box-sizing: border-box;
+    }
+    .tyre-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+    .tyre-legend span { display: flex; align-items: center; gap: 4px; }
+    .tyre-legend i { display: inline-block; width: 10px; height: 10px; border: 1px solid var(--border); }
+
     /* customize-layout panel */
     #layout-rows { display: flex; flex-direction: column; gap: 2px; }
     .layout-row {

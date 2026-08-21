@@ -543,6 +543,38 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       location endpoint reliability).
 - [ ] Live-session validation across a full weekend (Quali + Race) for all three
       mode layouts.
+- [x] Three pre-race charts, user-requested 2026-08-21 with reference images:
+      team race-sim pace, pit-strategy Gantt with pit windows, tyre-availability
+      breakdown. All three needed new backend fields (`engine/prerace.py`,
+      `PACK_VERSION` 16 -> 17):
+      - `team_pace`: per-team gap to the fastest team, re-based from
+        `_long_run_pace`'s per-driver deltas (quicker of each team's two cars).
+      - `strategies[].pit_windows`: for each pit stop, the `[lo, hi]` lap range
+        that stays within `LIVE_MARGIN_S` of the strategy's actual time — new
+        `_pit_window()`, holding every other stop fixed and re-evaluating via
+        `predictor._stint_time` as the one stop's lap shifts either way.
+      - `grid[].tyres`: full per-driver new/used set counts per compound (not
+        just the existing top-10 boolean summary). "Used" is capped at the
+        compound's total allocation — `DriverInventory.used` is a raw stint
+        count that can exceed it (some drivers show e.g. 9 "new" SOFT stints
+        against an 8-set allocation, most likely a red-flag-split stint or
+        restart double-counted as a second fresh set by OpenF1's lap/stint
+        data) — caught by executing the actual frontend chart functions
+        against real Spain-2026 data in JavaScriptCore before shipping, not by
+        eyeballing the numbers.
+      Frontend: `frontend/briefing.js` gained three chart-builder functions,
+      added as new customizable sections in `renderPrerace` (they respect
+      show/hide/reorder like every other section). Compound and team colours
+      reuse the app's existing real-world F1 identity encodings (compound
+      colours from `stintbar`/`degCurveCard`, team colours from `grid`) rather
+      than a generic categorical palette — deliberate, since these are
+      domain-standard colours any F1-literate user already reads by hue.
+      Verified by executing the real chart functions (not a mock) against the
+      real API response in JavaScriptCore (`osascript -l JavaScript`) and
+      inspecting the generated HTML directly — the Claude-in-Chrome browser
+      extension was disconnected for this session, so no live-browser/visual
+      screenshot check was done; layout/CSS should still get an in-browser
+      pass next time the extension is available.
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

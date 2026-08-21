@@ -23,7 +23,7 @@ from data.live import (
 from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
-    PIT_LOSS, DRY, SC_PIT_FACTOR, _lap_t, _cliff_life,
+    PIT_LOSS, DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
 )
 
 # Clean-lap filter for _long_run_pace (below): keep only laps within this
@@ -36,7 +36,7 @@ PACE_ORDER_CLEAN_RATIO = 1.10
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 16   # 16: projection resolves real driver ids so stock actually binds
+PACK_VERSION = 17   # 17: added team_pace, per-strategy pit_windows, grid[].tyres
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight
@@ -244,6 +244,83 @@ def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
             "drivers": table_rows,
         })
     return tables
+
+
+def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -> list[dict]:
+    """Team-level race-sim pace: the faster of each team's two cars from
+    _long_run_pace, re-based to the quickest team = 0. A team with no driver
+    in pace_rows (no qualifying long run) is omitted rather than guessed at."""
+    team_by_acronym = {g["acronym"]: (g.get("team"), g.get("team_colour"))
+                       for g in grid}
+    by_team: dict[str, dict] = {}
+    for r in pace_rows:
+        team, colour = team_by_acronym.get(r["acronym"], (None, None))
+        if not team:
+            continue
+        cur = by_team.get(team)
+        if cur is None or r["pace_delta"] < cur["pace_delta"]:
+            by_team[team] = {"team": team, "team_colour": colour,
+                             "pace_delta": r["pace_delta"]}
+    if not by_team:
+        return []
+    fastest = min(v["pace_delta"] for v in by_team.values())
+    rows = []
+    for v in by_team.values():
+        gap = round(v["pace_delta"] - fastest, 3)
+        # % back is relative to the fastest team's own predicted lap time,
+        # matching how broadcast graphics express a gap as a lap-time fraction.
+        fastest_lap = field_baseline + fastest
+        pct = round(gap / fastest_lap * 100, 2) if fastest_lap > 0 else 0.0
+        rows.append({"team": v["team"], "team_colour": v["team_colour"],
+                    "gap_s": gap, "gap_pct": pct})
+    rows.sort(key=lambda r: r["gap_s"])
+    return rows
+
+
+def _pit_window(seq: list[str], lens: list[int], pit_index: int,
+                curves: dict, field_baseline: float, pit_loss: float,
+                total_laps: int, margin_s: float = LIVE_MARGIN_S) -> list[int]:
+    """Range of laps [lo, hi] around one pit stop's optimal lap that stays
+    within `margin_s` of the strategy's actual time — moving only this stop
+    and adjusting its two adjacent stints, all others held fixed. Same
+    "genuinely in play" tolerance LIVE_MARGIN_S already uses for stop-count
+    viability, just applied to a single stop's timing instead."""
+    starts = [0]
+    for l in lens[:-1]:
+        starts.append(starts[-1] + l)
+    boundary = starts[pit_index + 1]
+    prev_c, prev_start = seq[pit_index], starts[pit_index]
+    next_c = seq[pit_index + 1]
+    next_end = starts[pit_index + 2] if pit_index + 2 < len(starts) else total_laps
+    base_len_prev = boundary - prev_start
+    base_len_next = next_end - boundary
+
+    def time_at(shift: int) -> float | None:
+        len_prev, len_next = base_len_prev + shift, base_len_next - shift
+        if len_prev < MIN_STINT or len_next < MIN_STINT:
+            return None
+        return (_stint_time(prev_c, 0, len_prev, prev_start, total_laps, 0.0,
+                            curves, field_baseline)
+                + _stint_time(next_c, 0, len_next, prev_start + len_prev,
+                              total_laps, 0.0, curves, field_baseline))
+
+    base = time_at(0)
+    lo = hi = 0
+    shift = -1
+    while True:
+        t = time_at(shift)
+        if t is None or t - base > margin_s:
+            break
+        lo = shift
+        shift -= 1
+    shift = 1
+    while True:
+        t = time_at(shift)
+        if t is None or t - base > margin_s:
+            break
+        hi = shift
+        shift += 1
+    return [boundary + lo, boundary + hi]
 
 
 def _quali_speed_sectors(quali_key: int) -> list[dict]:
@@ -900,6 +977,30 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 "top10_with_new_soft":   sum(1 for i in rows if i.remaining("SOFT") >= 1),
                 "top10_count": len(rows),
             }
+        # Full-field breakdown for the "tyres available" chart, grid order.
+        # "used" here means sets already opened this weekend (tyre_age_at_start
+        # == 0 at some point) — OpenF1 has no set-ID field, so there is no way
+        # to tell a scrubbed-but-still-fittable set from one that's been
+        # discarded as worn out. This counts every opened set as still
+        # available, which is the same assumption compute_inventory's
+        # "remaining new" count already rests on (nothing is ever marked used
+        # up beyond being opened).
+        #
+        # inv.used is a raw stint count and can exceed the compound's total
+        # allocation (some drivers show e.g. 9 "new" SOFT stints against an
+        # 8-set standard allocation) — OpenF1 lap/stint data occasionally
+        # double-counts a restart or a red-flag-split stint as a second fresh
+        # set. remaining() already clamps at zero for this reason; clamp the
+        # displayed used count the same way so a bar never implies a driver
+        # holds more sets than physically exist.
+        for g in grid:
+            inv = invs.get(g["driver_number"])
+            if inv:
+                g["tyres"] = {
+                    c: {"new": inv.remaining(c),
+                       "used": min(inv.used.get(c, 0), inv.allocation.get(c, 0))}
+                    for c in ("SOFT", "MEDIUM", "HARD")
+                }
     except Exception:
         pass
 
@@ -950,12 +1051,17 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         seq = [start_c] + [p.compound for p in pits]
         pit_laps = [p.lap for p in pits]
         bounds = [0] + pit_laps + [total_laps]
+        stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
+        pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
+                                   pit_loss, total_laps)
+                      for i in range(len(pit_laps))]
         strategies.append({
             "start_compound": start_c,
             "stops": stops,
             "compound_sequence": seq,
             "pit_laps": pit_laps,
-            "stint_lengths": [bounds[i + 1] - bounds[i] for i in range(len(seq))],
+            "pit_windows": pit_windows,
+            "stint_lengths": stint_lengths,
             "total_time": tot,
         })
     strategies.sort(key=lambda s: s["total_time"])
@@ -1039,6 +1145,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "pit_loss_source": "sprint_measured" if sprint_key else "default",
         "sc_probability": sc_prob,
         "long_run_pace": pace_rows,
+        "team_pace": _team_pace(pace_rows, grid, field_baseline),
         "long_run_tables": _long_run_tables(sources),
         "quali_sectors": sectors,
         "projection": projection,
