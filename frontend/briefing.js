@@ -365,8 +365,15 @@
       return c;
     }
     const MAX_BAR_PX = 420;
-    const maxGap = Math.max(...teamPace.map(t => t.gap_s), 0.01);
+    const knownGaps = teamPace.filter(t => !t.no_data).map(t => t.gap_s);
+    const maxGap = Math.max(...knownGaps, 0.01);
     const rows = teamPace.map(t => {
+      if (t.no_data) {
+        return `<div class="pace-row">
+          <span class="pace-team">${t.team}</span>
+          <div class="pace-track"><span class="pace-label" style="color:var(--muted)">no long-run data yet</span></div>
+        </div>`;
+      }
       const w = Math.round(t.gap_s / maxGap * MAX_BAR_PX);
       const label = `+${t.gap_s.toFixed(2)}s (${t.gap_pct.toFixed(2)}%)`;
       return `<div class="pace-row">
@@ -679,7 +686,10 @@
     const sd = d.stop_decision, xo = sd && sd.crossover;
     stratCard.innerHTML = `<h2>The strategies on paper — the candidates</h2>
       <table class="results"><tr><th>PLAN</th><th>STOPS</th><th>PITS</th><th>SHAPE</th><th>Δ</th></tr>${sRows}</table>
-      ${sd ? `<div class="meta-row" style="margin-top:8px"><span><b>${sd.optimal_stops}-stop optimal.</b>${xo && xo.runner_stops ? ` A ${xo.runner_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.` : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
+      ${sd ? `<div class="meta-row" style="margin-top:8px"><span><b>${sd.optimal_stops}-stop optimal.</b>${xo ? (xo.extra_stop_worth_it
+          ? ` Going to a ${xo.more_stops}-stop over a ${xo.fewer_stops}-stop costs <b>${xo.extra_pit_cost_s}s</b> in the pits, but the fresher rubber wins back <b>${xo.fresh_rubber_saving_s}s</b> — worth <b>${xo.margin_s}s</b>.`
+          : ` A ${xo.more_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.`)
+        : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     sections.push({ id: 'strategies', title: 'The strategies on paper', node: stratCard });
     if (n) sections.push({ id: 'race-shape-story', title: 'Race shape (narrative)', node: proseCard('Race shape', n.race_shape) });

@@ -162,7 +162,17 @@ def tyre_inventory(session_key: int):
     """
     Returns remaining new tyre sets per driver for the meeting containing
     this session. Counts new sets (tyre_age_at_start=0) opened across all
-    sessions up to and including the given session_key.
+    sessions up to and including the given session_key, then caps each
+    driver's total at the real race-day pool the FIA regulations leave after
+    mandatory in-weekend returns (see engine.tyre_inventory module docstring)
+    — not just the full weekend allocation.
+
+    q3_drivers is left at compute_inventory's default (unknown -> nobody
+    treated as Q3) here: this endpoint can be called before qualifying has
+    even happened, and mid-weekend Q3 status isn't part of this endpoint's
+    data flow. That means Q3 qualifiers show one set more than they'll
+    actually have on race day — a known, minor simplification, not a wrong
+    total for the field generally.
     """
     try:
         session    = get_session(session_key)

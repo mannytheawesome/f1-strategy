@@ -51,9 +51,16 @@ def _pit_plans_from_stints(stints: list[dict]) -> list[PitPlan]:
 def _race_start_sets(session: dict, session_key: int,
                      drivers_raw: dict) -> dict[int, dict]:
     """Per-driver tyre sets available at race start: weekend allocation minus
-    new sets opened in the sessions run BEFORE this race. Each pre-race set
-    opened is afterwards available as a used set. (Slight overcount vs the
-    real rules, which also force sets to be returned during the weekend.)"""
+    new sets opened in the sessions run BEFORE this race, capped at the real
+    race-day pool the FIA regulations leave after mandatory in-weekend
+    returns (engine.tyre_inventory.RACE_DAY_POOL) rather than the full
+    allocation — fixes the overcount this docstring used to warn about. Each
+    pre-race set opened is afterwards available as a used set.
+
+    q3_drivers isn't threaded through here (left at compute_inventory's
+    default, nobody treated as Q3): this function only has session dates, not
+    grid/quali positions, so Q3 qualifiers show one set more than they'll
+    really have — a known, minor simplification."""
     meeting_key = session.get("meeting_key")
     if not meeting_key:
         return {}

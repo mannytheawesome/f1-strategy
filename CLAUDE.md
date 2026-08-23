@@ -594,7 +594,10 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
         restart double-counted as a second fresh set by OpenF1's lap/stint
         data) — caught by executing the actual frontend chart functions
         against real Spain-2026 data in JavaScriptCore before shipping, not by
-        eyeballing the numbers.
+        eyeballing the numbers. **Superseded 2026-08-23 — see the regulation-
+        accurate rewrite below; this per-compound-allocation cap wasn't tight
+        enough once the real race-day pool (7, or 6 for Q3) turned out to be
+        much smaller than the full weekend allocation.**
       Frontend: `frontend/briefing.js` gained three chart-builder functions,
       added as new customizable sections in `renderPrerace` (they respect
       show/hide/reorder like every other section). Compound and team colours
@@ -608,6 +611,113 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       extension was disconnected for this session, so no live-browser/visual
       screenshot check was done; layout/CSS should still get an in-browser
       pass next time the extension is available.
+
+- [x] **Tyre allocation + strategy-candidate redesign, 2026-08-23.** User
+      compared the three new charts against a reference F1 strategy site and
+      found two of them substantively wrong, not cosmetic. Rather than guess
+      at a fix, pulled the actual FIA 2026 Sporting Regulations (Article B6,
+      `fia_2026_f1_regulations_-_section_b_sporting_-_iss_05_-_2026-02-27.pdf`
+      from fia.com) to find the real rules:
+      - **B6.2.4**: full weekend allocation — Standard (non-sprint) Hard 2 /
+        Medium 3 / Soft 8 (13 total, unchanged, already correct). Alternative
+        (sprint) is Hard 2 / **Medium 4** / Soft 6 (12 total) —
+        `ALLOCATION["sprint"]["MEDIUM"]` had been 3, wrong.
+      - **B6.3.8a** (Standard) / **B6.3.9a** (Alternative): teams must
+        electronically return sets at fixed weekend checkpoints regardless of
+        whether they were ever used — Standard returns 2 after FP1, 2 after
+        FP2, 2 after FP3 (6 of 13 gone before Quali); Alternative returns 1
+        after FP1, 1 after the Sprint, 3 after Quali (5 of 12 gone). Both
+        leave **7 sets** for Qualifying + Race, not the full weekend
+        allocation — a hard cap the model had no concept of at all.
+      - **B6.3.8a.i**: one set of the mandatory Q3 (softest) spec is reserved
+        and can't be used or returned before Q3; whoever actually reaches Q3
+        must hand back a second set right after, leaving Q3 qualifiers with
+        **6** instead of 7. Grid position <= 10 is the closest proxy this
+        pipeline has to real Q3 participation (exact Q3 entry can differ,
+        e.g. grid penalties) — used everywhere `q3_drivers` is threaded
+        through.
+      - The regulation does NOT fix which specific compounds get returned —
+        team's own choice, and unobservable from OpenF1 stint data (shows
+        what was used, never what was returned unused). `used` sets are the
+        one thing that IS observable and can't be walked back (once opened,
+        a set stays with the driver) — see `engine/tyre_inventory.py`'s
+        `DriverInventory.reconciled()`, which replaced the old flat
+        `remaining() = allocation - used` with a two-stage reconciliation:
+        cap `used` at the per-compound allocation first (same OpenF1
+        double-counting artifact as before, just applied earlier), then cap
+        the **new** (never-fitted) budget at `race_day_pool - used`, split
+        proportionally by largest-remainder rounding so the integers land
+        exactly on the pool. This function is shared by three call sites
+        (`api/routers/analysis.py`'s live `/api/tyre_inventory`,
+        `engine/whatif.py`, `engine/prerace.py`) — fixing it here fixed all
+        three consistently, though only `prerace.py` threads a real
+        `q3_drivers` set through (the other two don't have quali/grid
+        position in scope, a documented, minor simplification — they still
+        get the correct *total* pool, just not the Q3-specific -1).
+
+        **Caught a self-inflicted regression while shipping this**: the
+        strategy search's `field_stock`/`driver_stock` (gates which
+        compound a car can legally start/pit onto) used `.remaining()`
+        (new-only). Once new-remaining was correctly tightened to the real
+        7/6-set pool, most cars by race day show almost no *new* sets left
+        — their stock is mostly *used* ones — and gating on new-only stock
+        made every compound's median show 0, so the search found **zero**
+        legal strategies at all (a much worse regression than the bug being
+        fixed). Real regulation (B6.3.3: "sets of the same dry-weather
+        specification may be mixed after Qualifying") confirms a used set is
+        just as legally fittable as a new one — added
+        `DriverInventory.total_held()` (new+used) and pointed the strategy
+        search's stock checks at that instead. Caught by testing against
+        real data immediately after the tyre fix, not assumed to be fine.
+
+      **Strategy candidates**: the `for stops in (1,2,3): for start_c in
+      DRY:` loop in `build_prerace_data` already tried every (stop count,
+      starting compound) combination via `optimize_strategy` — it just kept
+      only the single fastest result per stop count, discarding the rest.
+      Changed to keep every legal combination (deduped by
+      `(stops, compound_sequence)`, sorted fastest-first, capped at 5 — the
+      reference site's convention). `engine/strategy.py`'s
+      `generate_strategies` (used by the live what-if panel) was considered
+      and rejected for this: it always resets to a SOFT start whenever
+      `current_compound not in DRY_COMPOUNDS`, which is exactly the pre-race
+      lap-0 case, so it can never explore a Medium- or Hard-start candidate
+      — the existing `optimize_strategy`-based loop was the right base to
+      extend, not a different generator.
+
+      This surfaced a **pre-existing sign bug** in `_stop_decision`'s
+      crossover math (`extra_pit_cost_s`/`fresh_rubber_saving_s`), not new
+      but far more likely to show now: it assumed `runner` (the next
+      different-stop-count candidate) always had MORE stops than `best` (the
+      fastest overall) — true only when the fewest-stop plan happens to also
+      be fastest. With every starting compound now explored, it's much more
+      common for the fastest plan overall to be the higher-stop one (fresher
+      rubber outweighing the extra pit time), which flipped the sign
+      (`extra_pit_cost_s: -22.0`, nonsensical). Fixed by working out which of
+      `best`/`runner` actually carries the extra stop(s) rather than
+      assuming it's always `runner`, and added an `extra_stop_worth_it` flag
+      so the frontend sentence reads correctly in both directions (`briefing.js`'s
+      strategy-card text).
+
+      Also floored `_pit_window`'s zero-width edge case (a candidate whose
+      tyres are so poorly matched to the stint that even a 1-lap shift blows
+      the 2s margin, e.g. a "not on the table" candidate) to a 1-lap minimum
+      for display — a genuinely zero-width green segment renders identically
+      to a rendering bug, and this project already shipped that exact bug
+      twice this week.
+
+      **What this fixes vs. what it can't**: regulation-accurate totals and
+      genuine strategy variety, verified against real 2023-2026 cached data
+      (both a standard weekend — Spain, meeting_key 1287 — and a sprint
+      weekend — Silverstone, meeting_key 1289 — checked separately since the
+      pool math differs). It will NOT necessarily match the reference site's
+      exact numbers bit-for-bit: its methodology is unknown, and which
+      specific compounds a team returns unused during the weekend isn't
+      observable from OpenF1 telemetry at all — only the total remaining
+      pool is derivable with confidence from the regulation text itself.
+      Not covered by the backtest harness or `audit_strategies.py` (the
+      latter calls `optimize_strategy` directly via its own loop, not
+      through any of the changed `prerace.py`/`tyre_inventory.py` code) —
+      validated by hand against real cached races instead.
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

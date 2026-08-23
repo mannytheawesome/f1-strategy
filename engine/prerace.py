@@ -249,31 +249,52 @@ def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
 def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -> list[dict]:
     """Team-level race-sim pace: the faster of each team's two cars from
     _long_run_pace, re-based to the quickest team = 0. A team with no driver
-    in pace_rows (no qualifying long run) is omitted rather than guessed at."""
-    team_by_acronym = {g["acronym"]: (g.get("team"), g.get("team_colour"))
-                       for g in grid}
-    by_team: dict[str, dict] = {}
-    for r in pace_rows:
-        team, colour = team_by_acronym.get(r["acronym"], (None, None))
+    in pace_rows (no qualifying long run for either car) still appears, with
+    no_data=True and null gap fields, rather than silently vanishing from the
+    chart — the frontend can show "no data" instead of the field looking one
+    team short with no indication why."""
+    # Every team on the grid, in first-seen order, with its colour — this is
+    # the full roster the output must cover, whether or not pace data exists.
+    team_by_acronym: dict[str, str] = {}
+    colour_by_team: dict[str, str] = {}
+    all_teams: list[str] = []
+    for g in grid:
+        team, colour = g.get("team"), g.get("team_colour")
         if not team:
             continue
-        cur = by_team.get(team)
-        if cur is None or r["pace_delta"] < cur["pace_delta"]:
-            by_team[team] = {"team": team, "team_colour": colour,
-                             "pace_delta": r["pace_delta"]}
-    if not by_team:
-        return []
-    fastest = min(v["pace_delta"] for v in by_team.values())
+        team_by_acronym[g["acronym"]] = team
+        colour_by_team.setdefault(team, colour)
+        if team not in all_teams:
+            all_teams.append(team)
+
+    best_delta_by_team: dict[str, float] = {}
+    for r in pace_rows:
+        team = team_by_acronym.get(r["acronym"])
+        if not team:
+            continue
+        cur = best_delta_by_team.get(team)
+        if cur is None or r["pace_delta"] < cur:
+            best_delta_by_team[team] = r["pace_delta"]
+
+    fastest = min(best_delta_by_team.values()) if best_delta_by_team else None
+
     rows = []
-    for v in by_team.values():
-        gap = round(v["pace_delta"] - fastest, 3)
+    for team in all_teams:
+        delta = best_delta_by_team.get(team)
+        colour = colour_by_team.get(team)
+        if delta is None or fastest is None:
+            rows.append({"team": team, "team_colour": colour,
+                        "gap_s": None, "gap_pct": None, "no_data": True})
+            continue
+        gap = round(delta - fastest, 3)
         # % back is relative to the fastest team's own predicted lap time,
         # matching how broadcast graphics express a gap as a lap-time fraction.
         fastest_lap = field_baseline + fastest
         pct = round(gap / fastest_lap * 100, 2) if fastest_lap > 0 else 0.0
-        rows.append({"team": v["team"], "team_colour": v["team_colour"],
-                    "gap_s": gap, "gap_pct": pct})
-    rows.sort(key=lambda r: r["gap_s"])
+        rows.append({"team": team, "team_colour": colour,
+                    "gap_s": gap, "gap_pct": pct, "no_data": False})
+    # Ranked teams first (fastest gap first), no-data teams after, alphabetical.
+    rows.sort(key=lambda r: (r["no_data"], r["gap_s"] if r["gap_s"] is not None else 0, r["team"]))
     return rows
 
 
@@ -347,6 +368,17 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
             break
         hi = shift
         shift += 1
+    # A genuinely zero-width window (a candidate whose tyres are so poorly
+    # matched to the stint that even a 1-lap shift blows the margin) renders
+    # as an invisible sliver on the Gantt chart, indistinguishable from a
+    # rendering bug. Widen by 1 lap for legibility wherever that's still a
+    # legal probe, even though it technically exceeds margin_s — this is a
+    # display floor, not a claim that the window is genuinely that wide.
+    if lo == 0 and hi == 0:
+        if time_at(-1) is not None:
+            lo = -1
+        elif time_at(1) is not None:
+            hi = 1
     return [boundary + lo, boundary + hi]
 
 
@@ -862,7 +894,12 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
     } for s in strategies]
 
     best = strategies[0]
-    runner = strategies[1] if len(strategies) > 1 else None
+    # The "crossover" comparison below is about extra STOPS, so runner must be
+    # the fastest candidate at a genuinely different stop count — not just
+    # strategies[1], which can now be another candidate at the SAME stop
+    # count (e.g. a Soft-start alternative to the best Medium-start 1-stop)
+    # now that every viable (stops, start_compound) combo is kept.
+    runner = next((s for s in strategies[1:] if s["stops"] != best["stops"]), None)
 
     # a Safety Car refunds ~55% of an extra stop's pit loss; rank on expected cost
     sc_ranked = sorted(strategies,
@@ -871,14 +908,32 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
 
     crossover = None
     if runner:
-        extra_stops = runner["stops"] - best["stops"]
+        # best is always the faster/chosen plan by construction (strategies
+        # is sorted ascending by total_time), but it isn't always the FEWER-
+        # stop one — with every (stops, start_compound) combo now kept as its
+        # own candidate, the fastest plan overall is sometimes the one with
+        # MORE stops (its fresher rubber outweighs the extra pit time). Work
+        # out which of the two actually carries the extra stop(s) rather than
+        # assuming it's always runner, or the sign comes out backwards.
+        if best["stops"] > runner["stops"]:
+            more_stops_plan, fewer_stops_plan = best, runner
+        else:
+            more_stops_plan, fewer_stops_plan = runner, best
+        extra_stops = more_stops_plan["stops"] - fewer_stops_plan["stops"]
+        pit_cost = round(extra_stops * pit_loss, 1)
+        time_gap = round(more_stops_plan["total_time"] - fewer_stops_plan["total_time"], 1)
+        # more_stops_plan paid pit_cost extra in the pits; whatever it's
+        # ahead/behind by beyond that is what its fresher rubber actually won
+        # or clawed back.
         crossover = {
             "best_stops": best["stops"],
             "runner_stops": runner["stops"],
             "margin_s": runner["time_delta"],
-            "extra_pit_cost_s": round(extra_stops * pit_loss, 1),
-            # the higher-stop plan's fresher tyres claw back (pit_cost − margin)
-            "fresh_rubber_saving_s": round(extra_stops * pit_loss - runner["time_delta"], 1),
+            "more_stops": more_stops_plan["stops"],
+            "fewer_stops": fewer_stops_plan["stops"],
+            "extra_pit_cost_s": pit_cost,
+            "fresh_rubber_saving_s": round(pit_cost - time_gap, 1),
+            "extra_stop_worth_it": more_stops_plan is best,
         }
 
     is_street = is_street_circuit(circuit)
@@ -991,11 +1046,15 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
             except Exception:
                 pass
-        invs = {i.driver_number: i for i in
-                compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend)}
         top10 = [g for g in grid[:10]]
         top10_nums = [d.driver_number for d in grid_state.values()
                       if d.position and d.position <= 10]
+        # Grid position <= 10 is the best Q3-participation proxy this data
+        # gives us — real Q3 entry can differ (grid penalties etc.) but this
+        # is what's actually observable pre-race.
+        invs = {i.driver_number: i for i in
+                compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend,
+                                  q3_drivers=set(top10_nums))}
         rows = [invs[n] for n in top10_nums if n in invs]
         if rows:
             inventory_summary = {
@@ -1005,29 +1064,16 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 "top10_count": len(rows),
             }
         # Full-field breakdown for the "tyres available" chart, grid order.
-        # "used" here means sets already opened this weekend (tyre_age_at_start
-        # == 0 at some point) — OpenF1 has no set-ID field, so there is no way
-        # to tell a scrubbed-but-still-fittable set from one that's been
-        # discarded as worn out. This counts every opened set as still
-        # available, which is the same assumption compute_inventory's
-        # "remaining new" count already rests on (nothing is ever marked used
-        # up beyond being opened).
-        #
-        # inv.used is a raw stint count and can exceed the compound's total
-        # allocation (some drivers show e.g. 9 "new" SOFT stints against an
-        # 8-set standard allocation) — OpenF1 lap/stint data occasionally
-        # double-counts a restart or a red-flag-split stint as a second fresh
-        # set. remaining() already clamps at zero for this reason; clamp the
-        # displayed used count the same way so a bar never implies a driver
-        # holds more sets than physically exist.
+        # DriverInventory.reconciled() does the heavy lifting: new+used per
+        # compound already correctly caps at the real race-day pool (7, or 6
+        # for a Q3 qualifier — see engine.tyre_inventory module docstring),
+        # not just the full weekend allocation, and floors out the OpenF1
+        # double-counting artifact that occasionally shows more "used" stints
+        # than a compound's own allocation.
         for g in grid:
             inv = invs.get(g["driver_number"])
             if inv:
-                g["tyres"] = {
-                    c: {"new": inv.remaining(c),
-                       "used": min(inv.used.get(c, 0), inv.allocation.get(c, 0))}
-                    for c in ("SOFT", "MEDIUM", "HARD")
-                }
+                g["tyres"] = inv.reconciled()
     except Exception:
         pass
 
@@ -1040,19 +1086,33 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     driver_stock = None
     try:
         if rows:
-            field_stock = {c: int(statistics.median([i.remaining(c) for i in rows]))
+            # total_held (new+used), not remaining (new-only): sets of the
+            # same dry-weather spec may be mixed after Qualifying (B6.3.3),
+            # so a used set is just as fittable for the race as a new one.
+            # Gating on new-only stock undercounts what's actually startable
+            # — by race day most of a car's stock IS used sets, not new
+            # ones, and gating on remaining() alone could leave every
+            # compound showing zero median stock, so the search finds no
+            # legal strategy at all.
+            field_stock = {c: int(statistics.median([i.total_held(c) for i in rows]))
                            for c in ("SOFT", "MEDIUM", "HARD")}
         if invs:
             # Per-car stock for the projection: a driver who saved a set is not
             # the same as a team-mate who burned theirs in Q3.
-            driver_stock = {n: {c: i.remaining(c) for c in ("SOFT", "MEDIUM", "HARD")}
+            driver_stock = {n: {c: i.total_held(c) for c in ("SOFT", "MEDIUM", "HARD")}
                             for n, i in invs.items()}
     except Exception:
         pass
 
+    # Every legal (stop count x starting compound) combination is kept as its
+    # own candidate — not just the fastest per stop count. A pure time
+    # optimum picks one "answer", but real strategy calls are a genuine
+    # choice among several plans that are all close (Soft-start vs
+    # Medium-start 1-stops, etc.); showing only the single best per stop
+    # count was throwing away exactly that comparison.
     strategies = []
+    seen_signatures: set[tuple] = set()
     for stops in (1, 2, 3):
-        best = None
         for start_c in DRY:
             if start_c not in curves or not curves[start_c].baseline:
                 continue
@@ -1070,28 +1130,29 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                                                  if field_stock else None))
             if len(strat.pits_remaining) != stops:
                 continue   # no legal plan at this stop count
-            if best is None or strat.total_time_from_now < best[1]:
-                best = (start_c, strat.total_time_from_now, strat.pits_remaining)
-        if best is None:
-            continue
-        start_c, tot, pits = best
-        seq = [start_c] + [p.compound for p in pits]
-        pit_laps = [p.lap for p in pits]
-        bounds = [0] + pit_laps + [total_laps]
-        stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
-        pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
-                                   pit_loss, total_laps)
-                      for i in range(len(pit_laps))]
-        strategies.append({
-            "start_compound": start_c,
-            "stops": stops,
-            "compound_sequence": seq,
-            "pit_laps": pit_laps,
-            "pit_windows": pit_windows,
-            "stint_lengths": stint_lengths,
-            "total_time": tot,
-        })
+            pits = strat.pits_remaining
+            seq = [start_c] + [p.compound for p in pits]
+            sig = (stops, tuple(seq))
+            if sig in seen_signatures:
+                continue
+            seen_signatures.add(sig)
+            pit_laps = [p.lap for p in pits]
+            bounds = [0] + pit_laps + [total_laps]
+            stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
+            pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
+                                       pit_loss, total_laps)
+                          for i in range(len(pit_laps))]
+            strategies.append({
+                "start_compound": start_c,
+                "stops": stops,
+                "compound_sequence": seq,
+                "pit_laps": pit_laps,
+                "pit_windows": pit_windows,
+                "stint_lengths": stint_lengths,
+                "total_time": strat.total_time_from_now,
+            })
     strategies.sort(key=lambda s: s["total_time"])
+    strategies = strategies[:5]   # top 5 candidates, fastest first
     best_stops = strategies[0]["stops"] if strategies else 1
     for s in strategies:
         s["time_delta"] = round(s["total_time"] - strategies[0]["total_time"], 1)
