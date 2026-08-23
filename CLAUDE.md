@@ -719,6 +719,50 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       through any of the changed `prerace.py`/`tyre_inventory.py` code) —
       validated by hand against real cached races instead.
 
+      **Follow-up bug, same day, caught from a live screenshot after
+      deploying the above**: EVERY driver showed zero HARD sets available,
+      including drivers who never touched a Hard in practice at all. The
+      proportional-cap approach above was the cause — it split the leftover
+      "new" budget proportionally by each compound's raw allocation SIZE
+      (8/3/2), which systematically favours SOFT for whatever scarce budget
+      remains and starves HARD (the smallest allocation) even when HARD's
+      own `used` is 0. A driver who opened several fresh Softs and Mediums
+      in practice, once their shared 6/7-set pool was mostly consumed by
+      those, had nothing left in the "budget" for their completely untouched
+      Hards — mathematically consistent with the earlier design, but wrong:
+      Hards you never touched should not evaporate because you used other
+      compounds.
+
+      Replaced the shared-pool-with-proportional-split model with **fixed
+      per-compound effective allocations**: HARD and MEDIUM keep their full
+      raw allocation unconditionally (`effective_allocation - used`, no pool
+      interaction at all); the mandatory in-weekend returns are modelled as
+      landing entirely on SOFT instead of being spread across all three.
+      This isn't a coin flip — two things in the regulation itself point
+      the same way: Article B6.3.8a.ii separately guarantees 2 sets of the
+      mandatory RACE specification(s) can never be returned early (Hard
+      and/or Medium are what typically get nominated, never Soft), and
+      Article B6.1.2b defines the Q3-forfeited spec as "always being the
+      softest of the three" — so even the ONE compound-specific detail the
+      regulation does give us points at Soft, not a neutral split.
+      `MANDATORY_RETURNS = {"standard": 6, "sprint": 5}` plus
+      `Q3_SOFT_REDUCTION = 1` land on SOFT's effective allocation only;
+      `effective_allocation.values()` sums to exactly the same 7/6 pool as
+      before by construction, so the total-pool guarantee wasn't lost, just
+      recomputed correctly.
+
+      Trade-off, stated plainly: in unusual cases (e.g. a driver who's
+      genuinely burned through an atypically high number of real Soft sets)
+      the displayed total can now come in slightly above 7/6, since Medium
+      and Hard are no longer capped against the shared pool at all. Accepted
+      deliberately — the alternative (the previous design) reliably produced
+      a *realistic-looking but wrong* number (protected compounds hitting
+      zero) in the common case, which is worse than an *unusual* total in a
+      rare one. Re-verified against the same real Spain-2026 grid: every one
+      of the 20 drivers now shows a non-zero Hard total (was 0 for all 20
+      under the previous version), and the untouched-driver/Q3/sprint unit
+      tests from the first pass were re-run and still land exactly on 7/6.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
