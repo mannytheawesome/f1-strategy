@@ -311,10 +311,20 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
     next_end = starts[pit_index + 2] if pit_index + 2 < len(starts) else total_laps
     base_len_prev = boundary - prev_start
     base_len_next = next_end - boundary
+    # optimize_strategy's fallback path (no legal MIN_STINT-respecting plan
+    # found) can produce a short final splash stint below MIN_STINT — never
+    # from its main search, which always keeps every stint at or above it.
+    # Rejecting anything under MIN_STINT unconditionally would reject the
+    # BASELINE (shift=0) itself for a strategy shaped like that, returning a
+    # zero-width, invisible window instead of a real error. Floor each side at
+    # whatever the strategy already committed to, so a deliberate splash can
+    # still be probed (just not shrunk any further).
+    min_len_prev = min(MIN_STINT, base_len_prev)
+    min_len_next = min(MIN_STINT, base_len_next)
 
     def time_at(shift: int) -> float | None:
         len_prev, len_next = base_len_prev + shift, base_len_next - shift
-        if len_prev < MIN_STINT or len_next < MIN_STINT:
+        if len_prev < min_len_prev or len_next < min_len_next:
             return None
         return (_stint_time(prev_c, 0, len_prev, prev_start, total_laps, 0.0,
                             curves, field_baseline)

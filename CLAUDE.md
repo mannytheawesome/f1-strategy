@@ -566,6 +566,26 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
         a synthetic near-flat curve, and proved analytically that adjacent
         windows can no longer overlap and erase a middle stint (`max_shift=3`
         vs `MIN_STINT=8` guarantees at least 2 laps stay visible either way).
+
+        **Second bug, same function, caught 2026-08-23 from another user
+        screenshot** (post-deploy of the fix above): a 1-stop strategy ending
+        in a short splash stint (`optimize_strategy`'s fallback path, used
+        when no legal MIN_STINT-respecting plan exists — e.g. tyre stock too
+        constrained — which allows a final stint down to 1-3 laps) rendered
+        with NO visible pit-window segment at all, not even a narrow one.
+        `_pit_window`'s `time_at()` unconditionally required both adjacent
+        stints to be `>= MIN_STINT`; for a genuine 3-lap splash the baseline
+        itself (shift=0) already failed that check, so `time_at(0)` returned
+        `None` and the window collapsed to zero width — invisible, not
+        loudly wrong. Fixed by flooring each side at
+        `min(MIN_STINT, base_len)` instead of a flat `MIN_STINT`, so a
+        strategy's own already-committed stint length is never rejected,
+        while a splash still can't be probed shorter than it already is.
+        Verified against a direct reproduction of the reported shape (HARD
+        69 laps -> SOFT 3-lap splash): window went from `[69,69]` (invisible)
+        to `[66,69]` (window extends earlier, correctly can't extend later
+        since the splash is already at its practical minimum); re-checked the
+        three normal (non-splash) windows from the first fix were unchanged.
       - `grid[].tyres`: full per-driver new/used set counts per compound (not
         just the existing top-10 boolean summary). "Used" is capped at the
         compound's total allocation — `DriverInventory.used` is a raw stint
