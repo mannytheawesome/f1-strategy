@@ -824,6 +824,47 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       pursuing as a proper, backtested change, or should surprising-but-
       measured outputs like this stand as-is?
 
+      **Fourth bug, same day, caught by the user re-deriving the regulation
+      math by hand**: after the third fix above, MEDIUM and HARD showed
+      `new+used` summing to MORE than their own allocation for several
+      drivers (e.g. MEDIUM at 4 when only 3 sets exist all weekend) — a
+      plain arithmetic contradiction, not a judgement call, and the user
+      caught it immediately. Root cause: the "effective allocation" model
+      from the second fix gave HARD and MEDIUM their FULL raw allocation
+      UNCONDITIONALLY (to stop them being diluted to zero), which
+      guarantees `used[MEDIUM]+new[MEDIUM] == 3` and `used[HARD]+new[HARD]
+      == 2` ALWAYS, regardless of the 6/7-set pool — 5 sets locked in no
+      matter what, plus whatever SOFT's real (often higher) usage adds on
+      top, routinely totalling 8-9. Fixing the second bug had silently
+      broken the total-pool guarantee the very first fix established.
+
+      This needed a design that satisfies BOTH constraints at once, which
+      neither of the previous two attempts did:
+      1. `used` per compound is an observed floor (can't reduce).
+      2. Total held, summed across all three compounds, must equal the
+         race-day pool EXACTLY (not "at most") — the regulation removes a
+         fixed number of sets, no more, no less.
+      Replaced the per-compound "effective allocation" with the ORIGINAL
+      shared `race_day_pool` (reverting most of the second fix's structure)
+      but with corrected distribution logic: the pool's leftover "new"
+      budget is handed out to compounds in ASCENDING `used` order — the
+      LEAST-used compound gets first claim on whatever's left (protecting
+      an untouched Hard from dilution, fixing bug #1), and only once that's
+      satisfied does the budget move to the next-least-used compound
+      (usually Soft last, since it's normally the most-used) — rather than
+      proportional-by-allocation-SIZE (bug #1's original mistake) or
+      unconditional-by-compound (this bug's mistake). Ties (multiple
+      compounds at the same `used`, most commonly all untouched) split
+      their shared slice of the budget proportionally rather than whichever
+      sorts first grabbing it all.
+
+      Re-verified against the full field of both previously-checked real
+      races (Spain standard weekend, Silverstone sprint weekend): all 20
+      drivers on each now sum to EXACTLY 6 (Q3/top-10) or 7 (rest of field)
+      — zero violations, checked programmatically, not by eye. The specific
+      drivers from the user's screenshot (NOR/VER/LAW) now show clean 6-set
+      totals matching a real Q3 pool exactly.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
