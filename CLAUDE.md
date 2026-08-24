@@ -865,6 +865,63 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       drivers from the user's screenshot (NOR/VER/LAW) now show clean 6-set
       totals matching a real Q3 pool exactly.
 
+      **Fifth revision, same day, caught against a genuine external
+      reference**: the user found F1's own race-morning "Strategy Guide"
+      article for the 2026 Hungarian GP, which publishes a per-driver
+      tyre-availability chart. Directly compared against it (not by eye —
+      fetched the real page, cross-checked its prose against our numbers):
+      our top Q3 drivers (NOR, HAM, LEC, VER, RUS) were all showing 0 new
+      Hard AND 0 new Medium, while F1's own chart showed most of them
+      holding 1-2 new sets of each in reserve. Root cause: the fourth fix's
+      shared `race_day_pool` (6/7 sets total, enforced as a hard ceiling)
+      was itself the wrong model — Article B6.3.8a's mandatory in-weekend
+      returns cap how many sets CAN survive to race day, but a driver who
+      barely touches a compound in practice doesn't lose it to that cap;
+      the pool-ceiling design forced heavy Soft users' practice mileage to
+      crowd out completely untouched Hards and Mediums regardless, which is
+      exactly backwards from how real tyre economy works. (Also traced,
+      before this fix: OpenF1 provided no way to check where the F1.com
+      numbers actually came from — confirmed by testing every plausible
+      public source: the OpenF1 API itself has no tyre-nomination endpoint
+      at all (`tyre_sets`, `tyre_allocation`, `nominated_tyres`, etc. all
+      404), and F1.com's own generic pre-weekend tyre article, Mercedes's
+      team site, and a third-party tyre-strategy site all publish only the
+      flat default allocation, never a per-driver breakdown. F1's Strategy
+      Guide chart is analyst reporting/estimation, not a fetchable dataset.)
+
+      Replaced the whole race-day-pool/greedy-distribution system (the
+      entire third and fourth fixes' machinery) with the simplest model
+      that still respects a hard physical fact — `used` can never exceed a
+      compound's own allocation — and nothing else: **remaining = full
+      weekend allocation (13 sets standard / 12 sprint, per Article B6.2.4)
+      minus genuinely-opened sets for that compound, per compound,
+      independently**. No shared pool, no proportional capping, no
+      least-used-first distribution across compounds. This directly matches
+      the user's own worked example from earlier in the session (subtract
+      each FP session's usage from the 13-set total as the weekend goes,
+      arriving at "4 new softs for quali... a medium and a hard for the
+      race") rather than the regulation-derived pool-ceiling reading this
+      file had been defending across three prior fixes.
+
+      Re-verified against real Hungary 2026 data (meeting_key 1291, all
+      pre-race sessions including live-fetched Qualifying stints, since
+      quali wasn't in the local dev cache): NOR's and HAM's Hard/Medium
+      counts now land on exactly what F1.com's own chart shows (Hard new=2,
+      Medium new=1 for NOR; Hard new=2, Medium new=0/used=3 for HAM) — the
+      first time this model has matched an external reference on a specific
+      compound rather than just being internally self-consistent. Soft
+      still diverges for heavy-Soft-usage drivers (this model's per-session
+      dedup still gives NOR 4 genuinely-opened Soft sets across
+      FP1/FP2/FP3/Quali; F1.com's chart implies fewer) — most likely because
+      real teams sometimes carry the SAME physical Soft set across multiple
+      sessions, which OpenF1's `tyre_age_at_start` can't distinguish from a
+      genuinely new set once it resets at a session boundary. That's a data
+      ceiling (no physical tyre-set ID exists in the public feed), not a
+      reconciliation-math bug — flagged here rather than patched, since
+      three previous "fixes" to this exact file were each a plausible-
+      looking patch to a model whose foundation, not its arithmetic, was
+      wrong.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
