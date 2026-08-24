@@ -763,6 +763,67 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       under the previous version), and the untouched-driver/Q3/sprint unit
       tests from the first pass were re-run and still land exactly on 7/6.
 
+      **Third bug, 2026-08-24, caught from user domain knowledge** ("a
+      medium and soft is usually used for a free practice... 2 mediums are
+      used for the sprint qualifying" — a specific, checkable claim, not a
+      vague complaint): on a sprint weekend (Silverstone, meeting_key 1289),
+      nearly every driver showed SOFT `used` maxed out at the full 6-set
+      sprint allocation. Traced directly against real stint data rather than
+      guessed at: NOR's Qualifying session ALONE showed 4 separate SOFT
+      stints all marked `tyre_age_at_start=0` (fresh), and cross-referencing
+      against the `pit` endpoint confirmed 6 genuine pit-lane visits during
+      that one session — so this wasn't `_merge_stint_fragments` missing
+      anything (that already handles same-physical-tyre continuation
+      correctly; these were genuine separate pit visits). NOR's season-long
+      new-SOFT count came to 7, exceeding the 6-set sprint allocation
+      outright — a physical impossibility, proving at least some of these
+      "fresh" flags don't correspond to genuinely new physical sets. Real
+      explanation: teams commonly return to the garage between qualifying
+      runs and go back out on the SAME set, and OpenF1 resets the reported
+      age anyway rather than continuing it — `tyre_age_at_start==0` is not a
+      reliable "this is a new set" signal on its own, especially in
+      Qualifying's tight, multi-run window.
+
+      Fixed in `compute_inventory`'s counting loop: at most ONE
+      `tyre_age_at_start==0` stint per (driver, compound) counts as a
+      genuinely new set **per session** — later same-session, same-compound
+      "fresh" stints are treated as re-fitting that same already-opened set,
+      not opening another. This also directly matches the user's own stated
+      domain expectation (singular "a medium and soft... for A [one] free
+      practice") rather than being a separate, independently-chosen
+      heuristic. Re-verified against the same Silverstone grid: SOFT `used`
+      dropped from a uniform 6 across nearly the whole field to a realistic
+      1-3 spread; MEDIUM now shows `used: 2` for most of the field, matching
+      the user's stated SQ1+SQ2 pattern almost exactly.
+
+      **Separately investigated, not fixed — a distinct, non-bug finding**:
+      the user also asked why no Medium→Hard or Soft→Hard 1-stop candidate
+      appears (real strategy calls apparently favour a Hard finish). Traced
+      directly by calling `optimize_strategy` for every starting compound at
+      `force_stops=1`: it's not a stock/legality gate — Hard-start's own
+      best 1-stop is Hard→**Soft** (4925.3s), beaten by Soft-start's
+      Soft→Medium (4914.4s) and Medium-start's Medium→Soft (4915.5s). The
+      model consistently finds ending on Soft fastest, for every starting
+      compound, given the currently fitted degradation curves for this
+      specific race: Soft's fitted `deg_rate` is 0.0658s/lap against Medium's
+      0.0250 and Hard's 0.0175 — only ~2.6-3.75x steeper, not dramatic
+      enough to outweigh Soft's ~0.6-1.0s/lap fresher pace over a ~26-lap
+      closing stint at this deg level. That Soft curve rests on only 27 laps
+      of data, all from the Sprint race itself (the only long-run source a
+      sprint weekend has — no FP2/FP3 to cross-check against, unlike a
+      normal weekend) — thin by this project's own established standard for
+      when a fitted rate should be trusted (see the DNF/SC per-circuit
+      tables rejected elsewhere in this file for resting on a thinner sample
+      than that). Deliberately NOT changed: `build_deg_curves` is shared,
+      backtest-validated core prediction logic (84.8% winner-hit, tuned and
+      measured against 81 races) — adjusting its confidence/weighting for
+      sprint-weekend data sparsity needs real backtest validation, not a
+      one-race anecdote, and is out of scope for a same-session fix. Left
+      as an open question for the user: is a low-confidence-driven adjustment
+      (e.g. treating a single-session deg fit more conservatively) worth
+      pursuing as a proper, backtested change, or should surprising-but-
+      measured outputs like this stand as-is?
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

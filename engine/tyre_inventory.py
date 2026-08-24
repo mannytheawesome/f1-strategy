@@ -187,8 +187,27 @@ def compute_inventory(
             effective_allocation=eff,
         )
 
-    # Count new sets opened across all sessions
+    # Count new sets opened, at most once per (driver, compound) PER SESSION.
+    # OpenF1 stints with tyre_age_at_start==0 don't reliably mean "genuinely
+    # fresh physical tyre" — verified directly against real data (Silverstone
+    # 2026 sprint weekend): a single Qualifying session alone showed 4-5
+    # separate SOFT stints all marked fresh for most of the field, pushing
+    # some drivers' SEASON-long new-SOFT count past the 6-set sprint
+    # allocation entirely (a physical impossibility) — cross-checked against
+    # pit-lane visit records, which confirmed genuine pit stops at each
+    # boundary, so this isn't stint-fragmentation _merge_stint_fragments
+    # already handles; it's teams returning to the garage and going back out
+    # on the SAME set for another run, with OpenF1 resetting the reported
+    # age anyway. Real F1 teams essentially never fit more than one genuinely
+    # new set of one compound within a single session (Quali's tight ~45min
+    # window make multiple fresh sets implausible; even a full FP session
+    # rarely uses more than one, matching this project's own understanding
+    # of typical practice programmes) — only the first tyre_age_at_start==0
+    # stint of a compound within a session counts as a new set; later ones
+    # in the same session are treated as re-fitting that same freshly-opened
+    # set, not opening another.
     for session_stints in stints_by_session:
+        opened_this_session: set[tuple[int, str]] = set()
         for stint in session_stints:
             if stint.get("tyre_age_at_start", 0) != 0:
                 continue  # not a new set
@@ -198,6 +217,10 @@ def compute_inventory(
             compound = stint.get("compound", "UNKNOWN")
             if compound not in COMPOUNDS:
                 continue
+            key = (num, compound)
+            if key in opened_this_session:
+                continue
+            opened_this_session.add(key)
             inv = inventories[num]
             inv.used[compound] = inv.used.get(compound, 0) + 1
 
