@@ -1017,6 +1017,14 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     grid_source = quali or sources[-1]
     grid_state = build_state(grid_source["session_key"], include_locations=False,
                              session=grid_source)
+    # No fixed-size slice here — a hardcoded [:20] silently dropped whichever
+    # cars finished lowest once the grid grew past 20 (2026 added Cadillac,
+    # an 11th team, making 22 cars); if both of one team's cars land outside
+    # the old cutoff, that team vanished from `grid` entirely, and therefore
+    # from every downstream chart keyed off it (team_pace, tyre availability)
+    # — not even shown as "no data", just absent with no indication why.
+    # `if d.position` already bounds this to genuinely classified drivers, so
+    # no separate cap is needed.
     grid = [
         {"position": d.position, "acronym": d.acronym, "team": d.team,
          "driver_number": d.driver_number,
@@ -1024,7 +1032,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         for d in sorted(grid_state.values(),
                         key=lambda d: (d.position is None, d.position or 99))
         if d.position
-    ][:20]
+    ]
 
     # ── paper strategies: best plan at EACH stop count ───────────────────────
     # A single-car minimum-time optimum is a coarse integer and tends to

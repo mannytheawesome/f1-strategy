@@ -983,6 +983,33 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       exceptions. `audit_strategies.py` still passes structurally (unrelated
       to this file, as before).
 
+      **Seventh bug, same day: Cadillac silently missing from team_pace and
+      the tyre chart.** Not a bug in either chart — both already handled a
+      team with no data correctly (`_team_pace`'s `no_data` fallback has
+      existed since the charts redesign). The actual cause was one line
+      upstream in `build_prerace_data`'s grid construction: `grid = [...][:20]`,
+      a hardcoded slice sized for the pre-2026 20-car field (10 teams). 2026
+      added Cadillac as an 11th team, making 22 cars — if both of one team's
+      drivers finished/qualified outside the top 20, that team's cars were
+      silently cut from `grid` entirely, before `_team_pace` or the tyre
+      chart ever ran, so the team didn't even appear as "no data" — it just
+      wasn't there, with nothing to explain why. Confirmed directly: Hungary
+      2026's `grid` had exactly 20 entries and `team_pace` had exactly 10
+      teams, both missing Cadillac outright, even though real long-run pace
+      data existed for at least one of their drivers.
+
+      Fix: removed the `[:20]` cap. `if d.position` already bounds the list
+      to genuinely classified drivers, so no separate size cap is needed —
+      the list is however large the real field is. Re-verified: Hungary
+      2026's grid now has 22 entries, both Cadillac drivers appear with real
+      tyre data, and Cadillac appears in `team_pace` with a real (non-
+      `no_data`) gap figure. Re-ran the full 81-race structural validation
+      from the sixth revision afterward: 0 violations across all 81 races
+      (68 succeeded on the first pass, the other 13 — all pre-2026, 20-car
+      fields — failed on a transient local network drop and passed clean on
+      retry), confirming the fix doesn't disturb any pre-2026 race's grid
+      size. `audit_strategies.py` still passes structurally.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
