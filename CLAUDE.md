@@ -922,6 +922,67 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       looking patch to a model whose foundation, not its arithmetic, was
       wrong.
 
+      **Sixth revision, same day, caught by the user's domain knowledge
+      directly refuting the "data ceiling" conclusion above**: the fifth
+      revision's Soft gap wasn't a telemetry limitation. The user stated the
+      actual mechanic directly: a top runner fits a genuinely NEW Soft every
+      session (no cross-session reuse — confirmed independently by lap-time
+      evidence: NOR's fresh-flagged stints in FP1/FP2/FP3/Quali each showed
+      consistent, non-degrading ~78-79s pace, which a reused/worn tyre
+      physically cannot produce), AND "used" in F1's chart specifically
+      means "opened but still race-viable," not "opened, period." A Soft
+      fitted for a Qualifying segment runs ~3-4 laps and stays essentially
+      fresh; one opened for a Practice run gets meaningfully worn and drops
+      out of race-day availability entirely — a length-based classification,
+      not a session-count one.
+
+      Root cause of the gap: this file was still counting "how many sets
+      were opened" and treating every opened set as available. Real
+      strategists split that into three buckets — never opened (new),
+      opened-but-still-viable (used, i.e. what the chart calls "used"), and
+      opened-and-worn (gone from availability, but still consumes
+      allocation) — and the only sound way to sort an opened set into the
+      last two buckets from OpenF1 data is by how many laps it actually
+      ran, not by which session it was opened in.
+
+      Replaced the per-session-count model with per-set lap accounting:
+      `DriverInventory` now tracks `used` (opened, ≤`SHORT_STINT_LAPS` laps
+      so far, still available) separately from `discarded` (opened,
+      >`SHORT_STINT_LAPS` laps, gone from availability but still charged
+      against the compound's allocation) — `new` is the allocation minus
+      both. Building each physical set's total mileage needed one more
+      correction, found by testing the naive "no cap, every fresh flag is
+      its own group" version against real data first: it correctly split
+      Qualifying (NOR's real Quali stints: one 7-lap Q1 group plus three
+      independent 3-lap groups for Q2 and two Q3 attempts — length alone
+      sorts the worn one from the three fresh ones, no segment-counting
+      needed), but wrongly split Practice, where OpenF1 fragments ONE
+      physical tyre into multiple `tyre_age_at_start==0` stints across
+      pit-lane in/out cycles within the same run (verified: NOR's FP1 showed
+      3 separate fresh flags for what pace evidence says is one 13-lap
+      tyre) — counting each as an independent group misclassified a
+      genuinely worn set as three short "still fresh" fragments. Fix: a
+      non-Qualifying session caps at one real group per compound (later
+      fresh flags fold in as continuations, same as any non-fresh stint);
+      Qualifying gets no cap at all, since it's genuinely three elimination
+      segments under one session_key and length alone correctly separates
+      real sets from artifacts there.
+
+      Re-verified against real Hungary 2026 data end-to-end (through the
+      actual API, not just a unit test): NOR now matches F1.com's own chart
+      exactly on Soft-used (3), Medium-new (1), and Hard-new (2) — the
+      first exact match on the compound that four prior revisions couldn't
+      reproduce. Re-checked the original Silverstone 2026 sprint-weekend
+      pathological case that motivated the very first per-session dedup
+      (NOR's sprint Quali previously producing a physically-impossible
+      7-set Soft count against a 6-set allocation): now 0 violations across
+      all 20 drivers, with Soft usage correctly capped at the 6-set
+      allocation rather than needing a separate artifact guard. Full-field
+      sanity re-run on both races: `used + discarded + new` sums to exactly
+      the full weekend allocation for every driver, every compound, zero
+      exceptions. `audit_strategies.py` still passes structurally (unrelated
+      to this file, as before).
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

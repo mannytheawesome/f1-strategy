@@ -1041,9 +1041,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     try:
         drivers_raw = get_drivers(grid_source["session_key"], HIST_TTL)
         stints_by_session = []
+        session_is_qualifying = []
         for s in sources:
             try:
                 stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+                session_is_qualifying.append(
+                    s.get("session_type", "").lower() == "qualifying")
             except Exception:
                 pass
         top10 = [g for g in grid[:10]]
@@ -1054,7 +1057,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         # is what's actually observable pre-race.
         invs = {i.driver_number: i for i in
                 compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend,
-                                  q3_drivers=set(top10_nums))}
+                                  q3_drivers=set(top10_nums),
+                                  session_is_qualifying=session_is_qualifying)}
         rows = [invs[n] for n in top10_nums if n in invs]
         if rows:
             inventory_summary = {
@@ -1064,12 +1068,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 "top10_count": len(rows),
             }
         # Full-field breakdown for the "tyres available" chart, grid order.
-        # DriverInventory.reconciled() does the heavy lifting: new+used per
-        # compound already correctly caps at the real race-day pool (7, or 6
-        # for a Q3 qualifier — see engine.tyre_inventory module docstring),
-        # not just the full weekend allocation, and floors out the OpenF1
-        # double-counting artifact that occasionally shows more "used" stints
-        # than a compound's own allocation.
+        # DriverInventory.reconciled() does the heavy lifting: per compound,
+        # each opened set is classified by how many laps it actually ran —
+        # short (Qualifying-style banker-lap stints) stay "used" and
+        # available, long (Practice-style runs) are discarded from
+        # availability entirely — then subtracted from the full weekend
+        # allocation (see engine.tyre_inventory module docstring).
         for g in grid:
             inv = invs.get(g["driver_number"])
             if inv:
