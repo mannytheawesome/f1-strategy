@@ -143,6 +143,9 @@ ANTHROPIC_API_KEY=     # briefing narrative generation. Omit for data-only brief
 ## Testing / verifying accuracy
 
 ```bash
+pytest                              # unit tests, synthetic data, no network (~0.1s)
+pytest -m integration               # + integration tests against real cached meetings
+
 python backtest_full.py collect     # cache raw OpenF1 data (slow, resumable)
 python backtest_full.py evaluate    # run the engine at 25/50/75% distance, report metrics
 python backtest_full.py sweep       # grid-search tunables

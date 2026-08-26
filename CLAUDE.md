@@ -1024,7 +1024,19 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
 - [ ] Briefing prompt design + `PACK_VERSION` history are undocumented.
-- [ ] No automated test suite yet — only the backtest harness and manual replay.
+- [x] No automated test suite yet — only the backtest harness and manual
+      replay. Done 2026-08-26: added `tests/` (pytest). Unit tests for
+      `engine/tyre_inventory.py` (synthetic stints, no network) reconstruct
+      the exact bugs found and fixed this session — same-session tyre
+      fragmentation, the Qualifying no-cap case, the allocation-exceeded
+      bug — so a regression on any of them fails a test, not just a manual
+      screenshot check. Unit tests for `_pit_window`/`_team_pace` cover the
+      pit-window-cap and Cadillac no-data cases the same way. A separate
+      `integration` marker (skipped by default, run with `pytest -m
+      integration`) hits `build_prerace_data` against real cached 2026
+      meetings for the Cadillac grid-slice regression and strategy
+      structural checks — kept out of the default run so `pytest` alone
+      stays fast and network-free.
 
 ---
 
