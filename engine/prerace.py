@@ -1267,6 +1267,18 @@ def _prerace_cache_path(meeting_key: int) -> str:
     return os.path.join(BRIEFING_DIR, f"prerace_{meeting_key}.json")
 
 
+# How long to keep serving a cached data-only briefing (no narrative) before
+# trying the LLM call again. Without this, a narrative failure (e.g. the
+# Anthropic account being out of credit) was never cached at all — every
+# single request re-ran the full pipeline AND re-attempted the doomed LLM
+# call, turning a should-be-instant cache hit into a ~50s wait, repeatedly,
+# for as long as the underlying failure lasted. Caching the failure means
+# repeat requests get the data pack fast; retrying after a cooldown (rather
+# than never) means it recovers on its own once the underlying issue clears,
+# with no manual regenerate=true call needed.
+NARRATIVE_RETRY_COOLDOWN_S = 600
+
+
 def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
                          regenerate: bool = False) -> dict:
     path = _prerace_cache_path(meeting_key)
@@ -1280,9 +1292,15 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
         with open(path) as f:
             cached = json.load(f)
         # regenerate when a new session completed OR the pack shape changed
-        if (cached.get("source_keys") == source_keys and cached.get("narrative")
-                and cached.get("pack_version") == PACK_VERSION):
+        same_shape = (cached.get("source_keys") == source_keys
+                      and cached.get("pack_version") == PACK_VERSION)
+        if same_shape and cached.get("narrative"):
             return cached
+        if same_shape and cached.get("narrative_failed_at"):
+            failed_at = datetime.fromisoformat(cached["narrative_failed_at"])
+            age_s = (datetime.now(timezone.utc) - failed_at).total_seconds()
+            if age_s < NARRATIVE_RETRY_COOLDOWN_S:
+                return cached
 
     pack = build_prerace_data(meeting_key, total_laps)
     narrative = generate_structured_narrative(
@@ -1296,7 +1314,8 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
         "narrative": narrative,
         "data": pack,
     }
-    if narrative:
-        with open(path, "w") as f:
-            json.dump(briefing, f)
+    if not narrative:
+        briefing["narrative_failed_at"] = briefing["generated_at"]
+    with open(path, "w") as f:
+        json.dump(briefing, f)
     return briefing
