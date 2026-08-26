@@ -161,18 +161,13 @@ def quali_analysis(session_key: int):
 def tyre_inventory(session_key: int):
     """
     Returns remaining new tyre sets per driver for the meeting containing
-    this session. Counts new sets (tyre_age_at_start=0) opened across all
-    sessions up to and including the given session_key, then caps each
-    driver's total at the real race-day pool the FIA regulations leave after
-    mandatory in-weekend returns (see engine.tyre_inventory module docstring)
-    — not just the full weekend allocation.
+    this session. Each opened set is classified by how many laps it
+    actually ran (short Qualifying-style stints stay available, longer
+    Practice-style runs are discarded) and subtracted from the full
+    weekend allocation — see engine.tyre_inventory module docstring.
 
-    q3_drivers is left at compute_inventory's default (unknown -> nobody
-    treated as Q3) here: this endpoint can be called before qualifying has
-    even happened, and mid-weekend Q3 status isn't part of this endpoint's
-    data flow. That means Q3 qualifiers show one set more than they'll
-    actually have on race day — a known, minor simplification, not a wrong
-    total for the field generally.
+    q3_drivers is left at compute_inventory's default (unused; the current
+    model doesn't need it — see the module docstring's "fifth revision").
     """
     try:
         session    = get_session(session_key)
@@ -199,17 +194,22 @@ def tyre_inventory(session_key: int):
 
         # Fetch stints for each relevant session
         stints_by_session = []
+        session_is_qualifying = []
         for s in relevant_sessions:
             sk = s["session_key"]
             try:
                 stints = _cached_get(f"stints:{sk}", "stints", HIST_TTL,
                                      session_key=sk)
                 stints_by_session.append(stints)
+                session_is_qualifying.append(
+                    s.get("session_type", "").lower() == "qualifying")
             except Exception:
                 stints_by_session.append([])
+                session_is_qualifying.append(False)
 
         drivers_raw = get_drivers(session_key, HIST_TTL)
-        inventory   = compute_inventory(stints_by_session, drivers_raw, is_sprint)
+        inventory   = compute_inventory(stints_by_session, drivers_raw, is_sprint,
+                                        session_is_qualifying=session_is_qualifying)
 
         return {
             "session_key": session_key,

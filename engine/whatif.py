@@ -50,17 +50,15 @@ def _pit_plans_from_stints(stints: list[dict]) -> list[PitPlan]:
 
 def _race_start_sets(session: dict, session_key: int,
                      drivers_raw: dict) -> dict[int, dict]:
-    """Per-driver tyre sets available at race start: weekend allocation minus
-    new sets opened in the sessions run BEFORE this race, capped at the real
-    race-day pool the FIA regulations leave after mandatory in-weekend
-    returns (engine.tyre_inventory.RACE_DAY_POOL) rather than the full
-    allocation — fixes the overcount this docstring used to warn about. Each
-    pre-race set opened is afterwards available as a used set.
+    """Per-driver tyre sets available at race start: each set opened in the
+    sessions run BEFORE this race is classified by how many laps it
+    actually ran (short Qualifying-style stints stay available, longer
+    Practice-style runs are discarded) and subtracted from the full
+    weekend allocation — see engine.tyre_inventory module docstring.
 
     q3_drivers isn't threaded through here (left at compute_inventory's
-    default, nobody treated as Q3): this function only has session dates, not
-    grid/quali positions, so Q3 qualifiers show one set more than they'll
-    really have — a known, minor simplification."""
+    default; unused by the current model — see the module docstring's
+    "fifth revision")."""
     meeting_key = session.get("meeting_key")
     if not meeting_key:
         return {}
@@ -76,12 +74,16 @@ def _race_start_sets(session: dict, session_key: int,
                     and "qualifying" not in s.get("session_name", "").lower()
                     for s in all_sessions)
     stints_by_session = []
+    session_is_qualifying = []
     for s in prior:
         try:
             stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+            session_is_qualifying.append(
+                s.get("session_type", "").lower() == "qualifying")
         except Exception:
             pass
-    invs = compute_inventory(stints_by_session, drivers_raw, is_sprint)
+    invs = compute_inventory(stints_by_session, drivers_raw, is_sprint,
+                             session_is_qualifying=session_is_qualifying)
     return {
         i.driver_number: {
             c: {"new": i.remaining(c), "used": i.used.get(c, 0)}
