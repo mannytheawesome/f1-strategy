@@ -824,6 +824,44 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       pursuing as a proper, backtested change, or should surprising-but-
       measured outputs like this stand as-is?
 
+      **Resolved, 2026-08-26, by doing the backtest this entry asked for.**
+      First checked how widespread the underlying data-sparsity concern
+      actually is: scanned all 22 sprint weekends in the cache for their
+      fitted SOFT curve. `build_deg_curves` already has real safeguards
+      against exactly this (median-not-mean fitting so one bad stint can't
+      skew a curve, cross-compound ratio backfill when a compound got no
+      long run, a confidence `*` marker on every adjusted curve) — it isn't
+      naive. ~7 of 22 hit the full `DEG_UNMEASURED` fallback (no compound
+      measured at all that weekend); Silverstone's case was a third,
+      thinner-but-real bucket: an actual regression WAS fit from 27 laps,
+      landed implausibly low, and got clamped by the existing
+      `MIN_DEG["SOFT"]=0.06` floor.
+
+      Then tested the concrete, reversible version of "treat thin fits more
+      conservatively": swept `MIN_DEG["SOFT"]` (0.06/0.08/0.10/0.12/0.15)
+      against the full 81-race backtest, each value a completely fresh
+      `evaluate` run (n=246 checkpoints throughout). Result was
+      unambiguous and monotonic in the WRONG direction — every single
+      metric got worse as the floor rose, with no local improvement at any
+      tested value:
+
+      | MIN_DEG SOFT | winner-hit | MAE | win Brier | podium Brier |
+      |---|---|---|---|---|
+      | 0.06 (current) | 85.0% | 1.473 | 0.0149 | 0.0477 |
+      | 0.08 | 85.0% | 1.479 | 0.0149 | 0.0482 |
+      | 0.10 | 84.6% | 1.482 | 0.0152 | 0.0481 |
+      | 0.12 | 83.7% | 1.494 | 0.0155 | 0.0490 |
+      | 0.15 | 82.9% | 1.513 | 0.0159 | 0.0501 |
+
+      Conclusion: 0.06 is already at (or past) the right side of this
+      tradeoff — raising it to suppress Silverstone-style "Soft favoured
+      everywhere" outputs would trade real, measured accuracy for a purely
+      cosmetic gain (more strategy-row variety on one chart). No code
+      change made. The missing Medium/Soft→Hard 1-stop for Silverstone is a
+      genuine, now-validated model finding — Soft's real fitted
+      degradation at this track and sample size doesn't support ending a
+      stint on anything else — not a bug or an undertuned constant.
+
       **Fourth bug, same day, caught by the user re-deriving the regulation
       math by hand**: after the third fix above, MEDIUM and HARD showed
       `new+used` summing to MORE than their own allocation for several
