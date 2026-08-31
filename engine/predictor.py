@@ -65,6 +65,38 @@ DEG_PRIOR = {"SOFT": 0.12, "MEDIUM": 0.07, "HARD": 0.04}
 COMPOUND_DELTA = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}   # vs fresh Medium
 DRY = ["SOFT", "MEDIUM", "HARD"]
 
+# INTERMEDIATE degradation, fitted from real long-run data the same way DRY
+# compounds are (57 genuine stints, 836 laps, across every rain-affected race
+# in the 2023-2026 cache — a real, comparable-to-dry sample, not a guess).
+# The weighted-median fitted slope came back NEGATIVE (-0.0275 s/lap): within
+# one continuous inter stint, the track is usually drying out (or the rain
+# intensity is changing) fast enough that this swamps genuine tyre wear —
+# unlike a dry stint, where track conditions are relatively stable across the
+# same timescale. build_deg_curves's existing `max(deg, 0.0)` floor already
+# catches the sign flip; INTERMEDIATE_MIN_DEG adds a small additional floor on
+# top so the strategy optimiser never treats an intermediate as literally
+# zero-wear/infinite-life, matching why MIN_DEG exists for dry compounds.
+INTERMEDIATE_MIN_DEG = 0.02
+# Full WET tyres get no fitted curve at all: only 5 genuine long-run stints
+# (66 laps) exist across the whole cache — the same "too few examples" bar
+# that's been rejected elsewhere in this project (per-circuit DNF, per-track
+# FP_WEIGHTS) — nowhere near enough to trust a number over the existing
+# fallback path.
+#
+# COMPOUND_DELTA's "vs fresh Medium" framing doesn't transfer to a wet
+# compound at all: an intermediate's pace also reflects how wet the TRACK
+# currently is, which varies enormously (barely-damp vs a downpour) and isn't
+# something this model can measure or predict in advance. So there's no
+# single fittable constant here the way SOFT/HARD's dry compound offsets are
+# real, measured numbers — INTERMEDIATE's entry below is a deliberate,
+# clearly-flagged judgment call (a conservative "some rain is happening"
+# placeholder), used ONLY as a last resort when the CURRENT race has no real
+# intermediate data of its own yet. The moment any genuine wet running exists
+# in that race, build_deg_curves fits a real curve from it and
+# _stint_lap_times uses that curve's own real baseline instead of this
+# fallback entirely (see the `curve.baseline if curve else ...` branch below).
+COMPOUND_DELTA["INTERMEDIATE"] = 8.0
+
 from engine.circuits import STREET_CIRCUITS
 # Share of the green-flag pit loss still paid when stopping under a
 # neutralisation (measured vs rivals who stayed out, 2023-2026).
@@ -328,7 +360,17 @@ def _stint_deg_samples(laps_raw, stints_raw, weight, session_name,
     out: dict[str, list[tuple]] = {}
     for st in stints_raw:
         c = st.get("compound", "")
-        if c not in DRY or st.get("lap_start") is None:
+        # INTERMEDIATE included alongside DRY so a wet-affected race's real
+        # inter running actually feeds a degradation fit — previously
+        # silently dropped here entirely, meaning no wet-condition data ever
+        # reached build_deg_curves no matter how much genuine wet running a
+        # race had. Full WET isn't included: only 5 genuine long-run stints
+        # exist across the whole cache, nowhere near enough to fit
+        # responsibly (see INTERMEDIATE_MIN_DEG's comment for the sample
+        # sizes actually measured).
+        if c not in DRY and c != "INTERMEDIATE":
+            continue
+        if st.get("lap_start") is None:
             continue
         laps = by_driver.get(st["driver_number"], {})
         lo, hi = st["lap_start"], (st.get("lap_end") or st["lap_start"])
@@ -423,13 +465,21 @@ def build_deg_curves(
     # them. Estimate those from a compound that WAS measured at this event
     # instead, using the measured cross-compound ratios, and fall back to the
     # global prior only if nothing was measured.
-    measured = {c: cur.deg_rate for c, cur in curves.items() if strict.get(c)}
-    if measured:
-        ref = "MEDIUM" if "MEDIUM" in measured else next(iter(measured))
+    # DRY-only: this whole ratio/prior backfill mechanism estimates one dry
+    # compound's wear from another's measured ratio, which has no physical
+    # meaning for INTERMEDIATE (different construction entirely; "how much
+    # slower is Hard than Medium" doesn't transfer to "how much slower is an
+    # intermediate"). measured_dry, not measured, is what picks `ref` so an
+    # unmeasured DRY compound never gets backfilled from an INTERMEDIATE
+    # curve — DEG_RATIO has no "INTERMEDIATE" key, so that would KeyError.
+    measured_dry = {c: cur.deg_rate for c, cur in curves.items()
+                    if c in DRY and strict.get(c)}
+    if measured_dry:
+        ref = "MEDIUM" if "MEDIUM" in measured_dry else next(iter(measured_dry))
         for c, cur in list(curves.items()):
-            if c in measured or c not in DEG_RATIO:
+            if c in measured_dry or c not in DEG_RATIO:
                 continue
-            est = measured[ref] * (DEG_RATIO[c] / DEG_RATIO[ref])
+            est = measured_dry[ref] * (DEG_RATIO[c] / DEG_RATIO[ref])
             # The ratio itself is measured only where the compound DID get a
             # long run, so it under-states wear for one that never did.
             est = max(est, DEG_UNMEASURED.get(c, 0.0))
@@ -453,7 +503,8 @@ def build_deg_curves(
     EXPECTED_OFFSET = {"SOFT": -0.6, "MEDIUM": 0.0, "HARD": +0.4}
     OFFSET_TOLERANCE = 1.0
     MAX_DEG = 0.30
-    MIN_DEG = {"SOFT": 0.06, "MEDIUM": 0.025, "HARD": 0.010}
+    MIN_DEG = {"SOFT": 0.06, "MEDIUM": 0.025, "HARD": 0.010,
+               "INTERMEDIATE": INTERMEDIATE_MIN_DEG}
 
     med = curves.get("MEDIUM")
     if med:

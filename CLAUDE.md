@@ -1061,6 +1061,106 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       `tests/test_circuits.py`, covering fade timing, substring matching,
       and the no-year/no-match cases).
 
+      **Intermediate-tyre modelling gap, 2026-08-31, found chasing "explore
+      other accuracy angles."** Split the backtest by rain-affected vs dry
+      races and found a real, persistent winner-hit gap (63-84% wet vs
+      79-91% dry across 25/50/75% checkpoints) that never closed as more
+      real race data arrived — unlike temperature/resurfacing, which mostly
+      self-corrected once real race laps dominated the fit. Traced the
+      cause directly: `engine/predictor.py` had ZERO references to
+      INTERMEDIATE or WET anywhere — the core simulation, degradation
+      fitting, and strategy DP worked exclusively with
+      `DRY = ["SOFT","MEDIUM","HARD"]`. Three confirmed gaps, not one:
+      1. `_stint_deg_samples` silently dropped every INTERMEDIATE stint —
+         no wet degradation curve was ever fitted from real data, however
+         much genuine wet running a race had.
+      2. `build_pace_model` DID include intermediate laps in the raw pace
+         signal, but applied ZERO tyre-age correction to them
+         (`curves.get(c)` returned `None` for a compound with no curve) —
+         tyre-wear noise leaked straight into the driver pace-delta.
+      3. `_stint_lap_times` silently defaulted an intermediate's baseline
+         pace to the SAME as a dry Medium
+         (`COMPOUND_DELTA.get(compound, 0)` -> 0 for an unrecognised
+         compound) whenever no curve existed — flatly wrong whenever the
+         model has to simulate a driver actually on wet-weather rubber.
+
+      Checked sample size before building anything (this project's own
+      standard, given per-circuit DNF/FP_WEIGHTS were rejected earlier for
+      too few examples): 199 genuine long-run INTERMEDIATE stints (4090
+      laps) across the cache — comparable to many already-trusted DRY
+      curves. Full WET: only 5 stints (66 laps), nowhere near enough, so
+      deliberately NOT given its own fitted curve.
+
+      Fix: widened `_stint_deg_samples`'s compound filter to include
+      INTERMEDIATE alongside DRY (fixes #1); this alone fixes #2 and #3 for
+      free, since both already read `curves.get(c)` generically rather
+      than hardcoding DRY names — once `curves` actually contains a real
+      "INTERMEDIATE" entry, the existing age-correction and baseline logic
+      just works. Added `INTERMEDIATE_MIN_DEG = 0.02` (the real fitted
+      weighted-median slope came back NEGATIVE, -0.0275 s/lap — within one
+      continuous inter stint the track is usually drying out fast enough to
+      swamp genuine tyre wear, unlike a dry stint where conditions are
+      comparatively stable across the same timescale; the existing
+      `max(deg, 0.0)` floor already catches the sign flip, this adds a
+      small additional floor so the optimiser never treats an intermediate
+      as literally zero-wear/infinite-life). Added a real, clearly-flagged
+      `COMPOUND_DELTA["INTERMEDIATE"] = 8.0` fallback for when NO real inter
+      data exists yet in the current race — explicitly documented as a
+      judgment call, not a fitted number (an inter's pace also depends on
+      how wet the track currently is, which isn't fittable as one fixed
+      constant the way SOFT/HARD's dry offsets are); used only as a
+      last-resort default, overridden the moment any real wet running
+      exists. Guarded the DRY-only cross-compound-ratio backfill
+      (`measured` renamed `measured_dry`) so an unmeasured dry compound can
+      never get backfilled from an INTERMEDIATE curve — `DEG_RATIO` has no
+      such key, which would have raised `KeyError`.
+
+      Verified directly: real 2024 Canada data (a genuine wet race) now
+      fits INTERMEDIATE at 83 points, HIGH confidence, baseline 87.77s vs
+      dry Medium's 77.73s — a real, race-specific ~10s wet-pace penalty,
+      not a guess. Confirmed DRY curves are bit-for-bit IDENTICAL whether
+      or not intermediate stints are also present in the same input (both
+      by direct diff on real 2023 Hungary data and a dedicated unit test) —
+      zero regression risk to the validated dry-compound path. 10 new
+      tests in `tests/test_intermediate_degradation.py`.
+
+      **Backtest result — reported honestly, including a mistake made
+      along the way.** First compared wet-vs-dry backtest metrics before
+      and after this fix and reported a clear improvement (73.7% -> 77.2%
+      wet winner-hit). That comparison was WRONG: the "before" baseline was
+      read directly from `cache/backtest_results.json` without
+      regenerating it, and that file had been left, by an earlier same-day
+      `MIN_DEG` sweep script, reflecting its LAST-tested (worst-performing,
+      `MIN_DEG["SOFT"]=0.15`) value — the sweep's `trap restore` only reset
+      the source file, never re-ran `evaluate` to regenerate a genuinely
+      clean results file afterward. Caught the error by re-running the
+      IDENTICAL post-fix code twice (bit-for-bit reproducible results,
+      ruling out Monte Carlo noise as an explanation for the apparent
+      "improvement"), then git-stashed the fix entirely and regenerated a
+      TRUE clean baseline (confirmed `MIN_DEG["SOFT"]=0.06` correctly
+      restored first) for a genuine apples-to-apples comparison. The real
+      result: wet winner-hit 77.19% both before and after (identical to 4
+      decimal places), dry winner-hit 86.31% both before and after, wet MAE
+      1.333 before vs 1.378 after (negligibly worse, not better). No
+      measurable backtest benefit either way — unlike the temperature
+      correction, which measurably HURT accuracy when tested properly, this
+      one shows no measured harm either.
+
+      Kept anyway (explicit user decision, given the honest evidence): the
+      three underlying bugs are real and independently confirmed (direct
+      code reading, not guessed), and the fix means the model now uses real
+      wet-condition data instead of silently dropping it or assuming a wet
+      tyre paces identically to a dry Medium — correct on its own terms.
+      Best available explanation for the flat backtest read: `winner`/`mae`
+      are scored at fixed 25/50/75%-of-race-distance checkpoints, but this
+      fix's most valuable piece (a real baseline when projecting a driver's
+      FUTURE stint on intermediates) only matters for a checkpoint that
+      falls while conditions are STILL wet — a race whose rain came early
+      and dried out well before 25% distance would never exercise that
+      forward-looking path at any of the three scored checkpoints, even
+      though the fix is doing the right thing. Not proven, flagged as the
+      leading hypothesis rather than fact.
+
       **Fourth bug, same day, caught by the user re-deriving the regulation
       math by hand**: after the third fix above, MEDIUM and HARD showed
       `new+used` summing to MORE than their own allocation for several
