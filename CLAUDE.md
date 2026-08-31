@@ -862,6 +862,110 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       degradation at this track and sample size doesn't support ending a
       stint on anything else — not a bug or an undertuned constant.
 
+      **Follow-up, 2026-08-30/31: does track temperature or grip evolution
+      explain the remaining inaccuracy?** The user pushed back on the
+      MIN_DEG conclusion above — a professional strategy site shouldn't be
+      this noisy — and asked specifically whether track temperature or
+      weather was factored into degradation fitting. Checked directly:
+      confirmed `_stint_deg_samples`/`build_deg_curves` use ONLY lap time
+      vs tyre age (plus a fuel-burn correction) — no temperature, humidity,
+      or weather input anywhere, despite `get_weather_summary` already
+      existing in the codebase (used only for the briefing's narrative
+      text, never fed into the regression).
+
+      *Temperature, pooled across circuits*: correlated each race's fitted
+      deg_rate against its own track_temp_avg across all genuinely-measured
+      (unadjusted, ≥15-point) curves in the cache. MEDIUM (n=48, the only
+      compound with enough sample size to trust): Pearson r=0.283 — a real
+      but modest signal (~8% of variance). Binning by temperature band
+      showed a genuine ~2x mean-degradation increase from the coolest
+      (15-25°C, mean 0.050) to hottest (40-46°C, mean 0.112) bands, but
+      with within-band standard deviations nearly as large as the
+      between-band gaps — real signal, swamped by comparable noise.
+
+      *Direct predictive test (not just correlation)*: for every cached
+      race, compared a degradation curve fitted from FP1/FP2/FP3 ONLY (no
+      race data — mimicking exactly what a real pre-race briefing has to
+      work with) against the ground-truth curve fitted from the RACE
+      session alone, then tested whether correcting the FP-only fit by
+      (race track_temp − FP session track_temp) × a MEDIUM-derived slope
+      brought it closer to the race's real number. Result: **it didn't.**
+      MEDIUM baseline MAE 0.0507 vs temp-adjusted MAE 0.0533 (n=42) —
+      WORSE, and the correction only reduced error in 12 of 42 races
+      (29%). A thin, real correlation applied as a blanket correction adds
+      as much noise as it removes.
+
+      *Redone properly after a methodology fix*: found the pooled analysis
+      was contaminated — 13 of 64 (compound, race) pairs came from
+      sessions where `rainfall=True` was recorded, meaning the "ground
+      truth" degradation number for those races reflects mixed/wet running
+      conditions, not real dry-tyre wear, and pooling every circuit
+      together erases each circuit's own baseline abrasiveness (a "hot"
+      day at Silverstone and a "hot" day at Bahrain aren't the same
+      physical situation). Excluded the rain-contaminated rows and
+      recomputed using WITHIN-CIRCUIT temperature deviation (each race's
+      temp vs that circuit's own historical mean, same for deg_rate) —
+      correlation nearly doubled to r=0.525 (n=34), a real methodological
+      improvement. Re-ran the direct predictive test with this improved,
+      circuit-relative correction anyway: baseline MAE 0.0515 vs adjusted
+      MAE 0.0670 (n=26) — STILL worse, improved in only 6/26 races (23%).
+      The biggest baseline errors in the dataset (Suzuka 2023, Spa 2023,
+      Catalunya 2026 — FP-only fits of 0.27, 0.23, 0.30 s/lap against real
+      race values of 0.08, 0.06, 0.14) are cases where the FP fit itself
+      is already implausibly saturated for reasons unrelated to
+      temperature (thin practice sample hitting `build_deg_curves`'s own
+      MAX_DEG-adjacent saturation behaviour, already documented and
+      audited elsewhere in this file) — no temperature term fixes an
+      already-broken FP fit; scaling a bad number by a correction factor
+      just relocates the error rather than shrinking it.
+
+      *Track/tyre grip evolution*: checked whether this — a larger,
+      already-acknowledged confound (`FP_WEIGHTS`'s own comment: "fuel
+      burn-off and track evolution make FP deg rates 2-3x higher than what
+      actually materialises in the race") — is separable and fixable.
+      It isn't, with the data OpenF1 provides. A first attempt (pooling
+      near-fresh-tyre laps, `tyre_age<=2`, across a whole FP2 session and
+      checking for a lap-time trend) came back with large but
+      DIRECTION-INCONSISTENT shifts across races (+4 to +8s "slower" in
+      some, −8 to −16s "faster" in others) — the signature of a bigger,
+      different confound: OpenF1 has no fuel-load field, and practice
+      sessions mix separately-refuelled low-fuel qualifying-sim runs with
+      high-fuel race-sim long runs. Applying the existing `FUEL_RATE`
+      correction (`fuel_correction = FUEL_RATE * lap_number`) across a
+      whole session — as opposed to within one continuous stint, where it
+      already correctly applies — would itself be wrong, since it assumes
+      monotonic fuel burn from session start, which practice refuelling
+      breaks. Checked the raw `/v1/weather` schema directly for anything
+      resembling a grip measurement: only `air_temperature`,
+      `track_temperature`, `humidity`, `pressure`, `rainfall`,
+      `wind_speed`/`wind_direction` — nothing else. No independent grip or
+      fuel-load signal exists in this data source to build a corrected
+      version against.
+
+      **Conclusion, backed by two independently-controlled predictive
+      tests, not just correlation eyeballing**: track temperature is a
+      real, physically-sensible, twice-confirmed effect, but it explains a
+      minority of the variance and a direct correction measurably HURTS
+      accuracy on the one compound with enough sample to trust either way
+      it was tried (pooled and within-circuit). Grip evolution is likely a
+      genuinely bigger effect (per the code's own long-standing comment)
+      but isn't cleanly separable from fuel-load swings using OpenF1's
+      available fields, and the current per-STINT (never per-session)
+      fitting design already avoids the worst version of this confound by
+      construction — whatever evolution happens within one continuous
+      stint's fuel-monotonic window just folds into the fitted `deg_rate`,
+      indistinguishable from wear, same as any other unmeasurable factor
+      would. Neither line of investigation identified a fixable code
+      change. The dominant, actually-actionable error source remains thin
+      FP sample size on specific races producing an implausibly saturated
+      fit (Suzuka 2023, Spa 2023, Catalunya 2026 all independently
+      surfaced as the worst cases in this investigation) — a data-volume
+      problem already handled as gracefully as the current architecture
+      allows (median-not-mean fitting, cross-compound ratio backfill,
+      MAX_DEG-adjacent floors/caps, confidence markers), not a missing
+      temperature or grip covariate. No code changed as a result of this
+      investigation.
+
       **Fourth bug, same day, caught by the user re-deriving the regulation
       math by hand**: after the third fix above, MEDIUM and HARD showed
       `new+used` summing to MORE than their own allocation for several
