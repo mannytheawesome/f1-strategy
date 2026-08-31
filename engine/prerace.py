@@ -1116,12 +1116,18 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     except Exception:
         pass
 
-    # Every legal (stop count x starting compound) combination is kept as its
-    # own candidate — not just the fastest per stop count. A pure time
-    # optimum picks one "answer", but real strategy calls are a genuine
-    # choice among several plans that are all close (Soft-start vs
-    # Medium-start 1-stops, etc.); showing only the single best per stop
-    # count was throwing away exactly that comparison.
+    # Every legal (stop count x starting compound x ending compound)
+    # combination is kept as its own candidate — not just the fastest per
+    # (stop count, starting compound). optimize_strategy's DP freely
+    # chooses whichever compound sequence is fastest once the starting
+    # compound and stop count are fixed, so without force_end_compound a
+    # close alternative ending (e.g. Medium->Hard when the DP would rather
+    # end Medium->Soft by a few seconds) is never even computed as a
+    # separate option — it's silently discarded inside the DP's own search,
+    # not filtered out afterwards. Forcing each legal ending compound in
+    # turn makes that comparison actually visible; a pure time optimum
+    # picks one "answer", but real strategy calls are a genuine choice
+    # among several plans that are all close.
     strategies = []
     seen_signatures: set[tuple] = set()
     for stops in (1, 2, 3):
@@ -1132,37 +1138,52 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             # sweep opens on a Soft at tracks where the field has none left.
             if field_stock is not None and field_stock.get(start_c, 0) < 1:
                 continue
-            strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
-                                      field_baseline, pit_loss,
-                                      needs_compound_change=True,
-                                      force_stops=stops,
-                                      forbid_repeat_compound=True,
-                                      available=(dict(field_stock,
-                                                      **{start_c: field_stock.get(start_c, 0) - 1})
-                                                 if field_stock else None))
-            if len(strat.pits_remaining) != stops:
-                continue   # no legal plan at this stop count
-            pits = strat.pits_remaining
-            seq = [start_c] + [p.compound for p in pits]
-            sig = (stops, tuple(seq))
-            if sig in seen_signatures:
-                continue
-            seen_signatures.add(sig)
-            pit_laps = [p.lap for p in pits]
-            bounds = [0] + pit_laps + [total_laps]
-            stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
-            pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
-                                       pit_loss, total_laps)
-                          for i in range(len(pit_laps))]
-            strategies.append({
-                "start_compound": start_c,
-                "stops": stops,
-                "compound_sequence": seq,
-                "pit_laps": pit_laps,
-                "pit_windows": pit_windows,
-                "stint_lengths": stint_lengths,
-                "total_time": strat.total_time_from_now,
-            })
+            # The 3-stop branch is already the priciest part of
+            # optimize_strategy's search (a coarse-step quadruple-nested
+            # loop over 3 pit laps x 3 compounds each) and its plans rarely
+            # make the top-5-fastest cut below — measured directly:
+            # forcing every ending here roughly tripled full-cache
+            # generation time (~11-15s/race -> ~37s/race) for a branch
+            # whose forced-suboptimal variants essentially never appear in
+            # the final table anyway. Only 1-stop and 2-stop get the
+            # forced-ending search; 3-stop keeps a single unconstrained
+            # call, same as before this change.
+            end_options = DRY if stops in (1, 2) else [None]
+            for end_c in end_options:
+                strat = optimize_strategy(0, total_laps, start_c, 0, 0.0, curves,
+                                          field_baseline, pit_loss,
+                                          needs_compound_change=True,
+                                          force_stops=stops,
+                                          forbid_repeat_compound=True,
+                                          force_end_compound=end_c,
+                                          available=(dict(field_stock,
+                                                          **{start_c: field_stock.get(start_c, 0) - 1})
+                                                     if field_stock else None))
+                if len(strat.pits_remaining) != stops:
+                    continue   # no legal plan at this stop count/ending
+                pits = strat.pits_remaining
+                seq = [start_c] + [p.compound for p in pits]
+                if end_c is not None and seq[-1] != end_c:
+                    continue   # fallback path ignored the constraint — skip, don't mislabel
+                sig = (stops, tuple(seq))
+                if sig in seen_signatures:
+                    continue
+                seen_signatures.add(sig)
+                pit_laps = [p.lap for p in pits]
+                bounds = [0] + pit_laps + [total_laps]
+                stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
+                pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
+                                           pit_loss, total_laps)
+                              for i in range(len(pit_laps))]
+                strategies.append({
+                    "start_compound": start_c,
+                    "stops": stops,
+                    "compound_sequence": seq,
+                    "pit_laps": pit_laps,
+                    "pit_windows": pit_windows,
+                    "stint_lengths": stint_lengths,
+                    "total_time": strat.total_time_from_now,
+                })
     strategies.sort(key=lambda s: s["total_time"])
     strategies = strategies[:5]   # top 5 candidates, fastest first
     best_stops = strategies[0]["stops"] if strategies else 1

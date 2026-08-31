@@ -966,6 +966,62 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       temperature or grip covariate. No code changed as a result of this
       investigation.
 
+      **Actual root cause found, 2026-08-31: a missing-candidate bug, not
+      an uncertainty problem.** Asked to build a confidence/caveat UI for
+      the degradation numbers, traced the strategy-candidate loop first to
+      find where to attach it — and found `optimize_strategy` has no way
+      to force a specific ENDING compound, only the starting compound and
+      stop count (`force_stops`). `prerace.py`'s candidate loop iterates
+      `(stops, start_c)` and lets the DP freely pick whichever compound
+      sequence is fastest for the rest. So for a Medium-start 1-stop, the
+      DP already silently compares Medium→Soft vs Medium→Hard internally
+      and keeps only the winner — a close alternative like Medium→Hard is
+      never even generated as its own option, let alone shown or hidden by
+      confidence. This is the real reason "the fastest Medium→Hard 1-stop
+      doesn't even show up" (the complaint that started this whole
+      investigation): it isn't a missing row filtered out afterward, it's
+      a row that was never computed in the first place.
+
+      Fix: added `force_end_compound: str | None = None` to
+      `optimize_strategy` (`engine/predictor.py`) — purely additive/opt-in,
+      every existing call site passes nothing and is completely
+      unaffected; a new `end_ok()` gate filters the final compound in each
+      of the 0/1/2/3-stop search branches. `prerace.py`'s candidate loop
+      now iterates `end_c in DRY` for 1-stop and 2-stop (forcing each
+      legal ending in turn, so a genuinely different sequence gets its own
+      row; the DP's own free-choice pick still comes out identical to one
+      of the forced iterations, so nothing is lost, and `seen_signatures`
+      dedups automatically). 3-stop deliberately keeps its original single
+      unconstrained call — see performance note below.
+
+      Verified against real Silverstone 2026 data: `['MEDIUM','HARD']` now
+      appears in the strategies list (`time_delta=10.9`, alongside
+      `['SOFT','HARD']` at `9.2`), where before neither ending on HARD
+      showed up as a distinct row for a Medium start at all. Re-ran the
+      full 81-race structural validation (mirroring the sixth-revision
+      tyre-model check): 0 violations, and mean distinct ending compounds
+      shown per race rose to 2.81 of 3 possible — most races now genuinely
+      show candidates ending on all three compounds, not just whichever
+      one the DP happened to prefer. `audit_strategies.py` still passes
+      structurally.
+
+      **Performance note, investigated properly rather than assumed.**
+      Tripling the search (1-stop/2-stop now run 3x each) initially looked
+      expensive in the full-cache validation script (~11-15s/race before
+      this change -> ~37s/race after). Measured this properly rather than
+      trusting that number: isolated the PURE compute cost (network
+      pre-cached, same process, second call to `build_prerace_data`) and
+      found it's actually only ~2.2s per race — the ~37s figure was
+      dominated by the validation script's own repeated fresh network
+      fetches across 82 back-to-back races, not by this change's real
+      marginal cost. Kept the 3-stop branch on its original single
+      unconstrained call anyway (a defensible simplification on its own
+      merits — it's already the priciest branch, a coarse-step
+      quadruple-nested loop, and forced-suboptimal 3-stop variants almost
+      never make the top-5-fastest cut shown in the final table), but the
+      production impact of this whole change is minor, not the 2.5-3x hit
+      the raw validation-script timing first suggested.
+
       **Fourth bug, same day, caught by the user re-deriving the regulation
       math by hand**: after the third fix above, MEDIUM and HARD showed
       `new+used` summing to MORE than their own allocation for several

@@ -817,6 +817,7 @@ def optimize_strategy(
     force_stops:      int | None = None,   # constrain to exactly N stops
     forbid_repeat_compound: bool = False,  # no pitting onto the same compound back-to-back
     available:        dict[str, int] | None = None,  # new sets left per compound
+    force_end_compound: str | None = None,  # constrain the FINAL stint's compound
 ) -> DriverStrategy:
 
     remaining = total_laps - current_lap
@@ -830,6 +831,9 @@ def optimize_strategy(
 
     def allow(n: int) -> bool:
         return force_stops is None or force_stops == n
+
+    def end_ok(c: str) -> bool:
+        return force_end_compound is None or c == force_end_compound
 
     def in_stock(*fitted: str) -> bool:
         """A plan can only fit tyres the driver still has.
@@ -849,7 +853,7 @@ def optimize_strategy(
     best_pits: list[PitPlan] = []
 
     # 0-stop — only legal if the driver has already used two dry compounds
-    if not needs_compound_change and allow(0):
+    if not needs_compound_change and allow(0) and end_ok(current_compound):
         t = stint_t(current_compound, current_age, remaining, current_lap)
         if t < best:
             best, best_pits = t, []
@@ -861,6 +865,8 @@ def optimize_strategy(
     for pit in range(MIN_STINT, remaining - MIN_STINT + 1) if allow(1) else []:
         for c2 in DRY:
             if c2 == current_compound and (needs_compound_change or forbid_repeat_compound or current_age < 5):
+                continue
+            if not end_ok(c2):
                 continue
             if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
                 continue
@@ -882,6 +888,8 @@ def optimize_strategy(
                     if needs_compound_change and c2 == current_compound and c3 == current_compound:
                         continue
                     if forbid_repeat_compound and (c2 == current_compound or c3 == c2):
+                        continue
+                    if not end_ok(c3):
                         continue
                     if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
                         continue
@@ -916,6 +924,8 @@ def optimize_strategy(
                                     continue
                                 if forbid_repeat_compound and any(
                                         seq[j] == seq[j - 1] for j in range(1, 4)):
+                                    continue
+                                if not end_ok(c4):
                                     continue
                                 # no mid-race downgrade to a softer tyre unless
                                 # that stint is short enough to be a late splash
