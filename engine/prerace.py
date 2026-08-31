@@ -36,10 +36,10 @@ PACE_ORDER_CLEAN_RATIO = 1.10
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 17   # 17: added team_pace, per-strategy pit_windows, grid[].tyres
+PACK_VERSION = 18   # 18: added resurfacing_caveat
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
-from engine.circuits import is_street_circuit, track_position_weight
+from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
 
 # Scheduled race distance per circuit_short_name (lowercased). OpenF1 has no
 # scheduled-laps field, so this mirrors the calendar; DEFAULT_LAPS covers
@@ -1276,6 +1276,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "recovery_prior": recovery_prior,
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
         "inventory": inventory_summary,
+        "resurfacing_caveat": resurfacing_caveat(circuit, meta.get("year")),
         "unknowns": [
             {"name": "true race-fuel deg", "watch": "first Soft/Medium runner's fade after ~10 laps vs the practice deg rate"},
             {"name": "Hard fresh pace", "watch": "first Hard runner's opening 3 flying laps set the real offset"},

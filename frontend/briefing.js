@@ -784,7 +784,7 @@
       sections.push({ id: 'doors-story', title: 'The doors (narrative)', node: proseCard('The doors', n.the_doors) });
     }
 
-    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves) });
+    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves, d.resurfacing_caveat) });
 
     // watch list
     const wCard = document.createElement('div');
@@ -805,10 +805,16 @@
   }
 
   // ── deg curve chart ────────────────────────────────────────────────────────
-  function degCurveCard(curves) {
+  function degCurveCard(curves, caveat) {
     const c = document.createElement('div');
     c.className = 'card';
     c.innerHTML = `<h2>Tyre degradation model</h2>`;
+    if (caveat) {
+      const note = document.createElement('div');
+      note.className = 'notice';
+      note.textContent = '⚠ ' + caveat;
+      c.appendChild(note);
+    }
     const cv = document.createElement('canvas');
     cv.width = 560; cv.height = 220;
     c.appendChild(cv);

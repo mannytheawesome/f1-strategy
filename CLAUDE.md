@@ -1022,6 +1022,45 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       production impact of this whole change is minor, not the 2.5-3x hit
       the raw validation-script timing first suggested.
 
+      **Resurfacing caveat, 2026-08-31: user's broader worry about live
+      conditions (weather, track surface, other series' rubber) prompted
+      one more concrete check.** Temperature and grip evolution were
+      already ruled out earlier in this thread; recent circuit
+      resurfacing hadn't been. Researched actual public resurfacing
+      events for circuits in the cache (no OpenF1 field covers this at
+      all) and found a clean, well-documented case: Spa-Francorchamps,
+      resurfaced June 2024, before that year's Belgian GP. Directly
+      measured the FP-vs-race degradation gap across all 4 cached Spa
+      years: 2024 (first race on the new surface) showed a MEDIUM gap of
+      +0.1765 — roughly 4x 2025's +0.0432, and 2026 was back to
+      essentially zero (−0.0086). Ruled out rain as a confound (2024 was
+      dry; 2023 and 2025, both smaller-gap years, were actually rain-
+      affected). A second check (Miami, resurfaced ahead of its 2023 GP)
+      showed the same DIRECTION but far more weakly and noisily, and half
+      the sample was rain-contaminated — real effect, same conclusion as
+      temperature: physically genuine, but only 2 usable examples across
+      the whole cache, nowhere near enough to fit a numerical correction
+      responsibly.
+
+      Built a caveat instead of a correction: `engine/circuits.py` now has
+      `RESURFACING_EVENTS` (a small, manually-curated dict of circuit ->
+      the season its new surface first raced, currently Spa 2024, Miami
+      2023, Shanghai 2024's post-COVID return, Lusail 2023's
+      "transformative renovation," Suzuka 2026's West Course work — each
+      verified against real news coverage, not general impression) and
+      `resurfacing_caveat(circuit, year)`, which returns a fading warning:
+      strong in the event year itself, weaker the following year (matching
+      what Spa's own data showed), nothing from two years on. Wired into
+      `build_prerace_data` as a new `resurfacing_caveat` pack field (bumped
+      `PACK_VERSION` 17->18) and rendered as a `.notice` warning at the top
+      of the pre-race "Tyre degradation model" card — the post-race
+      debrief pack never gets this field, since by then real race data
+      already exists and the caveat no longer applies. Verified end-to-end
+      against real Suzuka 2026 data (the correct strong caveat came back
+      through the full pipeline) and unit-tested directly (6 new tests in
+      `tests/test_circuits.py`, covering fade timing, substring matching,
+      and the no-year/no-match cases).
+
       **Fourth bug, same day, caught by the user re-deriving the regulation
       math by hand**: after the third fix above, MEDIUM and HARD showed
       `new+used` summing to MORE than their own allocation for several
