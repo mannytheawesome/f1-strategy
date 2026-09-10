@@ -32,11 +32,18 @@ from engine.predictor import (
 # is too strict for measuring a single pace level across a stint.
 PACE_ORDER_CLEAN_RATIO = 1.10
 
+# Below this many clean laps, a driver's median is one or two laps away from
+# swinging several seconds -- found on Shanghai 2026, where HAM ranked #1
+# overall pace off just 5 laps at a delta (-5.9s) no genuine long run
+# produces. Flag rather than silently presenting a 5-lap sample with the
+# same weight as a 20-lap one.
+PACE_MIN_CONFIDENT_LAPS = 8
+
 # A plan within this much of the optimum is genuinely in play; race-day noise
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 18   # 18: added resurfacing_caveat
+PACK_VERSION = 19   # 19: added low_confidence/race_pace_only flags to pace rows
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -165,7 +172,15 @@ def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
     field = statistics.median(medians.values())
     rows = [{"driver_number": n, "acronym": names.get(n, str(n)),
              "pace_delta": round(m - field, 3), "laps": len(samples[n]),
-             "sessions": sorted(used_sessions.get(n, []))}
+             "sessions": sorted(used_sessions.get(n, [])),
+             # laps < threshold: a couple of outlier laps could still swing
+             # this driver's whole median several seconds.
+             "low_confidence": len(samples[n]) < PACE_MIN_CONFIDENT_LAPS,
+             # no genuine FP contribution at all -- every sample is Sprint
+             # Race laps, which reflect strategy/traffic/tyre management,
+             # not a clean pace read (see _long_run_pace's docstring).
+             "race_pace_only": not any(sess.lower().startswith("practice")
+                                       for sess in used_sessions.get(n, ()))}
             for n, m in medians.items()]
     rows.sort(key=lambda r: r["pace_delta"])
     for i, r in enumerate(rows, 1):
@@ -268,6 +283,7 @@ def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -
             all_teams.append(team)
 
     best_delta_by_team: dict[str, float] = {}
+    best_row_by_team: dict[str, dict] = {}
     for r in pace_rows:
         team = team_by_acronym.get(r["acronym"])
         if not team:
@@ -275,6 +291,7 @@ def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -
         cur = best_delta_by_team.get(team)
         if cur is None or r["pace_delta"] < cur:
             best_delta_by_team[team] = r["pace_delta"]
+            best_row_by_team[team] = r
 
     fastest = min(best_delta_by_team.values()) if best_delta_by_team else None
 
@@ -284,15 +301,19 @@ def _team_pace(pace_rows: list[dict], grid: list[dict], field_baseline: float) -
         colour = colour_by_team.get(team)
         if delta is None or fastest is None:
             rows.append({"team": team, "team_colour": colour,
-                        "gap_s": None, "gap_pct": None, "no_data": True})
+                        "gap_s": None, "gap_pct": None, "no_data": True,
+                        "low_confidence": False, "race_pace_only": False})
             continue
         gap = round(delta - fastest, 3)
         # % back is relative to the fastest team's own predicted lap time,
         # matching how broadcast graphics express a gap as a lap-time fraction.
         fastest_lap = field_baseline + fastest
         pct = round(gap / fastest_lap * 100, 2) if fastest_lap > 0 else 0.0
+        best_row = best_row_by_team[team]
         rows.append({"team": team, "team_colour": colour,
-                    "gap_s": gap, "gap_pct": pct, "no_data": False})
+                    "gap_s": gap, "gap_pct": pct, "no_data": False,
+                    "low_confidence": best_row.get("low_confidence", False),
+                    "race_pace_only": best_row.get("race_pace_only", False)})
     # Ranked teams first (fastest gap first), no-data teams after, alphabetical.
     rows.sort(key=lambda r: (r["no_data"], r["gap_s"] if r["gap_s"] is not None else 0, r["team"]))
     return rows

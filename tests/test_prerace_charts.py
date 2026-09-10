@@ -10,9 +10,11 @@ this session actually validated the fixes.
 """
 import pytest
 
+import engine.prerace as prerace
 from engine.predictor import DegCurve
 from engine.prerace import (
     PIT_WINDOW_MARGIN_S, PIT_WINDOW_MAX_SHIFT, _pit_window, _team_pace,
+    _long_run_pace,
 )
 
 
@@ -90,6 +92,129 @@ class TestTeamPace:
         no_data_flags = [r["no_data"] for r in rows]
         # once True starts, it never flips back to False
         assert no_data_flags == sorted(no_data_flags)
+
+    def test_confidence_flags_propagate_from_the_teams_fastest_driver(self):
+        # Real bug found on Shanghai 2026: a team's rank can be built
+        # entirely off a low-lap or Sprint-Race-only sample and look just as
+        # authoritative as a team with a genuine long run. _team_pace must
+        # carry that signal through, not drop it at the driver->team step.
+        pace_rows = [
+            {"acronym": "NOR", "pace_delta": 0.0,
+             "low_confidence": True, "race_pace_only": False},
+            {"acronym": "HAM", "pace_delta": 0.5,
+             "low_confidence": False, "race_pace_only": True},
+        ]
+        rows = _team_pace(pace_rows, self.GRID, field_baseline=90.0)
+        mclaren = next(r for r in rows if r["team"] == "McLaren")
+        ferrari = next(r for r in rows if r["team"] == "Ferrari")
+        assert mclaren["low_confidence"] is True
+        assert mclaren["race_pace_only"] is False
+        assert ferrari["low_confidence"] is False
+        assert ferrari["race_pace_only"] is True
+
+    def test_no_data_team_gets_flags_false_not_missing(self):
+        pace_rows = [{"acronym": "NOR", "pace_delta": 0.0,
+                      "low_confidence": False, "race_pace_only": False}]
+        rows = _team_pace(pace_rows, self.GRID, field_baseline=90.0)
+        cadillac = next(r for r in rows if r["team"] == "Cadillac")
+        assert cadillac["low_confidence"] is False
+        assert cadillac["race_pace_only"] is False
+
+    def test_missing_flags_on_pace_rows_default_to_false(self):
+        # Old-shape pace_rows (no low_confidence/race_pace_only keys, as
+        # used by the other tests in this class) must not KeyError.
+        pace_rows = [{"acronym": "NOR", "pace_delta": 0.0}]
+        rows = _team_pace(pace_rows, self.GRID, field_baseline=90.0)
+        mclaren = next(r for r in rows if r["team"] == "McLaren")
+        assert mclaren["low_confidence"] is False
+        assert mclaren["race_pace_only"] is False
+
+
+class TestLongRunPaceConfidenceFlags:
+    """The Shanghai 2026 investigation: McLaren showed no_data while Audi
+    and Racing Bulls out-ranked Red Bull, driven by a 5-lap outlier sample
+    (HAM) and several teams' rankings being built entirely from Sprint Race
+    laps (real racing, not a controlled pace read) rather than genuine FP
+    long runs. These flags surface that instead of presenting every sample
+    with equal confidence."""
+
+    def _laps(self, driver, lap_times, start_lap=1):
+        return [{"driver_number": driver, "lap_number": start_lap + i,
+                 "lap_duration": t, "is_pit_out_lap": False}
+                for i, t in enumerate(lap_times)]
+
+    def _patch(self, monkeypatch, laps, stints, acronym="NOR", driver=1):
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {driver: {"name_acronym": acronym}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+
+    def test_thin_sample_flagged_low_confidence(self, monkeypatch):
+        # 7-lap stint -> in/out-lap dropped by the ls<ln<le bound -> exactly
+        # 5 usable laps, below PACE_MIN_CONFIDENT_LAPS (8).
+        laps = self._laps(1, [90.0] * 7)
+        stints = [{"driver_number": 1, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 7, "tyre_age_at_start": 0}]
+        self._patch(monkeypatch, laps, stints)
+        sources = [{"session_key": 1, "session_type": "Practice",
+                    "session_name": "Practice 1"}]
+        rows = _long_run_pace(sources, {})
+        assert rows[0]["low_confidence"] is True
+
+    def test_genuine_long_run_not_flagged(self, monkeypatch):
+        # 12-lap Practice-1 stint -> 10 usable laps, comfortably clear of
+        # both thresholds.
+        laps = self._laps(1, [90.0] * 12)
+        stints = [{"driver_number": 1, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+        self._patch(monkeypatch, laps, stints)
+        sources = [{"session_key": 1, "session_type": "Practice",
+                    "session_name": "Practice 1"}]
+        rows = _long_run_pace(sources, {})
+        assert rows[0]["low_confidence"] is False
+        assert rows[0]["race_pace_only"] is False
+
+    def test_sprint_race_only_sample_flagged(self, monkeypatch):
+        # Same shape as the genuine-long-run case, but sourced entirely from
+        # the Sprint Race session rather than any Practice session.
+        laps = self._laps(1, [90.0] * 12)
+        stints = [{"driver_number": 1, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+        self._patch(monkeypatch, laps, stints)
+        sources = [{"session_key": 1, "session_type": "Race",
+                    "session_name": "Sprint"}]
+        rows = _long_run_pace(sources, {})
+        assert rows[0]["race_pace_only"] is True
+        assert rows[0]["low_confidence"] is False
+
+    def test_any_practice_contribution_clears_race_pace_only(self, monkeypatch):
+        # A driver with laps from BOTH Practice 1 and the Sprint should not
+        # be flagged race_pace_only -- they do have a genuine FP sample.
+        fp_laps = self._laps(1, [90.0] * 12)
+        sprint_laps = self._laps(1, [90.0] * 12)
+        fp_stint = [{"driver_number": 1, "compound": "MEDIUM",
+                     "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+        sprint_stint = [{"driver_number": 1, "compound": "MEDIUM",
+                         "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+
+        def fake_get_laps(session_key, *a, **k):
+            return fp_laps if session_key == 1 else sprint_laps
+
+        def fake_get_stints(session_key, *a, **k):
+            return fp_stint if session_key == 1 else sprint_stint
+
+        monkeypatch.setattr(prerace, "get_laps", fake_get_laps)
+        monkeypatch.setattr(prerace, "get_stints", fake_get_stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {1: {"name_acronym": "NOR"}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+        sources = [
+            {"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"},
+            {"session_key": 2, "session_type": "Race", "session_name": "Sprint"},
+        ]
+        rows = _long_run_pace(sources, {})
+        assert rows[0]["race_pace_only"] is False
 
 
 @pytest.mark.integration

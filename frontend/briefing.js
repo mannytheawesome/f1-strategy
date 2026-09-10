@@ -376,8 +376,14 @@
       }
       const w = Math.round(t.gap_s / maxGap * MAX_BAR_PX);
       const label = `+${t.gap_s.toFixed(2)}s (${t.gap_pct.toFixed(2)}%)`;
+      const warnTitle = t.low_confidence
+        ? 'Thin sample — a couple of outlier laps could swing this several seconds'
+        : t.race_pace_only
+        ? 'No clean FP long run for either driver — built entirely from Sprint Race laps (traffic/strategy, not a pure pace read)'
+        : '';
+      const warn = warnTitle ? ` <span title="${warnTitle}" style="color:var(--muted)">⚠</span>` : '';
       return `<div class="pace-row">
-        <span class="pace-team">${t.team}</span>
+        <span class="pace-team">${t.team}${warn}</span>
         <div class="pace-track">
           <div class="pace-bar" style="width:${w}px;background:#${(t.team_colour || '888888').replace('#', '')}"></div>
           <span class="pace-label">${label}</span>
@@ -385,7 +391,7 @@
       </div>`;
     }).join('');
     c.innerHTML = `<h2>Race simulation pace — by team</h2>
-      <div class="meta-row"><span>fuel- &amp; age-corrected long-run pace, quicker of each team's two cars · gap to the fastest team</span></div>
+      <div class="meta-row"><span>fuel- &amp; age-corrected long-run pace, quicker of each team's two cars · gap to the fastest team · ⚠ = low-confidence sample, hover for why</span></div>
       <div class="pace-chart">${rows}</div>`;
     return c;
   }
@@ -549,13 +555,17 @@
         const badge = oop == null ? '—'
           : oop > 0 ? `<span class="delta-up">▲${oop} vs grid</span>`
           : oop < 0 ? `<span class="delta-down">▼${-oop} vs grid</span>` : '·';
+        const warn = r.low_confidence ? 'title="Thin sample — a couple of outlier laps could swing this several seconds" style="color:var(--muted)"'
+          : r.race_pace_only ? 'title="No clean FP long run — built entirely from Sprint Race laps (traffic/strategy, not a pure pace read)" style="color:var(--muted)"'
+          : '';
+        const sampleLabel = `${r.laps} laps · ${r.sessions.join('+')}`;
         return `<tr><td>${r.pace_rank}</td><td><b>${r.acronym}</b></td>
           <td>${r.pace_delta > 0 ? '+' : ''}${r.pace_delta.toFixed(3)}</td>
           <td>${r.grid_position ?? '—'}</td><td>${badge}</td>
-          <td>${r.laps} laps · ${r.sessions.join('+')}</td></tr>`;
+          <td ${warn}>${sampleLabel}${(r.low_confidence || r.race_pace_only) ? ' ⚠' : ''}</td></tr>`;
       }).join('');
       pCard.innerHTML = `<h2>The real pace order — long runs, fuel &amp; age corrected</h2>
-        <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable)</span></div>
+        <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable) · ⚠ = low-confidence sample, hover for why</span></div>
         <table class="results"><tr><th>RANK</th><th>DRV</th><th>PACE</th><th>GRID</th><th>OUT OF POSITION</th><th>SAMPLE</th></tr>${pRows}</table>`;
       sections.push({ id: 'pace-order', title: 'The real pace order', node: pCard });
     }

@@ -1347,6 +1347,60 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       retry), confirming the fix doesn't disturb any pre-2026 race's grid
       size. `audit_strategies.py` still passes structurally.
 
+      **Eighth bug, same day, user-reported 2026-09-10: "there is no way
+      Audi or Racing Bulls has the top pace from free practice."** Traced to
+      Shanghai 2026 (meeting 1280, a sprint weekend): Ferrari/Mercedes/Audi/
+      Racing Bulls ranked P1-P4 in `team_pace`, ahead of Red Bull (P8), with
+      McLaren showing `no_data: True` outright. Root cause is NOT a bug in
+      `_long_run_pace`'s filters — they're doing exactly what they're
+      supposed to — it's that the metric silently treats every clean sample
+      as equally trustworthy, and two things made this weekend's samples very
+      unequal: (1) McLaren's only FP1 running alternated push laps (~93s)
+      with 100-155s laps almost perfectly (`93.7, 125.6, 93.7, 125.3, 93.3,
+      126.3, 155.0, 154.4`) — the signature of practice starts, not a long
+      run — so the existing 1.10x clean-lap ratio filter correctly rejected
+      nearly all of it, and their 6-lap Sprint stint lost 2 laps to pit-out +
+      the exclusive stint-bound convention, landing at 4 usable points,
+      below the 5-per-stint floor: zero net samples, confirmed by pulling
+      the raw lap times directly. Contrast Racing Bulls' LAW, whose FP1 laps
+      were `99.4, 99.0, 100.5, 99.3, 99.3, 99.3, 99.6` — a textbook long run.
+      (2) `_long_run_pace` pools genuine FP long runs and Sprint Race stints
+      into the same sample with no distinction, even though a Sprint stint's
+      length is a strategy artifact (how many stops that team chose) and its
+      pace reflects traffic/defending/tyre management, not a clean pace
+      level — confirmed directly: simulating the pipeline with Sprint Race
+      excluded still left McLaren absent (so that's not what hides them) but
+      cut the field from 14 drivers to 7, and Audi (BOR) still outranked Red
+      Bull (VER) even without any Sprint contribution. Also found HAM
+      ranking P1 overall pace off just 5 laps, delta -5.887s — an outlier no
+      genuine long run produces, visible only because thin samples get no
+      distinguishing treatment.
+
+      No fix recovers McLaren's pace — the underlying practice data for a
+      clean read genuinely doesn't exist this weekend, an inherent sprint-
+      weekend limitation given only one FP session. What's fixable, and
+      what was built: `_long_run_pace` now flags each driver row
+      `low_confidence` (sample < `PACE_MIN_CONFIDENT_LAPS`=8 laps — chosen
+      to catch HAM's 5-lap outlier while not flagging genuine 8+ lap runs)
+      and `race_pace_only` (every contributing session is Sprint Race, no
+      Practice lap survived at all — chosen over a stricter "any Sprint
+      contribution" flag because a driver with both FP and Sprint laps in
+      their sample does have a genuine pace anchor). `_team_pace` propagates
+      both from each team's faster-ranked driver so the team-level chart
+      carries the same caveat. Frontend (`briefing.js`): both the "real pace
+      order" table and the team pace chart render a hoverable ⚠ next to any
+      flagged row, explaining why in a tooltip, rather than presenting every
+      ranking with equal authority. Re-run against live Shanghai 2026 data
+      confirms the mechanism: Ferrari (P1 team) is flagged `low_confidence`
+      (carried by HAM's 5-lap sample), Audi/Racing Bulls/Alpine/Haas/
+      Williams/Aston Martin are flagged `race_pace_only`, Red Bull is flagged
+      `low_confidence` (7 laps, just under the floor) — every team beating
+      expectations in the ranking now visibly carries the reason why, while
+      Mercedes and Cadillac (genuinely well-sampled) show clean. `PACK_VERSION`
+      18 -> 19. 7 new tests added (`tests/test_prerace_charts.py`,
+      `TestTeamPace` propagation cases + `TestLongRunPaceConfidenceFlags`
+      mechanism cases); full suite 49/49 passing.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
