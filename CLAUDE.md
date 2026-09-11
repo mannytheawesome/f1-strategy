@@ -1401,6 +1401,30 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       `TestTeamPace` propagation cases + `TestLongRunPaceConfidenceFlags`
       mechanism cases); full suite 49/49 passing.
 
+      **Ninth bug, found live-checking the eighth fix across more races.**
+      Silverstone 2026 (also a sprint weekend) confirmed the flags don't
+      over-fire on genuinely good data — clean expected order, only Aston
+      Martin flagged. But Hungary 2026 turned up a different issue: the
+      real pace order table's P2 was `FOR` (Leonardo Fornaroli), McLaren's
+      reserve driver, off an 11-lap Practice 1 sample from the mandatory
+      rookie FP1 session — ranked ahead of both actual McLaren race
+      drivers, despite never qualifying or starting the race. Confirmed
+      `_team_pace` was already unaffected (it only aggregates acronyms
+      present in `grid`, which is built from qualifying and excludes any
+      driver who didn't qualify), but the driver-level `long_run_pace`
+      table had no such filter — anyone with a large enough practice
+      sample appeared in it regardless of whether they were racing.
+      Fixed by adding an optional `grid_acronyms` filter to
+      `_long_run_pace`, applied before the field median is computed (not
+      just at display time), so a reserve's session can no longer pull the
+      baseline every real driver's pace_delta is measured against; wired
+      the `build_prerace_data` call site to pass the actual grid's
+      acronyms. Re-verified against live Hungary 2026 data: FOR no longer
+      appears anywhere in `long_run_pace`, ranks close up cleanly (LEC
+      moves from #3 to #2), and no other row's data changed. `PACK_VERSION`
+      19 -> 20. 1 new test (`test_reserve_driver_dropped_from_pace_table`);
+      full suite 50/50 passing.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

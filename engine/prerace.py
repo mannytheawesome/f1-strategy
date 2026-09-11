@@ -43,7 +43,7 @@ PACE_MIN_CONFIDENT_LAPS = 8
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 19   # 19: added low_confidence/race_pace_only flags to pace rows
+PACK_VERSION = 20   # 20: long_run_pace excludes reserve/non-grid drivers
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -99,9 +99,18 @@ PRERACE_SCHEMA = {
 }
 
 
-def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
+def _long_run_pace(source_sessions: list[dict], curves: dict,
+                   grid_acronyms: set[str] | None = None) -> list[dict]:
     """Fuel- and age-corrected long-run pace per driver from FP/sprint stints
-    of >= 6 laps. This is the 'real pace order' that quali can hide."""
+    of >= 6 laps. This is the 'real pace order' that quali can hide.
+
+    grid_acronyms, when given, restricts the result to drivers who actually
+    qualified -- a reserve/rookie running a mandatory FP1 session (e.g.
+    Hungary 2026's Fornaroli for McLaren) otherwise appears in this table
+    and can rank ahead of the team's real race drivers, despite never
+    starting the race. Filtered before the field median is computed, not
+    just at display time, so a reserve's session doesn't skew every other
+    driver's pace_delta either."""
     samples: dict[int, list[float]] = {}
     names: dict[int, str] = {}
     used_sessions: dict[int, set] = {}
@@ -166,7 +175,8 @@ def _long_run_pace(source_sessions: list[dict], curves: dict) -> list[dict]:
             names[num] = drivers.get(num, {}).get("name_acronym", str(num))
             used_sessions.setdefault(num, set()).add(name)
 
-    medians = {n: statistics.median(v) for n, v in samples.items() if len(v) >= 5}
+    medians = {n: statistics.median(v) for n, v in samples.items()
+               if len(v) >= 5 and (grid_acronyms is None or names.get(n) in grid_acronyms)}
     if not medians:
         return []
     field = statistics.median(medians.values())
@@ -1229,7 +1239,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sc_prob = sc_probability([], 0, total_laps, circuit)
 
     # ── long-run pace order, quali sectors, lap-0 projection ────────────────
-    pace_rows = _long_run_pace(sources, curves)
+    pace_rows = _long_run_pace(sources, curves,
+                               grid_acronyms={g["acronym"] for g in grid})
     grid_pos_by_acr = {g["acronym"]: g["position"] for g in grid}
     for r in pace_rows:
         gp = grid_pos_by_acr.get(r["acronym"])

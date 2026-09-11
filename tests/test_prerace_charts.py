@@ -216,6 +216,35 @@ class TestLongRunPaceConfidenceFlags:
         rows = _long_run_pace(sources, {})
         assert rows[0]["race_pace_only"] is False
 
+    def test_reserve_driver_dropped_from_pace_table(self, monkeypatch):
+        # Real case found on Hungary 2026: McLaren's reserve (Fornaroli) ran
+        # a mandatory rookie FP1 session and out-paced NOR/PIA in the table,
+        # despite never qualifying or starting the race. grid_acronyms
+        # restricts the result to actual grid entrants.
+        reserve_laps = self._laps(1, [80.0] * 12)   # unrealistically fast
+        race_driver_laps = self._laps(2, [90.0] * 12)
+        stints = [
+            {"driver_number": 1, "compound": "MEDIUM", "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0},
+            {"driver_number": 2, "compound": "MEDIUM", "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0},
+        ]
+        monkeypatch.setattr(prerace, "get_laps",
+                            lambda *a, **k: reserve_laps + race_driver_laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {1: {"name_acronym": "RES"},
+                                             2: {"name_acronym": "NOR"}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+
+        unfiltered = _long_run_pace(sources, {})
+        assert {r["acronym"] for r in unfiltered} == {"RES", "NOR"}
+
+        filtered = _long_run_pace(sources, {}, grid_acronyms={"NOR"})
+        assert {r["acronym"] for r in filtered} == {"NOR"}
+        # NOR's pace_delta should also no longer be measured against a field
+        # median pulled toward the reserve's unrealistic pace.
+        assert filtered[0]["pace_delta"] == 0.0
+
 
 @pytest.mark.integration
 class TestRealMeetingIntegration:
