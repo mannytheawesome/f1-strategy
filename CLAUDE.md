@@ -479,6 +479,19 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ## Roadmap / open work
 
 ### Prediction accuracy (priority)
+- [ ] The "Expected Pit Stop Strategies" table ranks candidates on pure
+      lap-time optimization only. `track_position_weight` (how much
+      staying out is worth where passing is hard) is already computed and
+      used in the race-outcome projection elsewhere on the page, but never
+      reaches this table's own ranking. Found 2026-09-12 investigating a
+      Monaco strategy complaint (see "Prediction accuracy" narrative log,
+      twelfth issue) — after fixing two real deg-curve/pit-loss bugs, the
+      remaining gap between the model's top pick (a 2-stop) and what real
+      2023 Monaco strategists actually chose (a wide natural spread, no
+      single clean answer) looks like it may need this blend to close, not
+      more constant-tuning. Needs a product decision (does the strategy
+      table's ranking stay pure-pace, or start weighting track position
+      like the projection does) before attempting it — not a pure bug fix.
 - [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
       Done 2026-08-10, re-swept twice more on 2026-08-11 (quali-prior fix,
@@ -1499,6 +1512,92 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       (compounds, circuits, session types), check whether the categories
       have enough of their own historical data cached to calibrate
       independently, rather than assuming one anecdote generalizes.
+
+      **Twelfth issue, same day, user-reported: Monaco 2026's "Expected
+      Pit Stop Strategies" top picks were a 63-lap Hard stint before a
+      15-lap Medium, or a 17-lap Medium before a 61-lap Hard — absurd
+      single-stint lengths, with the user expecting a clean 1-stop around
+      lap 29-39 instead.** Traced to two independent, real bugs, both
+      confirmed against real data before touching code:
+
+      1. **HARD's deg curve was contaminated by track evolution.** Its
+         entire long-run sample came from FP1 alone — nobody ran Hards in
+         FP2 or FP3 at all. Pulled the raw laps: a real 21-lap FP1 Hard
+         stint's clean laps actually got FASTER over the run (79.9s ->
+         78.0s), track evolution outweighing genuine wear within the
+         session. The raw fitted slope came back at/below zero, and the
+         old flat `MIN_DEG["HARD"]=0.010` floor let it stay there — a 13x
+         gap below Medium's independently (FP1+FP2) measured 0.13 s/lap,
+         versus `DEG_RATIO`'s genuinely cross-compound-measured ~0.6x norm.
+         Confirmed not Monaco-specific: 23 of 74 cached meetings (31%)
+         have this same FP1-only-Hard pattern. Fixed by adding a relative
+         sanity floor in `build_deg_curves` — a compound's fitted rate
+         can't fall below `DEG_RATIO_FLOOR_FRACTION` (0.4) of what
+         `DEG_RATIO` predicts from Medium's own measured rate. Monaco's
+         HARD moved 0.01 -> 0.0312. Chose 0.4 empirically: swept 0.4-1.0
+         against the real cached FP data and found fractions above ~0.8
+         start overriding SOFT's own genuinely-good, independently-
+         measured rate too (its own ratio floor exceeds its real fitted
+         value), which would repeat the exact same class of mistake in
+         the other direction — so 0.4 was picked as clearly safe rather
+         than tuned to hit a specific target pit lap.
+      2. **Non-sprint weekends never used the real per-circuit pit loss
+         at all.** `engine/pit_loss.py` has a per-circuit table measured
+         from 2,083 real clean stops across 2023-2026 (16.8s Montreal to
+         28.3s Imola) — already wired into `backtest_full.py` and
+         `audit_strategies.py`, but `build_prerace_data`'s pit_loss line
+         only ever called it for sprint weekends (`get_avg_pit_loss`
+         measuring the sprint's own stops); every non-sprint race — the
+         large majority of the calendar — silently fell through to a
+         flat `PIT_LOSS=22.0` constant instead. Monaco's real measured
+         value is 18.1s (n=102), notably LOWER than the flat default
+         (correcting an assumption that Monaco's awkward pit entry makes
+         it one of the more expensive stops — the lane itself is short,
+         and the real data says otherwise). An overstated pit loss makes
+         every extra stop look pricier than it is, biasing the whole
+         calendar (not just Monaco) toward under-stopping. Fixed by
+         wiring `pit_loss_for(circuit)` into the non-sprint branch; the
+         now-unused flat `PIT_LOSS` import was removed from `prerace.py`
+         entirely (kept in `predictor.py` for other callers).
+
+      Verified against real Monaco 2026 data: `pit_loss` now reads 18.1
+      (`circuit_measured`, was 22.0/`default`), HARD's deg_rate reads
+      0.0312 (was 0.01), and the previous 63-lap/61-lap single-stint
+      options dropped out of the top strategies entirely.
+
+      **What's still open, reported honestly rather than tuned away:**
+      with both fixes applied, the model's top-ranked Monaco strategy is
+      now a 2-stop plan, not the clean 1-stop the user expected as the
+      top pick. Investigated with real historical Monaco data before
+      concluding anything: 2025's dry race showed every front-runner
+      taking 2+ stops (NOR won on Medium->Hard->Hard, first stop ~lap 18)
+      — strong circumstantial evidence of a mandatory-minimum-stops rule
+      that season, which the user confirmed was a 2025-only experiment,
+      not current for 2026. Checked 2023's dry-portion-only data instead
+      (2024 was wet-affected, 2025 rule-distorted) and found a genuinely
+      wide natural spread — some drivers ran a single 44-54+ lap stint
+      with no incentive to pit early, others pitted as early as lap 18 —
+      not a single clean answer either direction. Also confirmed
+      `track_position_weight` (how much staying out is worth at a circuit
+      where passing is nearly impossible) is only applied in the race
+      *projection* elsewhere on the page, never in the strategy candidate
+      ranking itself shown in this table — a real, separate architectural
+      gap (the table is pure lap-time optimization) rather than a further
+      constant to tune. Given the user's own explicit frustration about
+      time already spent, chose not to keep blindly adjusting
+      `DEG_RATIO_FLOOR_FRACTION` to chase a specific top-2 ranking without
+      more evidence that doing so reflects reality rather than just
+      matching a prior. Left as an open, documented question rather than
+      a forced fix: whether the strategy-ranking table should blend in
+      track-position value the way the projection does is a genuine
+      product/design decision, not a bug with a clear right answer from
+      the data alone.
+
+      `PACK_VERSION` 22 -> 23. 11 new tests (`tests/test_deg_ratio_floor.py`
+      — 3 tests including a regression guard that a well-measured SOFT is
+      never touched; `tests/test_pit_loss.py` — 8 tests including a wiring
+      guard that `prerace.py` no longer imports the flat constant at all).
+      Full suite 63/63 passing.
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

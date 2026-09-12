@@ -23,8 +23,9 @@ from data.live import (
 from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
-    PIT_LOSS, DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
+    DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
 )
+from engine.pit_loss import pit_loss_for
 
 # Clean-lap filter for _long_run_pace (below): keep only laps within this
 # ratio of a stint's own best lap, same idea as predictor.DEG_LONGRUN but
@@ -43,7 +44,7 @@ PACE_MIN_CONFIDENT_LAPS = 8
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 22   # 22: SHORT_STINT_LAPS is now per-compound (SOFT=5, MEDIUM/HARD=6)
+PACK_VERSION = 23   # 23: real per-circuit pit_loss wired in for non-sprint weekends
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -1074,7 +1075,17 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     # why teams run them once traffic and undercut are in play.
     baselines = [c.baseline for c in curves.values() if c.baseline > 0]
     field_baseline = statistics.median(baselines) if baselines else 90.0
-    pit_loss = get_avg_pit_loss(sprint_key, HIST_TTL) if sprint_key else PIT_LOSS
+    # For a sprint weekend, measure this weekend's actual pit loss from the
+    # sprint's own pit stops. Otherwise use the per-circuit figure measured
+    # across 2,083 real stops (engine/pit_loss.py) -- e.g. Monaco's real
+    # loss is 18.1s (n=102), meaningfully below the old flat 22.0s default
+    # this branch used to fall through to, which was already wired up for
+    # the offline backtest/audit paths but never reached from here. Getting
+    # this wrong pushes the strategy search toward under-stopping (every
+    # extra stop looks ~4s more expensive than it really is at a circuit
+    # like Monaco), compounding with any other under-stopping bias.
+    pit_loss = (get_avg_pit_loss(sprint_key, HIST_TTL) if sprint_key
+                else pit_loss_for(circuit))
     # ── tyre inventory: what the top 10 actually hold ────────────────────────
     inventory_summary = None
     try:
@@ -1295,7 +1306,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "undercut": undercut,
         "stop_decision": stop_decision,
         "pit_loss": pit_loss,
-        "pit_loss_source": "sprint_measured" if sprint_key else "default",
+        "pit_loss_source": "sprint_measured" if sprint_key else "circuit_measured",
         "sc_probability": sc_prob,
         "long_run_pace": pace_rows,
         "team_pace": _team_pace(pace_rows, grid, field_baseline),

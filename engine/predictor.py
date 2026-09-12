@@ -538,6 +538,34 @@ def build_deg_curves(
                                   hrd.data_points,
                                   hrd.confidence.rstrip("*") + "*", hrd.sessions)
 
+    # Relative sanity floor vs DEG_RATIO's genuinely cross-compound-measured
+    # ratio to Medium. MIN_DEG above is a flat, compound-only floor -- it
+    # doesn't protect against a compound whose ENTIRE strict sample came
+    # from one contaminated session. Confirmed on Monaco 2026: HARD's whole
+    # long-run sample was FP1-only (no FP2/FP3 Hard running at all), the
+    # session most prone to large positive track evolution masking real
+    # wear -- clean laps in a 21-lap FP1 Hard stint actually got FASTER
+    # over the run (79.9s -> 78.0s), the raw fit came back at/below zero,
+    # and MIN_DEG floored it to 0.010 s/lap against Medium's independently
+    # (FP1+FP2) measured 0.13 -- a 13x gap versus DEG_RATIO's measured
+    # ~0.6x-of-Medium norm. Not a one-off: 23 of 74 cached meetings (31%)
+    # have this same FP1-only-Hard pattern. DEG_RATIO_FLOOR_FRACTION=0.4
+    # is loose enough to allow genuine per-circuit variation around the
+    # typical ratio (Monaco genuinely may wear Hards a bit more gently
+    # than average) but tight enough to catch an order-of-magnitude miss.
+    DEG_RATIO_FLOOR_FRACTION = 0.4
+    med = curves.get("MEDIUM")
+    if med:
+        for c in ("SOFT", "HARD"):
+            cur = curves.get(c)
+            if not cur or c not in DEG_RATIO:
+                continue
+            ratio_floor = med.deg_rate * DEG_RATIO[c] * DEG_RATIO_FLOOR_FRACTION
+            if cur.deg_rate < ratio_floor:
+                curves[c] = DegCurve(c, ratio_floor, cur.baseline,
+                                     cur.data_points,
+                                     cur.confidence.rstrip("*") + "*", cur.sessions)
+
     return curves
 
 
