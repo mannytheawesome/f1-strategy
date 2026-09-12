@@ -246,6 +246,76 @@ class TestLongRunPaceConfidenceFlags:
         assert filtered[0]["pace_delta"] == 0.0
 
 
+class TestLongRunPaceSessionWeighting:
+    """User-reported gap: unlike degradation-RATE fitting (predictor.
+    FP_WEIGHTS), the pace-LEVEL calculation pooled every session's clean
+    laps unweighted -- a driver's FP1 laps (green, barely-rubbered track,
+    genuinely slower) counted exactly as much as their FP2 laps (much more
+    representative of race/quali conditions)."""
+
+    def _patch(self, monkeypatch, laps_by_session, stints_by_session,
+              drivers=None, acronym="NOR", driver=1):
+        def fake_get_laps(session_key, *a, **k):
+            return laps_by_session[session_key]
+
+        def fake_get_stints(session_key, *a, **k):
+            return stints_by_session[session_key]
+
+        monkeypatch.setattr(prerace, "get_laps", fake_get_laps)
+        monkeypatch.setattr(prerace, "get_stints", fake_get_stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: drivers or {driver: {"name_acronym": acronym}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+
+    def test_fp1_laps_are_downweighted_against_fp2(self, monkeypatch):
+        # MIX: equal-sized clean samples from FP1 (95.0, contaminated/slow)
+        # and FP2 (85.0, their true representative pace). ANCHOR: a clean
+        # FP2-only reference at 90.0. Unweighted, MIX's raw median would be
+        # the midpoint of 85/95 = 90.0 -- an exact tie with ANCHOR, hiding
+        # that MIX is genuinely faster. Weighted (FP1=0.3, FP2=1.0), MIX's
+        # median should sit much closer to their true 85.0 FP2 pace,
+        # correctly ranking them ahead of ANCHOR instead of tied.
+        mix_fp1 = self._laps_helper(1, [95.0] * 11)
+        mix_fp2 = self._laps_helper(1, [85.0] * 11)
+        anchor_fp2 = self._laps_helper(2, [90.0] * 11)
+        stint_mix = {"driver_number": 1, "compound": "MEDIUM",
+                     "lap_start": 1, "lap_end": 11, "tyre_age_at_start": 0}
+        stint_anchor = {"driver_number": 2, "compound": "MEDIUM",
+                        "lap_start": 1, "lap_end": 11, "tyre_age_at_start": 0}
+        self._patch(monkeypatch,
+                    laps_by_session={1: mix_fp1, 2: mix_fp2 + anchor_fp2},
+                    stints_by_session={1: [stint_mix], 2: [stint_mix, stint_anchor]},
+                    drivers={1: {"name_acronym": "MIX"}, 2: {"name_acronym": "ANCHOR"}})
+        sources = [
+            {"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"},
+            {"session_key": 2, "session_type": "Practice", "session_name": "Practice 2"},
+        ]
+        rows = _long_run_pace(sources, {})
+        by_acr = {r["acronym"]: r for r in rows}
+        assert by_acr["MIX"]["pace_delta"] < by_acr["ANCHOR"]["pace_delta"]
+        assert by_acr["MIX"]["pace_rank"] == 1
+
+    @staticmethod
+    def _laps_helper(driver, lap_times, start_lap=1):
+        return [{"driver_number": driver, "lap_number": start_lap + i,
+                 "lap_duration": t, "is_pit_out_lap": False}
+                for i, t in enumerate(lap_times)]
+
+    def test_weighted_median_helper_confirms_fp1_pulled_toward_fp2(self):
+        # Direct check of the actual mechanism, bypassing the pace_delta
+        # indirection above (which cancels out for a single driver): the
+        # weighted median of (95.0, weight=0.3)x11 + (90.0, weight=1.0)x11
+        # must land at 90.0, not the unweighted midpoint 92.5.
+        from engine.predictor import _weighted_median, FP_WEIGHTS
+        pairs = [(95.0, FP_WEIGHTS["FP1"])] * 11 + [(90.0, FP_WEIGHTS["FP2"])] * 11
+        assert _weighted_median(pairs) == 90.0
+        # Confirms the old unweighted behaviour really was the midpoint,
+        # i.e. this is a genuine change, not a no-op.
+        import statistics
+        unweighted = statistics.median([95.0] * 11 + [90.0] * 11)
+        assert unweighted == 92.5
+
+
 @pytest.mark.integration
 class TestRealMeetingIntegration:
     """Hits the real OpenF1 API against cached 2026 meetings. Run with

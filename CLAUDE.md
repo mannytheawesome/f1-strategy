@@ -1599,6 +1599,38 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       guard that `prerace.py` no longer imports the flat constant at all).
       Full suite 63/63 passing.
 
+      **Thirteenth issue, same investigation thread, user-confirmed gap:
+      `_long_run_pace` (the "real pace order" driver-pace calculation)
+      pooled every completed session's clean laps with equal weight** —
+      FP1 (barely rubbered in, genuinely slower) counted exactly as much
+      as FP2 (the representative session). This is a DIFFERENT code path
+      from `build_deg_curves`'s degradation-RATE fitting, which already
+      down-weights FP1 to 0.3 via `FP_WEIGHTS` (validated on the full
+      backtest back in August) — that weighting was simply never applied
+      to the pace-LEVEL calculation at all. Fixed by reusing the same
+      `FP_WEIGHTS`/`_weighted_median` machinery: `_long_run_pace` now
+      rebuilds the same positional FP1/FP2/FP3/RACE session mapping
+      `build_prerace_data` already uses for `fp_data`, tags each lap
+      sample with its session's weight, and takes a weighted median
+      instead of a flat one. Demonstrated the real effect with a
+      synthetic two-driver case: a driver with a contaminated 95s FP1
+      stint and a genuine 85s FP2 stint previously landed at the raw
+      midpoint (90.0, `statistics.median`) — an exact tie with a clean
+      90.0 FP2-only reference driver, hiding that they were actually
+      faster. Weighted, their median correctly lands much closer to 85.0
+      and they rank ahead. Re-verified against live Madrid 2026 data — no
+      crash, sensible reordering (TSU/SAI moved up, LEC dropped out of the
+      top 10 as their FP1-heavy sample lost relative weight).
+      `PACK_VERSION` 23 -> 24. 2 new tests
+      (`tests/test_prerace_charts.py::TestLongRunPaceSessionWeighting`);
+      full suite 65/65 passing.
+
+      This was the first of three workstreams opened from the same user
+      request ("explore more options... track position value, and others
+      too") — the other two (a real track-position cost in the strategy
+      ranking; checking whether undercut/overcut and weather risk already
+      feed that ranking) are logged separately below as they complete.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

@@ -24,6 +24,7 @@ from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
     DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
+    FP_WEIGHTS, _weighted_median,
 )
 from engine.pit_loss import pit_loss_for
 
@@ -44,7 +45,7 @@ PACE_MIN_CONFIDENT_LAPS = 8
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 23   # 23: real per-circuit pit_loss wired in for non-sprint weekends
+PACK_VERSION = 24   # 24: long_run_pace weights sessions by FP_WEIGHTS (FP1 down-weighted)
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -112,7 +113,27 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
     starting the race. Filtered before the field median is computed, not
     just at display time, so a reserve's session doesn't skew every other
     driver's pace_delta either."""
-    samples: dict[int, list[float]] = {}
+    # Session-quality weight, same convention predictor.FP_WEIGHTS already
+    # uses for degradation-RATE fitting: the Nth practice session in order
+    # maps to FP1/FP2/FP3 regardless of its real OpenF1 name, a sprint race
+    # session maps to RACE. FP1 is barely rubbered in and genuinely slower
+    # than FP2/FP3 -- this pace-LEVEL calculation previously pooled every
+    # session's clean laps unweighted, so a driver's median leaned on
+    # however many clean FP1 laps they happened to run, the same class of
+    # bug FP_WEIGHTS already guards against elsewhere.
+    fp_names = ["FP1", "FP2", "FP3"]
+    fp_i = 0
+    session_weight: dict[int, float] = {}
+    for s in source_sessions:
+        stype = s.get("session_type", "").lower()
+        sname = s.get("session_name", "").lower()
+        if stype == "practice" and fp_i < 3:
+            session_weight[s["session_key"]] = FP_WEIGHTS[fp_names[fp_i]]
+            fp_i += 1
+        elif stype == "race" and "sprint" in sname:
+            session_weight[s["session_key"]] = FP_WEIGHTS["RACE"]
+
+    samples: dict[int, list[tuple[float, float]]] = {}
     names: dict[int, str] = {}
     used_sessions: dict[int, set] = {}
     for s in source_sessions:
@@ -120,6 +141,7 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
         name = s.get("session_name", "")
         if stype == "qualifying":
             continue
+        weight = session_weight.get(s.get("session_key"), 0.5)
         try:
             laps = get_laps(s["session_key"], HIST_TTL)
             stints = get_stints(s["session_key"], HIST_TTL)
@@ -172,11 +194,11 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
                 if curve and curve.deg_rate:
                     corrected -= curve.deg_rate * (age0 + ln - ls)
                 corrected += FUEL_RATE * (ln - ls)  # neutralise fuel burn inside the run
-                samples.setdefault(num, []).append(corrected)
+                samples.setdefault(num, []).append((corrected, weight))
             names[num] = drivers.get(num, {}).get("name_acronym", str(num))
             used_sessions.setdefault(num, set()).add(name)
 
-    medians = {n: statistics.median(v) for n, v in samples.items()
+    medians = {n: _weighted_median(v) for n, v in samples.items()
                if len(v) >= 5 and (grid_acronyms is None or names.get(n) in grid_acronyms)}
     if not medians:
         return []
