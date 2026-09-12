@@ -53,7 +53,16 @@ COMPOUNDS = ["SOFT", "MEDIUM", "HARD"]
 # (stayed available); his Practice soft stints ran 8-13 laps each (fell
 # outside this threshold, correctly dropped from the "used" count that
 # would otherwise overstate what he can still fit in the race).
-SHORT_STINT_LAPS = 5
+#
+# Raised from 5 to 6 after Madrid 2026 (user-reported): HAM/LEC/VER each
+# opened Qualifying on a Medium for a 6-lap Q1 stint before switching to
+# Softs -- a normal Q1 banker/track-position stint, not a worn tyre, but a
+# threshold of 5 discarded it, wiping their entire 3-set Medium allocation
+# to zero available (2 already genuinely worn from FP1/FP2 long runs, plus
+# this one wrongly joining them). 6 keeps that FP wear discarded (both FP
+# Medium groups ran considerably longer) while correctly keeping the Q1
+# stint "used and available".
+SHORT_STINT_LAPS = 6
 
 
 @dataclass

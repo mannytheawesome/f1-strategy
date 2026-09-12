@@ -76,6 +76,25 @@ class TestLengthClassification:
         inv = _inv([session])
         assert inv.reconciled()["HARD"]["used"] == 1
 
+    def test_six_lap_qualifying_medium_stint_stays_used_and_available(self):
+        # Real case, Madrid 2026 (user-reported): HAM/LEC/VER each opened
+        # Qualifying on a Medium for a normal 6-lap Q1 banker/track-position
+        # stint before switching to Softs. At the old SHORT_STINT_LAPS=5
+        # this was wrongly discarded, and combined with two genuinely worn
+        # Mediums from FP1/FP2 long runs, wiped their whole 3-set Medium
+        # allocation to zero available going into the race.
+        fp1 = [make_stint(1, "MEDIUM", 1, 15, tyre_age_at_start=0)]   # genuinely worn
+        fp2 = [make_stint(1, "MEDIUM", 1, 18, tyre_age_at_start=0)]   # genuinely worn
+        quali = [
+            make_stint(1, "MEDIUM", 1, 6, tyre_age_at_start=0, stint_number=1),
+            make_stint(1, "SOFT", 7, 15, tyre_age_at_start=0, stint_number=2),
+        ]
+        inv = _inv([fp1, fp2, quali], session_is_qualifying=[False, False, True])
+        r = inv.reconciled()
+        assert r["MEDIUM"]["used"] == 1
+        assert inv.discarded.get("MEDIUM", 0) == 2
+        assert r["MEDIUM"]["new"] == 0
+
 
 class TestNonQualifyingSessionCap:
     """Real bug (NOR's Hungary 2026 FP1): OpenF1 fragments ONE physical

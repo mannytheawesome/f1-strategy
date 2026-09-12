@@ -1425,6 +1425,38 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       19 -> 20. 1 new test (`test_reserve_driver_dropped_from_pace_table`);
       full suite 50/50 passing.
 
+      **Tenth and eleventh bugs, live during the 2026 Madrid GP weekend
+      (first race checked end-to-end after qualifying since the ninth
+      fix).** (10) User-reported UI bug: qualifying best-lap times in
+      "Where the lap lives" rendered as raw seconds (`91.824`) instead of
+      the expected `1:31.824` — `frontend/briefing.js`'s quali-sectors card
+      called `.toFixed(3)` directly on `best_lap`/`theoretical` with no
+      minute split, unlike the long-run tables elsewhere on the same page
+      which already had one. Added a local `fmtLap()` helper (M:SS.sss,
+      no leading `0:` for sub-minute values) and applied it to both full
+      lap-time columns; sector times and "left on table" are deltas that
+      never cross 60s, left as plain seconds. (11) User-reported, more
+      substantial: Madrid 2026 qualifying showed HAM/LEC/VER's "tyres
+      available for race" MEDIUM column at 0 used, 0 new, despite each
+      having visibly started Qualifying on a Medium for a 6-lap Q1 stint.
+      Root cause confirmed against real stint data
+      (`engine/tyre_inventory.py`): each had already discarded (genuinely
+      worn) one Medium from an FP1 long run and one from an FP2 long run —
+      2 of their 3-set allocation gone — and the Q1 stint's exact 6 laps
+      landed 1 lap past `SHORT_STINT_LAPS=5` (tuned off Soft banker-lap
+      patterns, 3-4 laps), so it was ALSO discarded rather than counted as
+      still-viable, wiping the full allocation to zero available. A 6-lap
+      Q1 opener on a Medium is normal track-position/banker running, not
+      a worn tyre. Raised `SHORT_STINT_LAPS` to 6 — re-verified this
+      doesn't touch either FP Medium group (15 and 18 laps, both still
+      correctly discarded) or the Hungary NOR calibration case (Quali
+      softs 3-4 laps, well under either threshold) — and re-ran against
+      live Madrid data: all three now show MEDIUM `{used: 1, new: 0}`,
+      correctly reflecting one race-viable set instead of none.
+      `PACK_VERSION` 20 -> 21. 1 new test
+      (`test_six_lap_qualifying_medium_stint_stays_used_and_available`);
+      full suite 51/51 passing.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

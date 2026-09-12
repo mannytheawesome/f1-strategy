@@ -629,12 +629,19 @@
       };
       const cell = (v, best, fmt) => v == null ? '<td>—</td>'
         : `<td${v === best ? ' style="color:#b57bff;font-weight:bold"' : ''}>${fmt(v)}</td>`;
+      // Full lap times run past 60s (sectors and left-on-table never do),
+      // so only these need the M:SS.sss split rather than raw seconds.
+      const fmtLap = s => {
+        const m = Math.floor(s / 60);
+        const rest = (s - m * 60).toFixed(3).padStart(6, '0');
+        return m > 0 ? `${m}:${rest}` : rest;
+      };
       const sCard = document.createElement('div');
       sCard.className = 'card';
       let sRows = qs.map(r =>
-        `<tr><td><b>${r.acronym}</b></td><td>${r.best_lap.toFixed(3)}</td>
+        `<tr><td><b>${r.acronym}</b></td><td>${fmtLap(r.best_lap)}</td>
          ${cell(r.s1, bests.s1, v => v.toFixed(3))}${cell(r.s2, bests.s2, v => v.toFixed(3))}${cell(r.s3, bests.s3, v => v.toFixed(3))}
-         <td>${r.theoretical ? r.theoretical.toFixed(3) : '—'}</td>
+         <td>${r.theoretical ? fmtLap(r.theoretical) : '—'}</td>
          <td>${r.left_on_table ? '+' + r.left_on_table.toFixed(3) : '—'}</td>
          ${cell(r.top_speed_kmh, bests.sp, v => v + ' km/h')}</tr>`).join('');
       sCard.innerHTML = `<h2>Where the lap lives — qualifying sectors</h2>
