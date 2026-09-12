@@ -493,15 +493,16 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       1-stops as expected; exact pit-lap timing within that 1-stop is
       still not a perfect match and is logged as a smaller follow-up
       below, not blocking this item.
-- [ ] Undercut/overcut (`_undercut_power`) and weather rain-risk
-      (`_weather_outlook`) both compute real numbers but only feed
+- [x] Undercut/overcut (`_undercut_power`) and weather rain-risk
+      (`_weather_outlook`) both computed real numbers but only fed
       narrative text, never the strategy ranking — same architectural gap
-      as track position (see fourteenth issue), investigated but not yet
-      built. Undercut/overcut is more a within-stop pit-*lap*-timing nudge
-      than a stop-*count* decision; weather is probably better surfaced as
-      a caveat near the table (matching `resurfacing_caveat`) than blended
-      numerically into what's otherwise a deterministic dry-only search.
-      Pending priority.
+      as track position (see fourteenth issue). Done 2026-09-12 (fifteenth
+      issue): undercut/overcut wired in as a pit-window lean indicator
+      (◂/▸) rather than a ranking change — it's inherently a two-car
+      question the single-car paper table has no opponent to simulate
+      against; weather surfaced as `weather_outlook.strategy_caveat`, a
+      `resurfacing_caveat`-style `.notice`, not blended numerically into
+      the dry-only search.
 - [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
       Done 2026-08-10, re-swept twice more on 2026-08-11 (quali-prior fix,
@@ -1714,15 +1715,41 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       specific track rather than hand-tuning the constant again. Full
       suite 71/71 passing.
 
-      **Still open from this thread:** undercut/overcut and weather-risk
-      integration into the ranking were investigated (see above) but not
-      built — both are smaller, more surgical additions than the track-
-      position piece (undercut/overcut is really a within-stop-count pit-
-      *lap* timing nudge, not a stop-*count* decision; weather is probably
-      better surfaced as a caveat near the table, matching the
-      `resurfacing_caveat` pattern, than blended numerically into a
-      deterministic dry-only search) — not started yet, pending user
-      priority.
+      **Fifteenth issue, same thread: closed out the undercut/overcut and
+      weather pieces, both scoped narrower than track position rather than
+      forced into the same ranking mechanism.** Undercut/overcut
+      (`_undercut_power`) is fundamentally a two-car, reactive question --
+      "pitting first jumps a rival" only means something relative to a
+      specific opponent's assumed strategy, which the single-car paper
+      table has no opponent to simulate against. Rather than invent an
+      opponent model, wired its existing `verdict` (undercut/overcut/
+      neutral, already computed) into `pitStrategyGanttCard` as a lean
+      indicator on each already-shown pit window — ◂ when the undercut is
+      favoured (lean toward the early end), ▸ when the overcut is (lean
+      late), nothing when neutral. Doesn't touch ranking or `total_time` at
+      all, purely tells the reader which side of an already-equal-time
+      window a real team would actually pick and why.
+
+      Weather: added `weather_outlook["strategy_caveat"]`, a new key
+      alongside the existing `note`/`implication` (which are written for
+      the doors/grid-value section specifically, not the strategy table),
+      rendered as the same `.notice` ⚠ pattern already used for
+      `resurfacing_caveat`. No numeric blending into the dry-only search —
+      same reasoning as `resurfacing_caveat`: the honest answer to "what
+      happens in the wet" isn't a deterministic timing adjustment, it's
+      "expect this table to be overridden". Verified against real Monaco
+      2026 data (rain genuinely fell in practice this weekend — a real
+      `"high"` case, not synthetic) and the real undercut verdict there
+      (`"undercut"`, net +4.2s).
+
+      Also surfaced `track_position_cost_s` (from the fourteenth issue)
+      directly in the Gantt row label for the first time — it existed in
+      the data pack already but had no frontend display.
+
+      `PACK_VERSION` 25 -> 26. 4 new tests (`tests/test_weather_caveat.py`).
+      Full suite 75/75 passing. This closes out the three-workstream
+      request that opened with the thirteenth issue (FP1 weighting, track
+      position cost, undercut/overcut + weather).
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

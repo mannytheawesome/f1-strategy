@@ -399,13 +399,20 @@
   // ── expected pit stop strategies & windows (Gantt) ───────────────────────
   const PIT_WINDOW_MAX_SHIFT_DISPLAY = 3;   // mirrors engine.prerace.PIT_WINDOW_MAX_SHIFT — display only
 
-  function pitStrategyGanttCard(strategies, totalLaps) {
+  function pitStrategyGanttCard(strategies, totalLaps, undercut, weatherCaveat) {
     const c = document.createElement('div');
     c.className = 'card';
     if (!strategies || !strategies.length) {
       c.innerHTML = '<h2>Expected pit stop strategies &amp; windows</h2><div class="notice">No viable strategy found.</div>';
       return c;
     }
+    // Undercut/overcut only ever tips WHICH END of an already-shown pit
+    // window a real team would lean toward -- it's a two-car, reactive
+    // question the single-car paper strategy above has no opponent to
+    // simulate against, so it can't move the ranking itself. 'neutral' or
+    // missing undercut data draws no lean at all.
+    const lean = undercut && (undercut.verdict === 'undercut' ? 'early'
+                              : undercut.verdict === 'overcut' ? 'late' : null);
     const ticks = [];
     for (let l = 10; l < totalLaps; l += 10) ticks.push(l);
     const tickHTML = ticks.map(l =>
@@ -420,8 +427,10 @@
         segs.push({ type: 'c-' + s.compound_sequence[i], start: cursor, end: stintEnd, label: '' });
         cursor = stintEnd;
         if (win) {
+          const loLabel = lean === 'early' ? `${win[0]}◂` : `${win[0]}`;
+          const hiLabel = lean === 'late' ? `${win[1]}▸` : `${win[1]}`;
           segs.push({ type: 'gantt-window', start: win[0], end: win[1],
-                     label: `${win[0]}<span>${win[1]}</span>` });
+                     label: `${loLabel}<span>${hiLabel}</span>` });
           cursor = win[1];
         }
       }
@@ -430,11 +439,15 @@
         const width = ((seg.end - seg.start) / totalLaps * 100).toFixed(2);
         return `<div class="gantt-seg ${seg.type}" style="left:${left}%;width:${width}%">${seg.label}</div>`;
       }).join('');
-      return `<div class="gantt-row-label">Strategy ${s.stops}-stop</div>
+      return `<div class="gantt-row-label">Strategy ${s.stops}-stop${s.track_position_cost_s ? ` <span title="Extra stop(s) risk losing track position beyond the raw pit-time cost — priced in at +${s.track_position_cost_s.toFixed(1)}s" style="color:var(--muted)">(+${s.track_position_cost_s.toFixed(1)}s position risk)</span>` : ''}</div>
         <div class="gantt-row">${segHTML}</div>`;
     }).join('');
+    const leanNote = lean
+      ? ` · ${lean === 'early' ? '◂ = undercut favoured here, lean early in the window' : '▸ = overcut favoured here, lean late in the window'}`
+      : '';
     c.innerHTML = `<h2>Expected pit stop strategies &amp; windows</h2>
-      <div class="meta-row"><span>each row is the best plan at that stop count · green = pit window, the practical range of laps (within ${PIT_WINDOW_MAX_SHIFT_DISPLAY} laps either way) that stays close to the optimal stop's time</span></div>
+      <div class="meta-row"><span>each row is the best plan at that stop count · green = pit window, the practical range of laps (within ${PIT_WINDOW_MAX_SHIFT_DISPLAY} laps either way) that stays close to the optimal stop's time${leanNote}</span></div>
+      ${weatherCaveat ? `<div class="notice">⚠ ${weatherCaveat}</div>` : ''}
       <div class="gantt-chart">${rows}<div class="gantt-axis">${tickHTML}</div></div>`;
     return c;
   }
@@ -713,7 +726,8 @@
 
     if (d.strategies && d.strategies.length) {
       sections.push({ id: 'pit-strategy-gantt', title: 'Expected pit stop strategies & windows',
-                     node: pitStrategyGanttCard(d.strategies, m.total_laps_assumed) });
+                     node: pitStrategyGanttCard(d.strategies, m.total_laps_assumed, d.undercut,
+                                                d.weather_outlook && d.weather_outlook.strategy_caveat) });
     }
 
     if (d.grid.some(g => g.tyres)) {

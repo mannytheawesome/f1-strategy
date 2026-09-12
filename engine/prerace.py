@@ -50,7 +50,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 25   # 25: strategies ranked with a track-position cost on extra stops
+PACK_VERSION = 26   # 26: weather_outlook.strategy_caveat added (dry-only strategy table caveat)
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -813,6 +813,24 @@ def _weather_outlook(sources: list[dict], circuit: str) -> dict:
             "gets cheaper — the door costs above are dry-weather numbers."
             if risk != "low" else
             "Dry expected, so the door costs above hold their value."),
+        # Separate from `implication` (which is written for the doors/grid-
+        # value section) -- this is specifically for the pit-stop strategy
+        # table, which is a deterministic DRY-ONLY search with no rain
+        # branch modelled at all (see engine/predictor.py's Monte Carlo
+        # path for where wet-race outcomes ARE simulated, a different part
+        # of the pipeline from this paper-strategy table). Surfaced as a
+        # caveat rather than blended numerically into the search, same
+        # choice made for circuits.resurfacing_caveat: the honest answer
+        # to "what should teams do in the wet" isn't a deterministic
+        # timing table, it's "expect this to be overridden".
+        "strategy_caveat": (
+            "Rain has already fallen this weekend — these are dry-race paper "
+            "strategies; a wet or mixed race will override the whole table."
+            if rain_in_practice else
+            f"{circuit} has a history of rain — these are dry-race paper "
+            "strategies; keep an eye on the sky."
+            if wet_prone else
+            None),
     }
 
 
