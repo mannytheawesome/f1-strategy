@@ -530,7 +530,7 @@
         <span>race: ${(m.race_date || 'TBC').slice(0, 10)}</span>
         <span>${m.total_laps_assumed} laps assumed</span>
         <span>SC probability ${(d.sc_probability * 100).toFixed(0)}%</span>
-        <span>pit loss ${d.pit_loss}s (${d.pit_loss_source === 'sprint_measured' ? 'measured in sprint' : 'default'})</span>
+        <span>pit loss ${d.pit_loss}s (${d.pit_loss_source === 'sprint_measured' ? 'measured in sprint' : d.pit_loss_source === 'circuit_measured' ? 'circuit average' : 'default'})</span>
       </div>
       <div class="meta-row"><span>built from: ${d.sources.map(s => s.name).join(' · ')}</span></div>
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
