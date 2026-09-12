@@ -58,31 +58,44 @@ class TestLengthClassification:
     laps it actually ran, not by which session it was opened in."""
 
     def test_short_stint_stays_used_and_available(self):
-        session = [make_stint(1, "SOFT", 1, SHORT_STINT_LAPS, tyre_age_at_start=0)]
+        session = [make_stint(1, "SOFT", 1, SHORT_STINT_LAPS["SOFT"], tyre_age_at_start=0)]
         inv = _inv([session])
         r = inv.reconciled()
         assert r["SOFT"]["used"] == 1
         assert inv.discarded.get("SOFT", 0) == 0
 
     def test_long_stint_is_discarded_not_used(self):
-        session = [make_stint(1, "SOFT", 1, SHORT_STINT_LAPS + 1, tyre_age_at_start=0)]
+        session = [make_stint(1, "SOFT", 1, SHORT_STINT_LAPS["SOFT"] + 1, tyre_age_at_start=0)]
         inv = _inv([session])
         r = inv.reconciled()
         assert r["SOFT"]["used"] == 0
         assert inv.discarded.get("SOFT", 0) == 1
 
     def test_boundary_at_exactly_short_stint_laps_counts_as_short(self):
-        session = [make_stint(1, "HARD", 1, SHORT_STINT_LAPS, tyre_age_at_start=0)]
+        session = [make_stint(1, "HARD", 1, SHORT_STINT_LAPS["HARD"], tyre_age_at_start=0)]
         inv = _inv([session])
         assert inv.reconciled()["HARD"]["used"] == 1
+
+    def test_medium_and_hard_get_a_looser_threshold_than_soft(self):
+        # Real data (30 real Qualifying sessions, 2023-2026, pulled while
+        # investigating the Madrid case below): Soft has a clean two-cluster
+        # shape with a genuine dip at 5 laps, so it keeps the tighter
+        # threshold; Medium/Hard have far too little real Qualifying usage
+        # to draw their own line, but physically tolerate more mileage
+        # before meaningful wear, so they share a looser one instead of
+        # inheriting Soft's.
+        assert SHORT_STINT_LAPS["MEDIUM"] > SHORT_STINT_LAPS["SOFT"]
+        assert SHORT_STINT_LAPS["HARD"] > SHORT_STINT_LAPS["SOFT"]
 
     def test_six_lap_qualifying_medium_stint_stays_used_and_available(self):
         # Real case, Madrid 2026 (user-reported): HAM/LEC/VER each opened
         # Qualifying on a Medium for a normal 6-lap Q1 banker/track-position
-        # stint before switching to Softs. At the old SHORT_STINT_LAPS=5
-        # this was wrongly discarded, and combined with two genuinely worn
-        # Mediums from FP1/FP2 long runs, wiped their whole 3-set Medium
-        # allocation to zero available going into the race.
+        # stint before switching to Softs. At a shared SHORT_STINT_LAPS=5
+        # (the first fix attempt) this was wrongly discarded, and combined
+        # with two genuinely worn Mediums from FP1/FP2 long runs, wiped
+        # their whole 3-set Medium allocation to zero available going into
+        # the race. A compound-specific MEDIUM threshold fixes it without
+        # loosening SOFT's separately-calibrated one.
         fp1 = [make_stint(1, "MEDIUM", 1, 15, tyre_age_at_start=0)]   # genuinely worn
         fp2 = [make_stint(1, "MEDIUM", 1, 18, tyre_age_at_start=0)]   # genuinely worn
         quali = [

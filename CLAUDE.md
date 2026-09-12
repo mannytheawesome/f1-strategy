@@ -1457,6 +1457,49 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       (`test_six_lap_qualifying_medium_stint_stays_used_and_available`);
       full suite 51/51 passing.
 
+      **Follow-up on the eleventh fix, same day: the single-constant fix was
+      itself a symptom of a real structural problem.** User pushed back —
+      "is there still an issue with the algorithm, we've spent a lot of time
+      debugging this" — a fair question given how many times `SHORT_STINT_LAPS`
+      had already been tuned reactively. Investigated properly instead of
+      reassuring: discovered Qualifying stint data had **never been cached
+      anywhere in this codebase before** — `_long_run_pace` and every backtest
+      caller explicitly skip Qualifying, so this threshold had only ever been
+      checked against whichever 1-2 races a user happened to look at (Hungary,
+      then Madrid), never against a real distribution. Pulled 30 real
+      Qualifying sessions across 2023-2026 (first time this data has existed
+      in the cache) and built the actual "real tyre group length" distribution
+      per compound: SOFT (n=1976) has a clean two-cluster shape — 3-4 laps
+      (banker attempts, 800+543) then a genuine dip at 5 laps (126) before a
+      second, more-worn cluster at 6-7 (208+173, two-flying-lap attempts on
+      one set) — meaning the ORIGINAL `SHORT_STINT_LAPS=5` was already
+      correctly calibrated for Soft, and the eleventh fix's global bump to 6
+      would have wrongly reclassified that entire 381-stint second cluster as
+      still-fresh. MEDIUM (n=12) confirmed it's almost never used in
+      Qualifying at all, and 11 of those 12 real samples were 3-4 laps —
+      Madrid's 6-lap stint is the only 6-lap Medium in the whole real
+      dataset, a genuine but statistically rare case, not the norm. HARD
+      (n=3) has essentially no real sample to calibrate from at all.
+      Root cause: `SHORT_STINT_LAPS` was a single constant shared across
+      three compounds with genuinely different wear physics, being tuned
+      one anecdote at a time — any fix to one compound's edge case was
+      guaranteed to either under- or over-correct the others. Fixed by
+      splitting it into a per-compound dict (`{"SOFT": 5, "MEDIUM": 6,
+      "HARD": 6}`) — Soft keeps its separately-calibrated, evidence-backed
+      value; Medium and Hard share a looser one since they physically
+      tolerate more mileage before meaningful wear and don't have enough
+      real Qualifying sample to justify inventing a more precise split
+      between them. Re-verified: Madrid's HAM/LEC/VER still correctly show
+      MEDIUM `{used: 1, new: 0}`; full suite re-run to confirm nothing
+      Soft-related regressed. `PACK_VERSION` 21 -> 22. 2 new tests
+      (`test_medium_and_hard_get_a_looser_threshold_than_soft` plus the
+      existing Madrid test updated for the dict); full suite 52/52 passing.
+      **Lesson for future single-constant fixes in this file:** before
+      bumping a threshold shared across multiple real-world categories
+      (compounds, circuits, session types), check whether the categories
+      have enough of their own historical data cached to calibrate
+      independently, rather than assuming one anecdote generalizes.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and

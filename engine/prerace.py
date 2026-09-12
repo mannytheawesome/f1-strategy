@@ -43,7 +43,7 @@ PACE_MIN_CONFIDENT_LAPS = 8
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 21   # 21: SHORT_STINT_LAPS 5 -> 6 (6-lap quali Medium stints)
+PACK_VERSION = 22   # 22: SHORT_STINT_LAPS is now per-compound (SOFT=5, MEDIUM/HARD=6)
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat

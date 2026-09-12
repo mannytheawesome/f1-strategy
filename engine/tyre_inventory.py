@@ -45,24 +45,35 @@ COMPOUNDS = ["SOFT", "MEDIUM", "HARD"]
 
 # A set run for this many laps or fewer in one outing is still essentially
 # fresh (a qualifying-style banker-lap stint: out-lap + 1-2 flying laps +
-# in-lap, real-world example ~3-4 laps) and stays available for the race.
-# Longer than this, real wear sets in and the set is no longer counted —
-# it's not returned to the "new" bucket either, it's just gone from
-# availability, same as if the team had discarded it. Verified against
-# real Hungary 2026 data: NOR's Qualifying soft stints were all 3-4 laps
-# (stayed available); his Practice soft stints ran 8-13 laps each (fell
-# outside this threshold, correctly dropped from the "used" count that
-# would otherwise overstate what he can still fit in the race).
+# in-lap) and stays available for the race. Longer than this, real wear
+# sets in and the set is no longer counted — it's not returned to the
+# "new" bucket either, it's just gone from availability, same as if the
+# team had discarded it.
 #
-# Raised from 5 to 6 after Madrid 2026 (user-reported): HAM/LEC/VER each
-# opened Qualifying on a Medium for a 6-lap Q1 stint before switching to
-# Softs -- a normal Q1 banker/track-position stint, not a worn tyre, but a
-# threshold of 5 discarded it, wiping their entire 3-set Medium allocation
-# to zero available (2 already genuinely worn from FP1/FP2 long runs, plus
-# this one wrongly joining them). 6 keeps that FP wear discarded (both FP
-# Medium groups ran considerably longer) while correctly keeping the Q1
-# stint "used and available".
-SHORT_STINT_LAPS = 6
+# Per-compound, not a single shared number: a Madrid 2026 case (HAM/LEC/
+# VER each opening Qualifying on a Medium for a 6-lap Q1 stint) first got
+# "fixed" by raising one shared constant from 5 to 6 -- which happened to
+# be wrong, caught by then actually pulling the real distribution instead
+# of tuning on the next anecdote. Qualifying stint data had never been
+# cached anywhere in this codebase before (every other caller skips
+# Qualifying), so this constant had only ever been checked against
+# whichever 1-2 races someone happened to look at. Sampling 30 real
+# Qualifying sessions across 2023-2026 (1976 Soft groups, 12 Medium, 3
+# Hard) showed why a shared number is wrong: SOFT has a clean two-cluster
+# shape -- 3-4 laps (800+543, banker attempts) then a real dip at 5 laps
+# (126) before a second, genuinely-more-worn cluster at 6-7 (208+173,
+# drivers taking two flying-lap attempts on one set) -- so 5 was already
+# correctly calibrated for Soft, and raising it to 6 would have wrongly
+# reclassified that whole second cluster as still-fresh. MEDIUM's sample
+# is tiny (only 12 in 4 years -- it's rarely used in Qualifying at all)
+# and 11 of those 12 were 3-4 laps; Madrid's 6-lap stint is the ONLY 6-lap
+# Medium sample in the real data, a genuine outlier rather than the norm,
+# but still a real banker-style stint that shouldn't be discarded. HARD
+# has essentially no Qualifying sample (n=3, all 2 laps) -- grouped with
+# MEDIUM rather than invented a separate number, since compound physics
+# says Hard tolerates at least as much mileage as Medium before meaningful
+# wear, not less.
+SHORT_STINT_LAPS = {"SOFT": 5, "MEDIUM": 6, "HARD": 6}
 
 
 @dataclass
@@ -216,8 +227,9 @@ def compute_inventory(
 
             inv = inventories[num]
             for compound, group_laps in groups.items():
+                threshold = SHORT_STINT_LAPS.get(compound, 5)
                 for total_laps in group_laps:
-                    if total_laps <= SHORT_STINT_LAPS:
+                    if total_laps <= threshold:
                         inv.used[compound] = inv.used.get(compound, 0) + 1
                     else:
                         inv.discarded[compound] = inv.discarded.get(compound, 0) + 1
