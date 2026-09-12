@@ -1535,3 +1535,24 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
   cache TTL, update the relevant section here in the same change.
 - `cache/`, `briefings/`, `recordings/`, `*.log`, and `.env` are gitignored.
 - Don't commit credentials or generated briefing/cache artifacts.
+- **Before changing a threshold/ratio shared across multiple real-world
+  categories (compound, circuit type, session type), check whether each
+  category has enough real cached data to calibrate independently before
+  picking a number.** This is the standing lesson from the
+  `SHORT_STINT_LAPS` saga (2026-09-12, see "Prediction accuracy" below):
+  a single constant was reused across Soft/Medium/Hard, got "fixed" on one
+  race's anecdote, and that fix was itself wrong because nobody had ever
+  pulled the real per-compound distribution to check. If the category with
+  the failing case has close to zero real historical sample (as Qualifying
+  Medium stints did), don't invent precision it doesn't support — a
+  coarser, evidence-backed default beats a confident-looking single number
+  that was never verified. A one-time audit of every other scalar constant
+  in `engine/*.py` was run this same session (`grep -n "^[A-Z_]* = [0-9]"
+  engine/*.py`) and found nothing else with this specific shape (a
+  classification threshold applied uniformly across physically-different
+  categories) — the closest near-misses were `USED_SET_DEFAULT_AGE`
+  (whatif.py, a display fallback, not a classifier, and real data broadly
+  supports its current value for Soft/Medium) and `TIMED_LAP_THRESHOLD`
+  (quali_analysis.py, session-relative rather than compound-relative, so
+  the risk doesn't apply). Re-run that grep and re-triage if a similar bug
+  shows up again elsewhere — don't assume it's isolated to tyres.
