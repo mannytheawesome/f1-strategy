@@ -479,19 +479,29 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ## Roadmap / open work
 
 ### Prediction accuracy (priority)
-- [ ] The "Expected Pit Stop Strategies" table ranks candidates on pure
-      lap-time optimization only. `track_position_weight` (how much
-      staying out is worth where passing is hard) is already computed and
-      used in the race-outcome projection elsewhere on the page, but never
-      reaches this table's own ranking. Found 2026-09-12 investigating a
-      Monaco strategy complaint (see "Prediction accuracy" narrative log,
-      twelfth issue) — after fixing two real deg-curve/pit-loss bugs, the
-      remaining gap between the model's top pick (a 2-stop) and what real
-      2023 Monaco strategists actually chose (a wide natural spread, no
-      single clean answer) looks like it may need this blend to close, not
-      more constant-tuning. Needs a product decision (does the strategy
-      table's ranking stay pure-pace, or start weighting track position
-      like the projection does) before attempting it — not a pure bug fix.
+- [x] The "Expected Pit Stop Strategies" table ranked candidates on pure
+      lap-time optimization only, with `track_position_weight` (how much
+      staying out is worth where passing is hard) computed and used in the
+      race-outcome projection elsewhere on the page but never reaching
+      this table's own ranking. Found 2026-09-12 investigating a Monaco
+      strategy complaint (see "Prediction accuracy" narrative log, twelfth
+      issue). Done 2026-09-12 (fourteenth issue, same log): added
+      `_track_position_cost`, validated against real median stop counts
+      across 48 dry races (street 1.14 avg, normal 1.68 avg) rather than a
+      first-principles guess (a probabilistic version was tried and
+      rejected — see the log entry for why). Monaco's top-2 are now clean
+      1-stops as expected; exact pit-lap timing within that 1-stop is
+      still not a perfect match and is logged as a smaller follow-up
+      below, not blocking this item.
+- [ ] Undercut/overcut (`_undercut_power`) and weather rain-risk
+      (`_weather_outlook`) both compute real numbers but only feed
+      narrative text, never the strategy ranking — same architectural gap
+      as track position (see fourteenth issue), investigated but not yet
+      built. Undercut/overcut is more a within-stop pit-*lap*-timing nudge
+      than a stop-*count* decision; weather is probably better surfaced as
+      a caveat near the table (matching `resurfacing_caveat`) than blended
+      numerically into what's otherwise a deterministic dry-only search.
+      Pending priority.
 - [x] Re-run `sweep` to re-tune `track_position_weight` and other knobs on the
       full 2023–2026 cache; commit the new defaults with before/after metrics.
       Done 2026-08-10, re-swept twice more on 2026-08-11 (quali-prior fix,
@@ -1630,6 +1640,89 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       too") — the other two (a real track-position cost in the strategy
       ranking; checking whether undercut/overcut and weather risk already
       feed that ranking) are logged separately below as they complete.
+
+      **Fourteenth issue, same thread: added a real track-position cost to
+      the strategy ranking.** Investigated the other two pieces from the
+      same request first: `_undercut_power` computes a real
+      undercut/overcut verdict but only feeds the narrative
+      ("the_undercut") section, never the ranking; `_weather_outlook`'s
+      `rain_risk` similarly only softens narrative language, never
+      influences the (always-dry) strategy search. Same underlying gap in
+      all three cases — `optimize_strategy` is a clean, well-tested, purely
+      dry, purely lap-time-based search, and everything else (track
+      position, undercut/overcut, weather, SC/VSC) lives in separate,
+      disconnected displays that never feed back into it. Built the
+      track-position piece first since it's what was actually driving
+      Monaco's ranking bug.
+
+      Before writing any formula, checked real data (user's explicit ask):
+      wrote `stop_count_correlation.py` — median real stop count per
+      circuit across 48 clean dry races (2023-2026), segmented by the
+      existing `track_position_weight`. Clean, consistent result: street
+      circuits (0.85) average 1.14 real stops per circuit, every normal
+      circuit (0.50) averages 1.68 — Monaco itself lands at 1.33 (n=3).
+      This confirmed the user's claim precisely and gave a real target to
+      validate against.
+
+      Tried a first-principles probabilistic model first (laps remaining
+      after a stop ÷ `BATTLE_WINDOW_LAPS` = independent chances to convert
+      `pass_threshold_s_per_lap` into a pass) and rejected it: it gave
+      Monaco an implausible ~89% chance of recovering a lost position once
+      enough laps remained, which doesn't match real experience there —
+      overtaking difficulty at a track like Monaco doesn't meaningfully
+      "reset" every 5 laps the way independent-trials math assumes.
+      Documented that dead end rather than shipping it.
+
+      Shipped instead: `_track_position_cost(stops, circuit, pit_loss)` —
+      a new helper in `engine/prerace.py`, reusing only already-calibrated
+      units (`track_position_weight`, backtest-calibrated against the
+      81-race cache; `pit_loss`, now circuit-measured per the twelfth
+      issue) with one disclosed judgment-call scale constant
+      (`POSITION_RISK_SCALE = 0.6`), applied to every stop beyond the
+      mandatory first one. Added directly into each candidate's
+      `total_time` before the strategies list is sorted/truncated, so
+      `_stop_decision`'s downstream "why is this the optimal stop count"
+      narrative stays self-consistent with the table instead of
+      contradicting it. Exposed as a new `track_position_cost_s` field per
+      strategy (same transparency pattern as `sc_refund_s`).
+
+      Verified against real Monaco 2026 data: the top two strategies are
+      now clean 1-stops (Medium->Hard, pit lap 22; Hard->Medium, pit lap
+      63), with both 2-stop candidates demoted to 3rd/4th carrying a
+      visible +9.2s position-cost penalty — matching the ranking SHAPE the
+      user described. Pit-lap timing (22, not the user's suggested 29-39)
+      is still not an exact match; tried pairing a higher Hard-degradation
+      floor fraction with this fix to see if it would close that gap
+      cleanly, but it widens the underlying pace gap between 1-stop and
+      2-stop enough that the same position-cost scale is no longer
+      sufficient — re-coupling the two constants risks the same
+      whack-a-mole pattern flagged after the eleventh issue, so left
+      alone rather than chased further. Sanity-checked Silverstone
+      (normal `track_position_weight`, real pit_loss correctly sprint-
+      measured at 30.9s) — no crash, no 2-stop candidates were pace-close
+      enough to reach the top 5 there regardless of the new cost, so this
+      pass didn't get a positive-case confirmation (a normal circuit where
+      a 2-stop legitimately still wins) — worth checking again on a future
+      race where one is pace-competitive.
+
+      `PACK_VERSION` 24 -> 25. 6 new tests
+      (`tests/test_track_position_cost.py`, covering the mandatory-first-
+      stop exemption, street-vs-normal scaling, and the exact formula).
+      Also added `stop_count_correlation.py` at the repo root as a
+      reusable, re-runnable validation script — re-run it and re-derive
+      `POSITION_RISK_SCALE` if the circuit split ever looks wrong for a
+      specific track rather than hand-tuning the constant again. Full
+      suite 71/71 passing.
+
+      **Still open from this thread:** undercut/overcut and weather-risk
+      integration into the ranking were investigated (see above) but not
+      built — both are smaller, more surgical additions than the track-
+      position piece (undercut/overcut is really a within-stop-count pit-
+      *lap* timing nudge, not a stop-*count* decision; weather is probably
+      better surfaced as a caveat near the table, matching the
+      `resurfacing_caveat` pattern, than blended numerically into a
+      deterministic dry-only search) — not started yet, pending user
+      priority.
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

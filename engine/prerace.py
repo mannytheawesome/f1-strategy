@@ -45,7 +45,12 @@ PACE_MIN_CONFIDENT_LAPS = 8
 # (traffic, a slow stop, deg running hot) covers a gap this size.
 LIVE_MARGIN_S = 10.0
 
-PACK_VERSION = 24   # 24: long_run_pace weights sessions by FP_WEIGHTS (FP1 down-weighted)
+# Scale for _track_position_cost (below). The one genuine judgment call in
+# that model -- see its docstring for how it was sized against real
+# stop-count data rather than fit to hit an exact number for one circuit.
+POSITION_RISK_SCALE = 0.6
+
+PACK_VERSION = 25   # 25: strategies ranked with a track-position cost on extra stops
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -921,6 +926,37 @@ def _undercut_power(curves: dict, field_baseline: float, pit_loss: float,
     }
 
 
+def _track_position_cost(stops: int, circuit: str, pit_loss: float) -> float:
+    """Time-equivalent cost of the track-position risk an extra pit stop
+    carries, beyond the mandatory minimum (1, for the 2-compound rule).
+    optimize_strategy only ever prices a stop's pit_loss seconds -- nothing
+    in the search previously priced the risk of losing a position pure pace
+    can't always buy back, so a circuit where real strategists are famously
+    conservative (Monaco) could rank a 2-stop above a 1-stop on pace alone.
+
+    User-reported and checked against real data before adding this: median
+    real stop counts across 48 clean dry races (2023-2026) split cleanly by
+    circuit type -- street circuits (track_position_weight=0.85) averaged
+    ~1.1 stops, every normal circuit (0.50) averaged 1.5-2.5.
+
+    Not a first-principles probability model -- an earlier attempt at one
+    (treating each BATTLE_WINDOW_LAPS-lap stretch as an independent chance
+    to convert pass_threshold_s_per_lap into a pass) gave Monaco an
+    implausible ~89% recovery chance once enough laps remained, which
+    doesn't match real experience there. Reuses only already-calibrated
+    units instead: track_position_weight (backtest-calibrated against the
+    81-race cache) and pit_loss (now circuit-measured, see the pit_loss.py
+    fix). POSITION_RISK_SCALE is the one genuine judgment call, sized so
+    the ranking's preferred stop count lands in the right neighbourhood
+    for both circuit groups rather than fit to hit an exact number for
+    Monaco alone -- re-check against real stop-count data (the same
+    per-circuit script used to derive the 1.1/1.5-2.5 split above) if this
+    ever looks wrong for a specific track."""
+    extra_stops = max(0, stops - 1)
+    return round(extra_stops * track_position_weight(circuit) * pit_loss
+                * POSITION_RISK_SCALE, 1)
+
+
 def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
                    total_laps: int, circuit: str, sc_prob: float) -> dict | None:
     """Why the optimal stop count is what it is. Decomposes the gap between the
@@ -1248,6 +1284,10 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                     "stint_lengths": stint_lengths,
                     "total_time": strat.total_time_from_now,
                 })
+    for s in strategies:
+        s["track_position_cost_s"] = _track_position_cost(s["stops"], circuit, pit_loss)
+        s["total_time"] += s["track_position_cost_s"]
+
     strategies.sort(key=lambda s: s["total_time"])
     strategies = strategies[:5]   # top 5 candidates, fastest first
     best_stops = strategies[0]["stops"] if strategies else 1
