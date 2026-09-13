@@ -479,6 +479,29 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
 ## Roadmap / open work
 
 ### Prediction accuracy (priority)
+- [x] The lap-0 pre-race win/podium projection (what the "Race Briefings"
+      page shows before a race) had never been backtested — every accuracy
+      figure ever reported (the 84.8% winner-hit number, etc.) only
+      evaluated predictions made AFTER the race started
+      (`backtest_full.py`'s `EVAL_FRACTIONS = [0.25, 0.50, 0.75]`), using
+      real in-race data. Found and fixed 2026-09-13 (sixteenth issue, see
+      log): built `backtest_prerace_projection.py`, found the pre-race
+      projection badly overconfident (14% winner-hit, top pick given
+      70-90% almost every race, actual winner given ~0% in most misses).
+      Root cause: every driver's pace uncertainty was a flat, hardcoded
+      constant — worse, the existing `pace_std` field was completely
+      vestigial, never read anywhere. Fixed by adding a real, laps-counted-
+      based uncertainty (`pace_bias_std_s_per_lap`) into `run_monte_carlo`.
+      Win/podium Brier score improved ~15% on re-test; judge this by Brier
+      score, not winner-hit rate, which actually rewards overconfidence
+      when it pays off by luck.
+- [ ] RUS is the actual winner in 4 of 14 backtested 2026 races (Australia,
+      China, Austria, Netherlands), none predicted by the model even after
+      the pace-uncertainty fix above. Flagged 2026-09-13, not yet
+      investigated: could be this season's fictional Mercedes being
+      genuinely hard to read from practice pace, or a specific, repeatable
+      blind spot in how RUS/Mercedes pace gets measured pre-race. Check
+      with `backtest_prerace_projection.py` before assuming either way.
 - [x] The "Expected Pit Stop Strategies" table ranked candidates on pure
       lap-time optimization only, with `track_position_weight` (how much
       staying out is worth where passing is hard) computed and used in the
@@ -1750,6 +1773,95 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       Full suite 75/75 passing. This closes out the three-workstream
       request that opened with the thirteenth issue (FP1 weighting, track
       position cost, undercut/overcut + weather).
+
+      **Sixteenth issue, biggest finding of the session: the pre-race
+      win/podium projection had never been backtested at all, and turned
+      out to be badly overconfident.** User asked "how did the race
+      prediction go for Madrid" — actual winner ANT was given ~0% win
+      probability, predicted P6; HUL, who actually finished P10, was given
+      the #2 win-probability slot. Investigating why surfaced something
+      much bigger: `backtest_full.py`'s `EVAL_FRACTIONS = [0.25, 0.50,
+      0.75]` means every accuracy figure ever reported for this project
+      (the 84.8% winner-hit number, etc.) only ever evaluated predictions
+      made AFTER the race started, using real in-race lap/gap/stint data.
+      The lap-0, FP/quali-only projection — what the "Race Briefings" page
+      actually shows before a race — had zero backtest coverage.
+
+      Built `backtest_prerace_projection.py` (results cached to
+      `cache/backtest_prerace_results.json`) to test it directly: called
+      `build_prerace_data` for all 16 completed 2026 races (14 evaluable —
+      Bahrain and Saudi Arabia failed on a cascading OpenF1 429 that
+      emptied `sources` entirely, a data-fetch reliability issue, not a
+      modeling one) and compared the projected win/podium probabilities
+      against real results. **14% winner-hit (2/14), avg podium match
+      1.21/3, avg position MAE 3.24** — and critically, the model's top
+      pick got 70-90% win probability almost every race while the actual
+      winner was given ~0% in most misses. Not random noise: confidently
+      wrong, every time.
+
+      Root cause, traced through the actual code rather than assumed:
+      `_run_projection` (engine/prerace.py) built every driver's
+      `DriverPace` with a flat, hardcoded `pace_std=0.3`, and worse —
+      `pace_std` turned out to be a **completely vestigial field**, never
+      read anywhere in the whole codebase. `simulate_race` separately
+      computes a `confidence` label (HIGH/MEDIUM/LOW) from real
+      `laps_counted`, but that too was display-only, never affecting the
+      math. `run_monte_carlo`'s actual pace-noise term (`sigma = 0.4 *
+      sqrt(remaining)`) is a single flat scalar applied identically to
+      every driver — legitimate as a model of generic race-day randomness
+      (traffic, mistakes), but it was the ONLY uncertainty in the whole
+      simulation, meaning a driver's raw `pace_delta` (however it was
+      measured) got treated as ground truth with 100% confidence
+      regardless of whether it came from 5 laps or 20.
+
+      Fixed by adding a second, genuinely new uncertainty source rather
+      than just wiring up the existing (misconceived) `pace_std` field.
+      The key insight: pace-estimate uncertainty is a *systematic bias* —
+      if a driver's true race pace differs from their measured
+      `pace_delta` by some amount, that error compounds the same way every
+      remaining lap, so it should scale LINEARLY with laps remaining, not
+      as sqrt(laps) the way `sigma`'s lap-to-lap random-walk noise
+      correctly does. Added `pace_bias_std_s_per_lap` to `DriverForecast`,
+      computed in `simulate_race` from real `laps_counted` (`PACE_BIAS_BASE
+      + PACE_BIAS_THIN_K / sqrt(laps)` — 0.05 s/lap floor even for a
+      well-sampled driver, since practice pace never perfectly predicts
+      race pace; scaling up sharply for thin samples), and drawn as ONE
+      gaussian bias per Monte Carlo run per driver (not per-lap noise),
+      scaled by remaining laps, in `run_monte_carlo`.
+
+      Re-ran the exact same backtest after the fix: winner-hit dropped to
+      7% (1/14) — Brier score, not hit-rate, is the correct way to judge
+      this, since hit-rate rewards overconfidence when it happens to pay
+      off by luck. By Brier score, which IS the proper scoring rule for a
+      probabilistic forecast: win Brier improved 0.1342 -> 0.1144, podium
+      Brier 0.2516 -> 0.2127 (~15% better on both), MAE 3.24 -> 2.98, avg
+      podium hits 1.21 -> 1.36. Several actual winners went from ~0% to a
+      plausible-but-not-dominant probability (Netherlands' RUS 1.0% ->
+      17.4%, Austria's RUS 0.2% -> 6.6%, Italy's ANT 1.0% -> 6.0%) — the
+      model stopped confidently ruling out the real answer, even where it
+      still doesn't pick it as the favourite. One honest caveat: both
+      backtest runs used unseeded Monte Carlo, so some race-to-race
+      movement is sampling noise on top of the real effect — trust the
+      consistent aggregate direction over any single race's exact numbers
+      (Madrid itself barely moved, for instance).
+
+      PACE_BIAS_BASE/PACE_BIAS_THIN_K are judgment calls, not independently
+      fitted — no ground truth exists for "true pace uncertainty" to fit
+      against. Re-validate any future change to them against
+      `backtest_prerace_projection.py`, not by eyeballing whether the
+      numbers look reasonable.
+
+      Also flagged, not yet investigated: RUS is the actual winner in 4 of
+      these 14 races, none predicted by the model even after this fix —
+      worth checking separately whether that's this season's fictional
+      Mercedes being genuinely hard to read from practice data, or a
+      specific, repeatable blind spot in how RUS/Mercedes pace gets
+      measured.
+
+      `PACK_VERSION` 26 -> 27. 4 new tests (`tests/test_pace_confidence.py`,
+      including a direct check that an apparently-fast thin-sample driver
+      no longer locks up win probability the way a flat-uncertainty model
+      would). Full suite 79/79 passing.
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`

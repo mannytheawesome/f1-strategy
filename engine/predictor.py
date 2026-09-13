@@ -24,6 +24,33 @@ import statistics
 
 PIT_LOSS        = 22.0   # seconds lost per pit stop (pit lane time loss)
 STOP_RISK       = 6.0    # extra penalty per stop: traffic, out-lap, execution risk
+
+# How uncertain a driver's pre-race pace_delta itself is, in s/lap -- distinct
+# from run_monte_carlo's `sigma` (lap-to-lap race noise: traffic, mistakes,
+# weather drift, same for every driver regardless of how well their pace was
+# measured). This is model uncertainty: we don't actually know whether a
+# driver's practice-derived pace_delta reflects their true race pace, and
+# that unknown compounds LINEARLY over the remaining race (a systematic
+# bias, not a random walk) rather than as sqrt(laps) the way lap-to-lap
+# noise does -- so it's applied as one per-run draw scaled by remaining
+# laps, not per-lap gaussian noise.
+#
+# Built 2026-09-13 after backtest_prerace_projection.py measured the
+# pre-race lap-0 projection at a 14% winner-hit rate across 14 real 2026
+# races, with the model's top pick given 70-90% win probability almost
+# every time and the actual winner given ~0% in most misses. Root cause:
+# every DriverForecast used a flat, hardcoded pace uncertainty regardless
+# of whether pace_delta came from a 20-lap sample or a 5-lap one --
+# `pace_std`/`confidence` were both computed from real sample size but
+# never consumed by the simulation at all. PACE_BIAS_BASE/_THIN_K are
+# judgment calls (no independent measurement of "true pace uncertainty"
+# exists to fit against) -- validate any change against
+# backtest_prerace_projection.py rather than picking a number that just
+# looks reasonable; see CLAUDE.md for the before/after numbers this
+# specific value was checked against.
+PACE_BIAS_BASE    = 0.05   # s/lap, floor even for a well-sampled driver --
+                           # practice pace never perfectly predicts race pace
+PACE_BIAS_THIN_K   = 0.35   # extra s/lap uncertainty, scaled by 1/sqrt(laps)
 SC_LAP_MULT     = 1.35   # median lap time > 35% above session median → SC
 MIN_STINT       = 8      # minimum viable stint length
 SOFT_SPLASH_MAX = 15     # Soft allowed as final compound only if ≤ this many laps
@@ -267,6 +294,12 @@ class DriverForecast:
     confidence:         str
     strategy:           DriverStrategy
     undercut:           Optional[UndercutResult]
+    # s/lap uncertainty in this driver's pace_delta itself (not lap-to-lap
+    # race noise, which `confidence`/`run_monte_carlo`'s sigma already cover
+    # separately) -- see PACE_BIAS_BASE/PACE_BIAS_THIN_K below for how it's
+    # derived from sample size. Consumed by run_monte_carlo as a per-run,
+    # per-driver systematic bias draw, not per-lap noise.
+    pace_bias_std_s_per_lap: float = PACE_BIAS_BASE
     # Monte Carlo outputs (filled by run_monte_carlo)
     win_probability:    float = 0.0
     podium_probability: float = 0.0
@@ -1315,6 +1348,8 @@ def simulate_race(
         conf = ("HIGH" if pace and pace.laps_counted >= 10
                 else "MEDIUM" if pace and pace.laps_counted >= 5
                 else "LOW")
+        laps_counted = pace.laps_counted if pace and pace.laps_counted else 1
+        pace_bias_std = PACE_BIAS_BASE + PACE_BIAS_THIN_K / (laps_counted ** 0.5)
 
         # F1 rule: must use ≥2 dry compounds — if driver has only used one,
         # a pit stop is mandatory before the end
@@ -1375,6 +1410,7 @@ def simulate_race(
             confidence=conf,
             strategy=strat,
             undercut=undercut,
+            pace_bias_std_s_per_lap=pace_bias_std,
         )))
 
     scored.sort(key=lambda x: x[0])
@@ -1407,13 +1443,21 @@ def run_monte_carlo(
 ) -> None:
     """
     Perturb each driver's deterministic finish time with:
-      1. Pace noise        — gaussian, scaled by their pace_std proxy
-      2. SC lottery        — if a random SC falls in the remaining laps,
+      1. Pace noise        — gaussian, same sigma for every driver: lap-to-
+                             lap race randomness (traffic, tyre warm-up,
+                             mistakes), not how well THIS driver's pace was
+                             measured pre-race
+      2. Pace bias          — one gaussian draw per run per driver, scaled
+                             by remaining laps: genuine uncertainty in
+                             whether pace_delta reflects true race pace,
+                             widest for thin-sample drivers
+                             (fc.pace_bias_std_s_per_lap)
+      3. SC lottery        — if a random SC falls in the remaining laps,
                              drivers who haven't pitted yet gain ~half the
                              pit loss (cheap stop), others lose nothing
-      3. Minor incident      — flat ~2% chance per driver of a smaller time
+      4. Minor incident      — flat ~2% chance per driver of a smaller time
                              loss (traffic, slow stop, light damage)
-      4. DNF                — chance from the measured field-wide rate
+      5. DNF                — chance from the measured field-wide rate
                              (DNF_RATE_DEFAULT), scaled by how much race
                              distance remains
 
@@ -1443,8 +1487,15 @@ def run_monte_carlo(
 
     # Pace noise: traffic, tyre warm-up, small mistakes, weather drift.
     # ~0.4s/√lap gives ±2s over 25 laps, ±3.5s over 70 — roughly matches
-    # how much real race gaps wander lap to lap
+    # how much real race gaps wander lap to lap. Same for every driver --
+    # this is race-day randomness, not pace-estimate uncertainty (that's
+    # pace_bias below).
     sigma = 0.4 * (remaining ** 0.5)
+    # Per-driver: how much a systematic error in their pace_delta itself
+    # would compound over the remaining race (see PACE_BIAS_BASE's
+    # comment). Drawn once per run, not per lap.
+    pace_bias_std = {fc.driver_number: fc.pace_bias_std_s_per_lap * remaining
+                     for fc in forecasts}
 
     finish_counts: dict[int, list[int]] = {fc.driver_number: [] for fc in forecasts}
 
@@ -1457,6 +1508,7 @@ def run_monte_carlo(
         for fc in forecasts:
             t = base_times[fc.driver_number]
             t += random.gauss(0, sigma)
+            t += random.gauss(0, pace_bias_std[fc.driver_number])
             if sc_happens and has_stop_planned[fc.driver_number]:
                 # Free-ish pit stop under SC: refund ~60% of pit loss
                 t -= pit_loss * 0.6

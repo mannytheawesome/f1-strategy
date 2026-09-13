@@ -50,7 +50,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 26   # 26: weather_outlook.strategy_caveat added (dry-only strategy table caveat)
+PACK_VERSION = 27   # 27: projection win/podium probabilities now use per-driver pace uncertainty
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
