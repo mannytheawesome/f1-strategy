@@ -577,8 +577,12 @@
           <td>${r.grid_position ?? '—'}</td><td>${badge}</td>
           <td ${warn}>${sampleLabel}${(r.low_confidence || r.race_pace_only) ? ' ⚠' : ''}</td></tr>`;
       }).join('');
+      const fetchWarning = d.pace_data_incomplete && d.pace_data_incomplete.length
+        ? `<div class="notice">⚠ Data for ${d.pace_data_incomplete.join(', ')} failed to load (likely a rate limit) — this pace order is built from fewer sessions than normal and may be less reliable than it looks.</div>`
+        : '';
       pCard.innerHTML = `<h2>The real pace order — long runs, fuel &amp; age corrected</h2>
         <div class="meta-row"><span>s/lap vs field median · ▲ = quicker than their grid slot suggests (attacker) · ▼ = grid slot better than race pace (vulnerable) · ⚠ = low-confidence sample, hover for why</span></div>
+        ${fetchWarning}
         <table class="results"><tr><th>RANK</th><th>DRV</th><th>PACE</th><th>GRID</th><th>OUT OF POSITION</th><th>SAMPLE</th></tr>${pRows}</table>`;
       sections.push({ id: 'pace-order', title: 'The real pace order', node: pCard });
     }

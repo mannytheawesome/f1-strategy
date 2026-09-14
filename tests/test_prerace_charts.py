@@ -246,6 +246,57 @@ class TestLongRunPaceConfidenceFlags:
         assert filtered[0]["pace_delta"] == 0.0
 
 
+class TestLongRunPaceFetchFailures:
+    """A rate-limited session fetch inside _long_run_pace was already
+    tolerated (skip that session, keep going) but left no record that it
+    happened -- an identical query could silently return a worse-informed
+    result depending on whether OpenF1 429'd that call, with nothing
+    telling the reader it happened. fetch_failures makes that visible."""
+
+    def _laps(self, driver, lap_times, start_lap=1):
+        return [{"driver_number": driver, "lap_number": start_lap + i,
+                 "lap_duration": t, "is_pit_out_lap": False}
+                for i, t in enumerate(lap_times)]
+
+    def test_failed_session_recorded_when_list_given(self, monkeypatch):
+        def raise_error(*a, **k):
+            raise RuntimeError("429 Too Many Requests")
+
+        monkeypatch.setattr(prerace, "get_laps", raise_error)
+        sources = [{"session_key": 1, "session_type": "Practice",
+                    "session_name": "Practice 1"}]
+        failures = []
+        rows = _long_run_pace(sources, {}, fetch_failures=failures)
+        assert rows == []
+        assert failures == ["Practice 1"]
+
+    def test_successful_session_records_nothing(self, monkeypatch):
+        laps = self._laps(1, [90.0] * 12)
+        stints = [{"driver_number": 1, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {1: {"name_acronym": "NOR"}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+        sources = [{"session_key": 1, "session_type": "Practice",
+                    "session_name": "Practice 1"}]
+        failures = []
+        rows = _long_run_pace(sources, {}, fetch_failures=failures)
+        assert len(rows) == 1
+        assert failures == []
+
+    def test_omitting_the_list_does_not_raise(self, monkeypatch):
+        # Backward compatibility: every existing call site (and the many
+        # tests above) doesn't pass fetch_failures at all.
+        monkeypatch.setattr(prerace, "get_laps",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429")))
+        sources = [{"session_key": 1, "session_type": "Practice",
+                    "session_name": "Practice 1"}]
+        rows = _long_run_pace(sources, {})   # must not raise
+        assert rows == []
+
+
 class TestLongRunPaceSessionWeighting:
     """User-reported gap: unlike degradation-RATE fitting (predictor.
     FP_WEIGHTS), the pace-LEVEL calculation pooled every session's clean

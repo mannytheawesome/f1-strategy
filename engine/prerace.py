@@ -50,7 +50,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 27   # 27: projection win/podium probabilities now use per-driver pace uncertainty
+PACK_VERSION = 28   # 28: pace_data_incomplete surfaces silently-dropped session fetch failures
 from engine.tyre_inventory import compute_inventory
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -107,7 +107,8 @@ PRERACE_SCHEMA = {
 
 
 def _long_run_pace(source_sessions: list[dict], curves: dict,
-                   grid_acronyms: set[str] | None = None) -> list[dict]:
+                   grid_acronyms: set[str] | None = None,
+                   fetch_failures: list[str] | None = None) -> list[dict]:
     """Fuel- and age-corrected long-run pace per driver from FP/sprint stints
     of >= 6 laps. This is the 'real pace order' that quali can hide.
 
@@ -117,7 +118,16 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
     and can rank ahead of the team's real race drivers, despite never
     starting the race. Filtered before the field median is computed, not
     just at display time, so a reserve's session doesn't skew every other
-    driver's pace_delta either."""
+    driver's pace_delta either.
+
+    fetch_failures, when given, gets one entry appended per session whose
+    laps/stints/drivers fetch raised (almost always an OpenF1 429). Found
+    2026-09-13 debugging a non-reproducible result: this loop already
+    tolerated a failed session by silently skipping it (defensible -- a
+    partial field beats a hard crash), but with NO record that it happened,
+    so a rate-limited call quietly produced a worse-informed answer with no
+    visible difference from a clean one. The caller decides what to do with
+    the list; this function only reports what it couldn't fetch."""
     # Session-quality weight, same convention predictor.FP_WEIGHTS already
     # uses for degradation-RATE fitting: the Nth practice session in order
     # maps to FP1/FP2/FP3 regardless of its real OpenF1 name, a sprint race
@@ -152,6 +162,8 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
             stints = get_stints(s["session_key"], HIST_TTL)
             drivers = get_drivers(s["session_key"], HIST_TTL)
         except Exception:
+            if fetch_failures is not None:
+                fetch_failures.append(name or str(s.get("session_key")))
             continue
         from data.live import get_yellow_laps
         yellows = get_yellow_laps(s["session_key"], HIST_TTL)
@@ -1330,8 +1342,10 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sc_prob = sc_probability([], 0, total_laps, circuit)
 
     # ── long-run pace order, quali sectors, lap-0 projection ────────────────
+    pace_fetch_failures: list[str] = []
     pace_rows = _long_run_pace(sources, curves,
-                               grid_acronyms={g["acronym"] for g in grid})
+                               grid_acronyms={g["acronym"] for g in grid},
+                               fetch_failures=pace_fetch_failures)
     grid_pos_by_acr = {g["acronym"]: g["position"] for g in grid}
     for r in pace_rows:
         gp = grid_pos_by_acr.get(r["acronym"])
@@ -1389,6 +1403,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "pit_loss_source": "sprint_measured" if sprint_key else "circuit_measured",
         "sc_probability": sc_prob,
         "long_run_pace": pace_rows,
+        # Sessions whose laps/stints/drivers fetch failed (almost always an
+        # OpenF1 429) and got silently dropped from long_run_pace/team_pace
+        # -- surfaced rather than left invisible, since a rate-limited call
+        # otherwise produces a worse-informed pace order with no visible
+        # difference from a clean one. None when nothing failed.
+        "pace_data_incomplete": pace_fetch_failures or None,
         "team_pace": _team_pace(pace_rows, grid, field_baseline),
         "long_run_tables": _long_run_tables(sources),
         "quali_sectors": sectors,

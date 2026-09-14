@@ -1863,6 +1863,28 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       no longer locks up win probability the way a flat-uncertainty model
       would). Full suite 79/79 passing.
 
+      **Seventeenth issue, found while investigating the RUS pattern above:
+      a rate-limited session fetch inside `_long_run_pace` was already
+      tolerated but left no trace that it happened.** Caught directly:
+      running the identical Austria 2026 query twice gave two different
+      answers for RUS (pace_rank 7/delta -1.07 vs the reproducible pace_rank
+      8/delta -0.907) purely because one run's session fetch got 429'd and
+      was silently caught by the existing `except Exception: continue` —
+      defensible on its own (a partial field beats a hard crash) but
+      invisible, so a rate-limited call quietly produced a worse-informed
+      result indistinguishable from a clean one. Fixed by adding an
+      optional `fetch_failures` out-parameter to `_long_run_pace`, wired
+      through `build_prerace_data` to a new `pace_data_incomplete` pack
+      field (`None` when nothing failed), rendered as a `.notice` warning
+      naming the affected session(s) — same transparency pattern as every
+      other caveat this session (`resurfacing_caveat`,
+      `weather_outlook.strategy_caveat`). Backward compatible: the
+      parameter defaults to `None` and every existing call site is
+      unaffected. `PACK_VERSION` 27 -> 28. 3 new tests
+      (`tests/test_prerace_charts.py::TestLongRunPaceFetchFailures`,
+      including one confirming omitting the parameter still doesn't raise).
+      Full suite 82/82 passing.
+
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
