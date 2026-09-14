@@ -271,19 +271,20 @@
     .layout-controls button:hover:not(:disabled) { background: #333; }
     .layout-controls button:disabled { opacity: 0.3; cursor: default; }
 
-    /* championship standings */
-    .standings-wrap { display: flex; gap: 12px; flex-wrap: wrap; }
-    .standings-col { flex: 1 1 320px; min-width: 280px; }
-    .standings-col h2 { font-size: 12px; letter-spacing: 1px; color: var(--purple); margin-bottom: 8px; text-transform: uppercase; }
+    /* championship standings — the default landing view: schedule (in
+       #race-list) plus these two cards form three roughly equal columns */
+    #briefing.standings-view { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+    .standings-card { flex: 1 1 240px; min-width: 220px; }
+    .standings-card h2 { font-size: 11px; letter-spacing: 1px; color: var(--purple); margin-bottom: 6px; text-transform: uppercase; }
     .standings-row {
-      display: flex; align-items: center; gap: 8px; padding: 5px 0;
-      border-bottom: 1px solid var(--border); font-size: 12px;
+      display: flex; align-items: center; gap: 6px; padding: 3px 0;
+      border-bottom: 1px solid var(--border); font-size: 11px;
     }
-    .standings-row .pos { width: 20px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-    .standings-row .swatch { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; }
-    .standings-row .who { flex: 1; font-weight: 700; }
-    .standings-row .who .team-sub { display: block; font-weight: 400; font-size: 10px; color: var(--muted); }
-    .standings-row .pts { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+    .standings-row .pos { width: 16px; color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+    .standings-row .swatch { width: 3px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; }
+    .standings-row .who { flex: 1; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .standings-row .who .team-sub { display: block; font-weight: 400; font-size: 9px; color: var(--muted); }
+    .standings-row .pts { font-family: 'JetBrains Mono', monospace; color: var(--text); font-size: 11px; }
     .standings-row:first-child .pos { color: #ffd700; }
 
     /* ── mobile ── */
@@ -308,5 +309,5 @@
       .hero-countdown { flex-wrap: wrap; }
       .hero-countdown .unit { min-width: 46px; padding: 5px 8px; }
       .hero-countdown .unit .n { font-size: 15px; }
-      .standings-wrap { flex-direction: column; }
+      #briefing.standings-view { flex-direction: column; }
     }

@@ -123,6 +123,7 @@
   // ── championship standings (the default landing view) ──────────────────────
   async function loadStandings() {
     const root = document.getElementById('briefing');
+    root.classList.remove('standings-view');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Loading standings…</div>';
     markActive(document.getElementById('standings-nav'));
     currentContext = null;
@@ -144,21 +145,23 @@
     </div>`;
   }
 
+  function standingsCard(title, rows) {
+    const c = document.createElement('div');
+    c.className = 'card standings-card';
+    c.innerHTML = `<h2>${title}</h2>${rows || '<div class="notice">No results yet.</div>'}`;
+    return c;
+  }
+
   function renderStandings(d) {
     const root = document.getElementById('briefing');
     root.innerHTML = '';
-    const card = document.createElement('div');
-    card.className = 'card';
+    root.classList.add('standings-view');
     const driverRows = (d.drivers || [])
       .map(x => standingsRowHTML(x.position, x.acronym, x.team, x.team_colour, x.points)).join('');
     const teamRows = (d.constructors || [])
       .map(x => standingsRowHTML(x.position, x.team, null, x.team_colour, x.points)).join('');
-    card.innerHTML = `<h2 style="color:var(--purple)">${d.year} CHAMPIONSHIP STANDINGS</h2>
-      <div class="standings-wrap">
-        <div class="standings-col"><h2>Drivers</h2>${driverRows || '<div class="notice">No results yet.</div>'}</div>
-        <div class="standings-col"><h2>Constructors</h2>${teamRows || '<div class="notice">No results yet.</div>'}</div>
-      </div>`;
-    root.appendChild(card);
+    root.appendChild(standingsCard(`${d.year} Drivers' Championship`, driverRows));
+    root.appendChild(standingsCard(`${d.year} Constructors' Championship`, teamRows));
   }
 
   // ── briefing ───────────────────────────────────────────────────────────────
@@ -166,6 +169,7 @@
 
   async function loadBriefing(sessionKey, meetingKey) {
     const root = document.getElementById('briefing');
+    root.classList.remove('standings-view');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Building briefing… (first load per race can take ~30s while the narrative is written)</div>';
     editorState = null;
     currentContext = { sessionKey, meetingKey };
@@ -615,6 +619,7 @@
   // ── pre-race briefing ──────────────────────────────────────────────────────
   async function loadPrerace(meetingKey, sessionKey) {
     const root = document.getElementById('briefing');
+    root.classList.remove('standings-view');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Building race-morning briefing… (first load can take ~30s while the narrative is written)</div>';
     editorState = null;
     currentContext = { sessionKey: sessionKey || null, meetingKey };
