@@ -42,6 +42,7 @@
       letter-spacing: 2px; color: var(--muted); align-self: center;
       border-left: 1px solid var(--border); padding-left: 10px;
     }
+    .header-links { display: flex; gap: 8px; }
     header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 5px 12px; border-radius: 2px; white-space: nowrap; }
     header a:hover { background: var(--red); border-color: var(--red); }
 
@@ -118,15 +119,13 @@
     }
     #race-list h2 { font-size: 11px; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
 
-    .standings-nav-btn {
-      display: flex; align-items: center; justify-content: center; gap: 6px;
-      background: rgba(155,0,255,0.08); border: 1px solid rgba(155,0,255,0.35);
-      color: var(--purple); font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-      padding: 9px 10px; border-radius: 3px; cursor: pointer; margin-bottom: 10px;
-      transition: background 0.12s ease;
-    }
-    .standings-nav-btn:hover { background: rgba(155,0,255,0.16); }
-    .standings-nav-btn.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+    /* Landing state: schedule takes the left half as a 2-up grid, standings
+       compress into the right half -- both sides toggled together so a
+       loaded briefing can still claim full width from the (then narrow,
+       single-column) sidebar. */
+    #race-list.grid-mode { flex: 0 0 calc(50% - 7px); }
+    #race-list.grid-mode #race-items { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    #race-list.grid-mode .race-item { margin-bottom: 0; }
 
     .race-item {
       padding: 12px 14px; cursor: pointer; border-radius: 4px;
@@ -302,10 +301,13 @@
     .layout-controls button:hover:not(:disabled) { background: #333; }
     .layout-controls button:disabled { opacity: 0.3; cursor: default; }
 
-    /* championship standings — the default landing view: schedule (in
-       #race-list) plus these two cards form three roughly equal columns */
-    #briefing.standings-view { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
-    .standings-card { flex: 1 1 200px; min-width: 190px; max-width: 300px; }
+    /* championship standings — the default landing view: schedule takes the
+       left half of the page (grid-mode, above), these two cards fill the
+       right half between them. */
+    #briefing.standings-view {
+      flex: 0 0 calc(50% - 7px); flex-direction: row; flex-wrap: wrap; align-items: flex-start;
+    }
+    .standings-card { flex: 1 1 200px; min-width: 190px; }
     .standings-card h2 { font-size: 11px; letter-spacing: 1px; color: var(--purple); margin-bottom: 6px; text-transform: uppercase; }
     .standings-row {
       display: flex; align-items: center; gap: 6px; padding: 3px 0;
@@ -323,8 +325,8 @@
       .header-inner { flex-wrap: wrap; gap: 6px; padding: 10px 0; }
       .brand-sub { display: none; }
       .layout { flex-direction: column; padding: 8px; gap: 10px; }
-      #race-list { flex: 1 1 auto; width: 100%; box-sizing: border-box; }
-      #race-items {
+      #race-list, #race-list.grid-mode { flex: 1 1 auto; width: 100%; box-sizing: border-box; }
+      #race-items, #race-list.grid-mode #race-items {
         display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px;
         -webkit-overflow-scrolling: touch;
       }
@@ -341,5 +343,5 @@
       .hero-countdown { flex-wrap: wrap; }
       .hero-countdown .unit { min-width: 46px; padding: 5px 8px; }
       .hero-countdown .unit .n { font-size: 15px; }
-      #briefing.standings-view { flex-direction: column; }
+      #briefing.standings-view { flex: 1 1 auto; flex-direction: column; }
     }

@@ -144,16 +144,21 @@
   }
 
   function markActive(itemEl) {
-    document.querySelectorAll('.race-item, .standings-nav-btn').forEach(e => e.classList.remove('active'));
-    itemEl.classList.add('active');
+    document.querySelectorAll('.race-item').forEach(e => e.classList.remove('active'));
+    if (itemEl) itemEl.classList.add('active');
   }
 
   // ── championship standings (the default landing view) ──────────────────────
+  // The schedule (#race-list) and this card pair share a "half the page
+  // each" layout only on this landing view -- grid-mode/standings-view are
+  // toggled together and both cleared the moment a real briefing loads,
+  // where the sidebar goes back to a narrow single column.
   async function loadStandings() {
     const root = document.getElementById('briefing');
     root.classList.remove('standings-view');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Loading standings…</div>';
-    markActive(document.getElementById('standings-nav'));
+    document.getElementById('race-list').classList.add('grid-mode');
+    markActive(null);
     currentContext = null;
     try {
       const res = await fetch('/api/standings?year=2026');
@@ -198,6 +203,7 @@
   async function loadBriefing(sessionKey, meetingKey) {
     const root = document.getElementById('briefing');
     root.classList.remove('standings-view');
+    document.getElementById('race-list').classList.remove('grid-mode');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Building briefing… (first load per race can take ~30s while the narrative is written)</div>';
     editorState = null;
     currentContext = { sessionKey, meetingKey };
@@ -648,6 +654,7 @@
   async function loadPrerace(meetingKey, sessionKey) {
     const root = document.getElementById('briefing');
     root.classList.remove('standings-view');
+    document.getElementById('race-list').classList.remove('grid-mode');
     root.innerHTML = '<div class="card spin" id="loading-overlay">Building race-morning briefing… (first load can take ~30s while the narrative is written)</div>';
     editorState = null;
     currentContext = { sessionKey: sessionKey || null, meetingKey };
@@ -1558,6 +1565,6 @@
       <div class="notice" style="font-size:10px">Both rows are model projections from the same lap-${r.anchor_lap} state, so the difference isolates the strategy change. All other drivers run their actual pit stops. Drivers who retired after lap ${r.anchor_lap} are simulated as finishing.</div>`;
   }
 
-  document.getElementById('standings-nav').onclick = loadStandings;
+  document.getElementById('standings-link').onclick = e => { e.preventDefault(); loadStandings(); };
   loadRaces();
   loadStandings();
