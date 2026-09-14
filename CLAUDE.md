@@ -495,13 +495,21 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       Win/podium Brier score improved ~15% on re-test; judge this by Brier
       score, not winner-hit rate, which actually rewards overconfidence
       when it pays off by luck.
-- [ ] RUS is the actual winner in 4 of 14 backtested 2026 races (Australia,
-      China, Austria, Netherlands), none predicted by the model even after
-      the pace-uncertainty fix above. Flagged 2026-09-13, not yet
-      investigated: could be this season's fictional Mercedes being
-      genuinely hard to read from practice pace, or a specific, repeatable
-      blind spot in how RUS/Mercedes pace gets measured pre-race. Check
-      with `backtest_prerace_projection.py` before assuming either way.
+- [x] RUS is the actual winner in 4 of 14 backtested 2026 races, none
+      predicted by the model. Flagged 2026-09-13, investigated 2026-09-14:
+      NOT RUS-specific. Compared FP-pace-rank vs grid position across all
+      16 completed 2026 races for RUS/VER/NOR/HAM: RUS does show the
+      largest gap (mean +1.69 positions, FP pace ranks him worse than he
+      qualifies), but VER (+1.14) and NOR (+1.31) show the same-direction
+      pattern at similar magnitude -- only HAM differs (-0.57). An earlier
+      5-race partial sample had suggested this was RUS-specific and NOR
+      was the opposite; that read didn't survive the full 16-race check
+      and was wrong -- worth remembering before trusting a small sample
+      again. Read as a genuine, general phenomenon (front-runners often
+      don't show true race pace in FP) rather than a fixable measurement
+      bug -- no code change made. Re-run `_completed_2026_races()` +
+      `build_prerace_data` per driver (see chat history 2026-09-14) if
+      revisiting with a full season's data later.
 - [x] The "Expected Pit Stop Strategies" table ranked candidates on pure
       lap-time optimization only, with `track_position_weight` (how much
       staying out is worth where passing is hard) computed and used in the
@@ -1884,6 +1892,29 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       (`tests/test_prerace_charts.py::TestLongRunPaceFetchFailures`,
       including one confirming omitting the parameter still doesn't raise).
       Full suite 82/82 passing.
+
+      **Eighteenth issue, closing out the RUS investigation: the earlier
+      finding was wrong, and the honest correction matters more than the
+      original claim.** The prior entry's 5-race sample (Australia, China,
+      Japan, Miami, Spain -- Bahrain/Saudi/Canada had failed or were
+      missing) showed RUS's FP-pace-rank-vs-grid gap always non-negative
+      while NOR looked like the mirror opposite. Re-ran across the full,
+      confirmed 16-race season (the seventeenth issue's fetch-failure
+      tracking came back clean on every race this time -- no
+      `pace_data_incomplete` warnings at all, a good sign the underlying
+      data itself was solid this run). With the complete data: RUS's mean
+      gap is +1.69, but NOR (+1.31) and VER (+1.14) show the SAME
+      direction at similar magnitude -- only HAM differs (-0.57). RUS is
+      not uniquely affected; he's the most pronounced case of a pattern
+      shared by 3 of the 4 drivers checked. The earlier 5-race read was a
+      real methodological lesson, not just a footnote: a small sample
+      agreeing with itself is not the same as a real, isolated effect, and
+      it's worth re-running with fuller data before trusting a striking-
+      looking pattern, exactly the discipline this file has tried to hold
+      to all session. No code change -- read as a genuine, general
+      phenomenon (front-runners often don't show true race pace in FP
+      long runs) rather than a fixable measurement bug. Closes the
+      roadmap item under "Prediction accuracy."
 
 ### Refactor / cleanup (deferred)
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
