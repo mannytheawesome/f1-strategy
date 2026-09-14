@@ -11,8 +11,14 @@
 </head>
 <body>
   <header>
-    <h1>RACE BRIEFINGS</h1>
-    <a href="/live">LIVE TIMING →</a>
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <h1>Race Briefings</h1>
+        <span class="brand-sub">F1 STRATEGY PREDICTOR</span>
+      </div>
+      <a href="/live">LIVE TIMING →</a>
+    </div>
   </header>
 
   <div id="hero" class="hero" style="display:none">
@@ -30,11 +36,12 @@
 
   <div class="layout">
     <div id="race-list">
+      <div id="standings-nav" class="standings-nav-btn">🏆 CHAMPIONSHIP STANDINGS</div>
       <h2>2026 SEASON</h2>
       <div id="race-items" class="spin">Loading races…</div>
     </div>
     <div id="briefing">
-      <div class="card" id="loading-overlay">Select a race to load its briefing.</div>
+      <div class="card" id="loading-overlay">Loading…</div>
     </div>
   </div>
 

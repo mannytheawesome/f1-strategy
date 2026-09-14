@@ -18,13 +18,32 @@
     body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
 
     header {
-      background: var(--red);
-      padding: 10px 18px;
-      display: flex; align-items: center; justify-content: space-between;
+      background: #060606;
+      border-bottom: 3px solid var(--red);
+      box-shadow: 0 1px 0 rgba(232,0,45,0.25);
+      padding: 0 18px;
     }
-    header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; }
-    header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 3px 10px; }
-    header a:hover { background: rgba(255,255,255,0.15); }
+    .header-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      max-width: 1400px; margin: 0 auto; padding: 12px 0;
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
+    .brand-mark {
+      display: inline-block; width: 9px; height: 20px;
+      background: var(--red); transform: skewX(-12deg);
+      align-self: center;
+    }
+    header h1 {
+      font-family: 'Oswald', sans-serif; font-weight: 700;
+      font-size: 19px; letter-spacing: 0.5px; text-transform: uppercase; color: #fff;
+    }
+    .brand-sub {
+      font-family: 'JetBrains Mono', monospace; font-size: 9px;
+      letter-spacing: 2px; color: var(--muted); align-self: center;
+      border-left: 1px solid var(--border); padding-left: 10px;
+    }
+    header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 5px 12px; border-radius: 2px; white-space: nowrap; }
+    header a:hover { background: var(--red); border-color: var(--red); }
 
     /* ── hero: next race ── */
     .hero {
@@ -91,17 +110,43 @@
       padding: 10px; border-radius: 4px;
     }
     #race-list h2 { font-size: 11px; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+
+    .standings-nav-btn {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      background: rgba(155,0,255,0.08); border: 1px solid rgba(155,0,255,0.35);
+      color: var(--purple); font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+      padding: 9px 10px; border-radius: 3px; cursor: pointer; margin-bottom: 10px;
+      transition: background 0.12s ease;
+    }
+    .standings-nav-btn:hover { background: rgba(155,0,255,0.16); }
+    .standings-nav-btn.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+
     .race-item {
-      padding: 9px 10px; cursor: pointer; border-radius: 3px;
-      margin-bottom: 2px; transition: background 0.12s ease;
-      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 8px 10px; cursor: pointer; border-radius: 3px;
+      margin-bottom: 4px; transition: background 0.12s ease;
       border-left: 3px solid transparent;
     }
     .race-item:hover { background: #222; }
     .race-item.active { background: #2a1215; border-left: 3px solid var(--red); }
-    .race-item .name { font-weight: 700; }
-    .race-item .name .flag { margin-right: 6px; }
-    .race-item .kind { font-size: 10px; color: var(--muted); }
+    .race-item .ri-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+    .race-item .ri-circuit { font-weight: 700; font-size: 12px; }
+    .race-item .ri-top .flag { margin-right: 5px; }
+    .race-item .ri-date, .race-item .kind { font-size: 9px; color: var(--muted); letter-spacing: 0.5px; white-space: nowrap; }
+    .race-item .ri-official {
+      font-size: 9px; color: var(--muted); letter-spacing: 0.3px;
+      margin-top: 2px; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+      -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+    }
+    .race-item .ri-podium { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
+    .race-item .ri-p {
+      display: flex; align-items: center; gap: 5px; font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .race-item .ri-p i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+    .race-item .ri-p .acr { font-weight: 700; width: 28px; flex: 0 0 auto; }
+    .race-item .ri-p .gap { color: var(--muted); margin-left: auto; }
+    .race-item .ri-p:first-child .acr { color: #ffd700; }
 
     #briefing { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
     .card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; }
@@ -219,9 +264,25 @@
     .layout-controls button:hover:not(:disabled) { background: #333; }
     .layout-controls button:disabled { opacity: 0.3; cursor: default; }
 
+    /* championship standings */
+    .standings-wrap { display: flex; gap: 12px; flex-wrap: wrap; }
+    .standings-col { flex: 1 1 320px; min-width: 280px; }
+    .standings-col h2 { font-size: 12px; letter-spacing: 1px; color: var(--purple); margin-bottom: 8px; text-transform: uppercase; }
+    .standings-row {
+      display: flex; align-items: center; gap: 8px; padding: 5px 0;
+      border-bottom: 1px solid var(--border); font-size: 12px;
+    }
+    .standings-row .pos { width: 20px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    .standings-row .swatch { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; }
+    .standings-row .who { flex: 1; font-weight: 700; }
+    .standings-row .who .team-sub { display: block; font-weight: 400; font-size: 10px; color: var(--muted); }
+    .standings-row .pts { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+    .standings-row:first-child .pos { color: #ffd700; }
+
     /* ── mobile ── */
     @media (max-width: 760px) {
-      header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+      .header-inner { flex-wrap: wrap; gap: 6px; padding: 10px 0; }
+      .brand-sub { display: none; }
       .layout { flex-direction: column; padding: 8px; gap: 10px; }
       #race-list { flex: 1 1 auto; width: 100%; box-sizing: border-box; }
       #race-items {
@@ -229,8 +290,7 @@
         -webkit-overflow-scrolling: touch;
       }
       .race-item {
-        flex: 0 0 auto; flex-direction: column; align-items: flex-start;
-        gap: 2px; border: 1px solid var(--border); min-width: 110px;
+        flex: 0 0 auto; border: 1px solid var(--border); min-width: 190px;
       }
       .race-item.active { border-left: 3px solid var(--red); }
       #briefing { width: 100%; }
@@ -240,4 +300,5 @@
       .hero-countdown { flex-wrap: wrap; }
       .hero-countdown .unit { min-width: 54px; padding: 6px 10px; }
       .hero-countdown .unit .n { font-size: 20px; }
+      .standings-wrap { flex-direction: column; }
     }

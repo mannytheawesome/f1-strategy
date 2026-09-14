@@ -1926,6 +1926,45 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       (prerace.py, ~200 lines) are the remaining oversized functions — left
       un-split because they can't be verified offline without OpenF1 access.
 
+### Product / UI — front page (2026-08-31 hero redesign, 2026-09-14 round two)
+First redesign round (uncommitted-history note: this file wasn't updated at
+the time) added the hero section (next-race banner, live countdown, flag
+emoji, `/api/next_meeting`'s `in_progress` field) and auto-loaded either the
+in-progress weekend's pre-race briefing or the most recent race's debrief on
+page load.
+
+**Round two, 2026-09-14, user feedback against a reference F1.com-style
+season-calendar screenshot**: five explicit sub-requests. (1) Header banner
+restyled from a flat red bar to a dark bar with a red bottom accent + left
+brand mark, Oswald wordmark — kept deliberately understated since the hero
+below already carries the strong red treatment. (2) Countdown/hero kept
+as-is (explicitly approved, not touched). (3) Sidebar race items now show
+the real weekend name (`meeting_official_name` from OpenF1's `meetings`
+endpoint, new `official_name` field on `/api/races`) plus a compact top-3
+podium (new `podium` field: acronym, team_colour, gap_to_leader, from
+`session_result` — sprint sessions get an empty podium so one race weekend
+doesn't show two competing top-3s). (4) New `GET /api/standings` endpoint
+sums OpenF1's own per-session `points` field across every completed Race-
+type session (sprints included, since OpenF1 types them `session_type:
+"race"` too) — no self-implemented scoring table; constructor points are
+attributed to whichever team a driver actually drove for that session, so a
+mid-season team change is handled correctly, unlike the driver-level
+`team`/`team_colour` which is just the most recent one for display. Rendered
+as the new default landing view in `#briefing` (two-column drivers/
+constructors card, `renderStandings` in `briefing.js`), reachable any time
+via a "🏆 CHAMPIONSHIP STANDINGS" button pinned above the race list. (5)
+Auto-load-on-page-load was explicitly removed — `loadRaces()` no longer
+picks an `autoItem`/tries to auto-open a briefing; the page now calls
+`loadStandings()` on load instead, so the right panel always starts on the
+standings overview rather than either an empty prompt or a briefing the
+user didn't ask for.
+
+11 new tests (`tests/test_races_and_standings.py`) covering official-name/
+podium population, sprint-session empty podium, a `session_result` fetch
+failure not crashing the whole race list, multi-race point summation,
+mid-season constructor attribution, and the zero-point-finish edge case.
+Full suite 95/95 passing (`-m "not integration"`).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

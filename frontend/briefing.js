@@ -62,6 +62,17 @@
     countdownTimer = setInterval(tick, 1000);
   }
 
+  function podiumHTML(podium) {
+    if (!podium || !podium.length) return '';
+    const rows = podium.map(p => {
+      const gap = (p.position === 1 || p.gap_to_leader == null) ? ''
+        : `+${Number(p.gap_to_leader).toFixed(1)}`;
+      const colour = (p.team_colour || '888888').replace('#', '');
+      return `<div class="ri-p"><i style="background:#${colour}"></i><span class="acr">${p.acronym}</span><span class="gap">${gap}</span></div>`;
+    }).join('');
+    return `<div class="ri-podium">${rows}</div>`;
+  }
+
   async function loadRaces() {
     try {
       const [racesRes, nextRes] = await Promise.all([
@@ -74,41 +85,80 @@
       const el = document.getElementById('race-items');
       el.classList.remove('spin');
       el.innerHTML = '';
-      let autoItem = null, autoAction = null;
       if (next && next.in_progress) {
         const div = document.createElement('div');
         div.className = 'race-item';
         div.style.borderLeft = '3px solid var(--green)';
-        div.innerHTML = `<span class="name"><span class="flag">${flagFor(next.country_name)}</span>${next.country_name}</span>
-          <span class="kind" style="color:var(--green)">UPCOMING · PRE-RACE</span>`;
+        div.innerHTML = `<div class="ri-top">
+            <span><span class="flag">${flagFor(next.country_name)}</span><span class="ri-circuit">${(next.circuit_short_name || next.country_name || '').toUpperCase()}</span></span>
+            <span class="ri-date" style="color:var(--green)">UPCOMING</span>
+          </div>`;
         div.onclick = () => { markActive(div); loadPrerace(next.meeting_key); };
         el.appendChild(div);
-        autoItem = div; autoAction = () => loadPrerace(next.meeting_key);
       }
       for (const r of data.races) {
         const div = document.createElement('div');
         div.className = 'race-item';
         const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
-        div.innerHTML = `<span class="name"><span class="flag">${flagFor(r.country_name)}</span>${r.country_name}</span>
-          <span class="kind">${kind} · ${(r.date_start || '').slice(5, 10)}</span>`;
+        div.innerHTML = `<div class="ri-top">
+            <span><span class="flag">${flagFor(r.country_name)}</span><span class="ri-circuit">${(r.circuit_short_name || r.country_name || '').toUpperCase()}</span></span>
+            <span class="ri-date">${kind} · ${(r.date_start || '').slice(5, 10)}</span>
+          </div>
+          <div class="ri-official">${r.official_name || r.country_name}</div>
+          ${podiumHTML(r.podium)}`;
         div.onclick = () => { markActive(div); loadBriefing(r.session_key, r.meeting_key); };
         el.appendChild(div);
-        // Falls back to the most recent completed race (list is newest-first)
-        // whenever there's no in-progress weekend to open instead — the page
-        // should never land on the empty "select a race" state if there's
-        // anything at all to show.
-        if (!autoItem) { autoItem = div; autoAction = () => loadBriefing(r.session_key, r.meeting_key); }
       }
       if (!data.races.length && !next) el.textContent = 'No races yet.';
-      if (autoItem) { markActive(autoItem); autoAction(); }
     } catch (e) {
       document.getElementById('race-items').textContent = 'Failed to load races.';
     }
   }
 
   function markActive(itemEl) {
-    document.querySelectorAll('.race-item').forEach(e => e.classList.remove('active'));
+    document.querySelectorAll('.race-item, .standings-nav-btn').forEach(e => e.classList.remove('active'));
     itemEl.classList.add('active');
+  }
+
+  // ── championship standings (the default landing view) ──────────────────────
+  async function loadStandings() {
+    const root = document.getElementById('briefing');
+    root.innerHTML = '<div class="card spin" id="loading-overlay">Loading standings…</div>';
+    markActive(document.getElementById('standings-nav'));
+    currentContext = null;
+    try {
+      const res = await fetch('/api/standings?year=2026');
+      if (!res.ok) throw new Error((await res.json()).detail || res.status);
+      renderStandings(await res.json());
+    } catch (e) {
+      root.innerHTML = `<div class="card"><span class="notice">Standings failed to load: ${e.message}</span></div>`;
+    }
+  }
+
+  function standingsRowHTML(pos, name, sub, colour, pts) {
+    return `<div class="standings-row">
+      <span class="pos">${pos}</span>
+      <span class="swatch" style="background:#${(colour || '888888').replace('#', '')}"></span>
+      <span class="who">${name}${sub ? `<span class="team-sub">${sub}</span>` : ''}</span>
+      <span class="pts">${pts}</span>
+    </div>`;
+  }
+
+  function renderStandings(d) {
+    const root = document.getElementById('briefing');
+    root.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'card';
+    const driverRows = (d.drivers || [])
+      .map(x => standingsRowHTML(x.position, x.acronym, x.team, x.team_colour, x.points)).join('');
+    const teamRows = (d.constructors || [])
+      .map(x => standingsRowHTML(x.position, x.team, null, x.team_colour, x.points)).join('');
+    card.innerHTML = `<h2 style="color:var(--purple)">${d.year} CHAMPIONSHIP STANDINGS</h2>
+      <div class="standings-wrap">
+        <div class="standings-col"><h2>Drivers</h2>${driverRows || '<div class="notice">No results yet.</div>'}</div>
+        <div class="standings-col"><h2>Constructors</h2>${teamRows || '<div class="notice">No results yet.</div>'}</div>
+      </div>`;
+    root.appendChild(card);
   }
 
   // ── briefing ───────────────────────────────────────────────────────────────
@@ -1475,4 +1525,6 @@
       <div class="notice" style="font-size:10px">Both rows are model projections from the same lap-${r.anchor_lap} state, so the difference isolates the strategy change. All other drivers run their actual pit stops. Drivers who retired after lap ${r.anchor_lap} are simulated as finishing.</div>`;
   }
 
+  document.getElementById('standings-nav').onclick = loadStandings;
   loadRaces();
+  loadStandings();
