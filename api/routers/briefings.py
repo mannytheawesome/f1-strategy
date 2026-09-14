@@ -22,11 +22,13 @@ def _regen_allowed(regenerate: bool, token: str | None) -> bool:
 
 @router.get("/api/races")
 def race_list(year: int = 2026):
-    """Completed race/sprint sessions for the year, newest first, with the
+    """Completed Grand Prix weekends for the year, newest first, with the
     official weekend name (OpenF1's own `meeting_official_name`, e.g.
     "FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2026" -- not something built
-    up here) and the top-3 podium for genuine Race sessions (not sprints,
-    which OpenF1 also types as "Race")."""
+    up here) and the top-3 podium. A sprint isn't its own race weekend --
+    it's folded into its Grand Prix's entry as a `sprint` sub-object
+    (session_key/date only, no separate podium) rather than listed as a
+    second, competing card."""
     try:
         sessions = _cache_get(f"race_list:{year}")
         if sessions is None:
@@ -36,7 +38,16 @@ def race_list(year: int = 2026):
             now = datetime.now(timezone.utc)
             official_name = {m["meeting_key"]: m.get("meeting_official_name")
                              for m in _get("meetings", year=year)}
-            sessions = []
+
+            by_meeting: dict = {}
+            # A sprint (Saturday) normally completes before its own Grand
+            # Prix (Sunday) has even started, let alone finished -- iterating
+            # newest-first means we'd hit the sprint before the (still
+            # incomplete, so not-yet-in `by_meeting`) race exists. Held here
+            # and reconciled after the main loop so a sprint that outpaces
+            # its own race mid-weekend still shows up somewhere.
+            orphan_sprints = []
+
             for s in sorted(raw, key=lambda x: x.get("date_start", ""), reverse=True):
                 if s.get("session_type", "").lower() != "race":
                     continue
@@ -48,39 +59,68 @@ def race_list(year: int = 2026):
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
                 if end_dt > now:
                     continue
+                mk = s.get("meeting_key")
                 is_sprint = "sprint" in s.get("session_name", "").lower()
+
+                if is_sprint:
+                    sprint_entry = {"session_key": s["session_key"],
+                                    "date_start": s.get("date_start")}
+                    if mk in by_meeting:
+                        by_meeting[mk]["sprint"] = sprint_entry
+                    else:
+                        orphan_sprints.append((mk, s, sprint_entry))
+                    continue
+
                 podium = []
-                if not is_sprint:
-                    # Sprint podiums aren't shown in the season list -- the
-                    # race weekend's own card covers both, keeping this to
-                    # one card per weekend instead of two competing podiums.
-                    try:
-                        results = sorted(
-                            [r for r in _get("session_result", session_key=s["session_key"])
-                             if r.get("position") and r["position"] <= 3],
-                            key=lambda r: r["position"])
-                        drivers = get_drivers(s["session_key"], HIST_TTL)
-                        for r in results:
-                            d = drivers.get(r["driver_number"], {})
-                            podium.append({
-                                "position": r["position"],
-                                "acronym": d.get("name_acronym", "?"),
-                                "team_colour": d.get("team_colour"),
-                                "gap_to_leader": r.get("gap_to_leader"),
-                            })
-                    except Exception:
-                        pass
-                sessions.append({
+                try:
+                    results = sorted(
+                        [r for r in _get("session_result", session_key=s["session_key"])
+                         if r.get("position") and r["position"] <= 3],
+                        key=lambda r: r["position"])
+                    drivers = get_drivers(s["session_key"], HIST_TTL)
+                    for r in results:
+                        d = drivers.get(r["driver_number"], {})
+                        podium.append({
+                            "position": r["position"],
+                            "acronym": d.get("name_acronym", "?"),
+                            "team_colour": d.get("team_colour"),
+                            "gap_to_leader": r.get("gap_to_leader"),
+                        })
+                except Exception:
+                    pass
+                by_meeting[mk] = {
                     "session_key":  s["session_key"],
-                    "meeting_key":  s.get("meeting_key"),
+                    "meeting_key":  mk,
                     "session_name": s.get("session_name"),
                     "country_name": s.get("country_name"),
                     "circuit_short_name": s.get("circuit_short_name"),
                     "date_start":   s.get("date_start"),
                     "year":         s.get("year"),
-                    "official_name": official_name.get(s.get("meeting_key")),
+                    "official_name": official_name.get(mk),
                     "podium": podium,
-                })
+                    "sprint": None,
+                }
+
+            for mk, s, sprint_entry in orphan_sprints:
+                if mk in by_meeting:
+                    by_meeting[mk]["sprint"] = sprint_entry
+                    continue
+                # The Grand Prix genuinely hasn't finished yet -- show the
+                # sprint on its own rather than drop it.
+                by_meeting[f"sprint-only-{mk}"] = {
+                    "session_key":  s["session_key"],
+                    "meeting_key":  mk,
+                    "session_name": s.get("session_name"),
+                    "country_name": s.get("country_name"),
+                    "circuit_short_name": s.get("circuit_short_name"),
+                    "date_start":   s.get("date_start"),
+                    "year":         s.get("year"),
+                    "official_name": official_name.get(mk),
+                    "podium": [],
+                    "sprint": None,
+                }
+
+            sessions = sorted(by_meeting.values(), key=lambda x: x["date_start"], reverse=True)
             _cache_set(f"race_list:{year}", sessions, 1800)
         return {"year": year, "races": sessions}
     except Exception as e:

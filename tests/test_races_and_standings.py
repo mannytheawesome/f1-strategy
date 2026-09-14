@@ -68,6 +68,44 @@ class TestRaceListPodium:
         out = briefings.race_list(2026)
         assert out["races"][0]["podium"] == []
 
+    def test_sprint_and_race_same_weekend_merge_into_one_entry(self, monkeypatch):
+        # Sprint Saturday, Grand Prix Sunday -- same meeting_key. A sprint
+        # isn't a separate race weekend, so it should fold into the GP's
+        # own entry rather than appear as a second card.
+        sessions = [
+            _session(1, "Miami", "Miami", "Race", "Sprint",
+                    "2000-01-04T18:00:00+00:00", "2000-01-04T19:00:00+00:00"),
+            _session(1, "Miami", "Miami", "Race", "Race",
+                    "2000-01-05T19:00:00+00:00", "2000-01-05T21:00:00+00:00"),
+        ]
+        meetings = [{"meeting_key": 1, "meeting_official_name": "FORMULA 1 MIAMI GP 2026"}]
+        self._patch(monkeypatch, sessions, meetings, {}, {})
+
+        out = briefings.race_list(2026)
+        assert len(out["races"]) == 1
+        race = out["races"][0]
+        assert race["session_name"] == "Race"
+        assert race["sprint"] is not None
+        assert race["sprint"]["session_key"] == sessions[0]["session_key"]
+
+    def test_sprint_without_completed_gp_yet_stands_alone(self, monkeypatch):
+        # Sprint has run but the Grand Prix itself hasn't finished (still
+        # mid-weekend) -- nothing to fold into yet, so it surfaces on its own
+        # rather than being dropped.
+        sessions = [
+            _session(1, "Miami", "Miami", "Race", "Sprint",
+                    "2000-01-04T18:00:00+00:00", "2000-01-04T19:00:00+00:00"),
+            _session(1, "Miami", "Miami", "Race", "Race",
+                    "2099-01-05T19:00:00+00:00", "2099-01-05T21:00:00+00:00"),
+        ]
+        meetings = [{"meeting_key": 1, "meeting_official_name": "FORMULA 1 MIAMI GP 2026"}]
+        self._patch(monkeypatch, sessions, meetings, {}, {})
+
+        out = briefings.race_list(2026)
+        assert len(out["races"]) == 1
+        assert out["races"][0]["session_name"] == "Sprint"
+        assert out["races"][0]["sprint"] is None
+
     def test_result_fetch_failure_yields_empty_podium_not_a_crash(self, monkeypatch):
         sessions = [_session(1, "China", "Shanghai", "Race", "Race",
                              "2000-01-01T13:00:00+00:00", "2000-01-01T15:00:00+00:00")]

@@ -138,6 +138,11 @@
     .race-item .ri-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
     .race-item .ri-circuit { font-weight: 700; font-size: 12px; }
     .race-item .ri-top .flag { margin-right: 5px; }
+    .race-item .ri-sprint-badge {
+      display: inline-block; margin-left: 6px; font-size: 8px; font-weight: 700;
+      letter-spacing: 0.5px; color: var(--green); border: 1px solid rgba(0,210,70,0.4);
+      border-radius: 2px; padding: 1px 4px; vertical-align: middle;
+    }
     .race-item .ri-date, .race-item .kind { font-size: 9px; color: var(--muted); letter-spacing: 0.5px; white-space: nowrap; }
     .race-item .ri-official {
       font-size: 9px; color: var(--muted); letter-spacing: 0.3px;

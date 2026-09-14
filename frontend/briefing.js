@@ -99,9 +99,14 @@
       for (const r of data.races) {
         const div = document.createElement('div');
         div.className = 'race-item';
+        // A sprint is folded into its own Grand Prix's card by the API (see
+        // /api/races) rather than listed as a second, competing entry — it
+        // only ever stands alone here if the sprint has run but the GP
+        // itself hasn't finished yet (mid-weekend).
         const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
+        const sprintBadge = r.sprint ? '<span class="ri-sprint-badge">SPRINT WKND</span>' : '';
         div.innerHTML = `<div class="ri-top">
-            <span><span class="flag">${flagFor(r.country_name)}</span><span class="ri-circuit">${(r.circuit_short_name || r.country_name || '').toUpperCase()}</span></span>
+            <span><span class="flag">${flagFor(r.country_name)}</span><span class="ri-circuit">${(r.circuit_short_name || r.country_name || '').toUpperCase()}</span>${sprintBadge}</span>
             <span class="ri-date">${kind} · ${(r.date_start || '').slice(5, 10)}</span>
           </div>
           <div class="ri-official">${r.official_name || r.country_name}</div>
