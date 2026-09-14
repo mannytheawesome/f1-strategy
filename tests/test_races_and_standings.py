@@ -60,6 +60,24 @@ class TestRaceListPodium:
         assert race["podium"][0]["acronym"] == "ANT"
         assert race["podium"][1]["gap_to_leader"] == 5.5
 
+    def test_round_number_counts_the_whole_season_not_just_completed_races(self, monkeypatch):
+        # Bahrain (completed) is round 1, Saudi Arabia (still in the future)
+        # is round 2 -- the still-upcoming race must still occupy its slot
+        # so Bahrain's number doesn't shift once Saudi Arabia completes.
+        sessions = [
+            _session(1, "Bahrain", "Sakhir", "Race", "Race",
+                    "2000-01-01T13:00:00+00:00", "2000-01-01T15:00:00+00:00"),
+            _session(2, "Saudi Arabia", "Jeddah", "Race", "Race",
+                    "2099-01-08T13:00:00+00:00", "2099-01-08T15:00:00+00:00"),
+        ]
+        meetings = [{"meeting_key": 1, "meeting_official_name": "X"},
+                   {"meeting_key": 2, "meeting_official_name": "Y"}]
+        self._patch(monkeypatch, sessions, meetings, {}, {})
+
+        out = briefings.race_list(2026)
+        assert len(out["races"]) == 1   # Saudi Arabia hasn't completed, so isn't listed
+        assert out["races"][0]["round_number"] == 1
+
     def test_sprint_session_has_no_podium(self, monkeypatch):
         sessions = [_session(1, "Miami", "Miami", "Race", "Sprint",
                              "2000-01-01T13:00:00+00:00", "2000-01-01T15:00:00+00:00")]

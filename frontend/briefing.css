@@ -112,7 +112,7 @@
     .layout { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
 
     #race-list {
-      flex: 0 0 250px;
+      flex: 0 0 400px;
       background: var(--surface); border: 1px solid var(--border);
       padding: 10px; border-radius: 4px;
     }
@@ -129,36 +129,62 @@
     .standings-nav-btn.active { background: var(--purple); color: #fff; border-color: var(--purple); }
 
     .race-item {
-      padding: 8px 10px; cursor: pointer; border-radius: 3px;
-      margin-bottom: 4px; transition: background 0.12s ease;
-      border-left: 3px solid transparent;
+      padding: 12px 14px; cursor: pointer; border-radius: 4px;
+      margin-bottom: 8px; transition: background 0.12s ease;
+      border: 1px solid var(--border); border-left: 3px solid transparent;
+      background: rgba(255,255,255,0.015);
     }
     .race-item:hover { background: #222; }
     .race-item.active { background: #2a1215; border-left: 3px solid var(--red); }
-    .race-item .ri-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
-    .race-item .ri-circuit { font-weight: 700; font-size: 12px; }
-    .race-item .ri-top .flag { margin-right: 5px; }
+
+    .race-item .ri-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .race-item .ri-round-chip {
+      font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 1px;
+      color: var(--muted); text-transform: uppercase;
+    }
+    .race-item .ri-date-chip {
+      font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text);
+      border: 1px solid var(--border); border-radius: 3px; padding: 3px 8px;
+      white-space: nowrap;
+    }
+
+    .race-item .ri-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .race-item .ri-title-row .flag { font-size: 18px; line-height: 1; }
+    .race-item .ri-circuit {
+      font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 17px;
+      letter-spacing: 0.3px; text-transform: uppercase; color: #fff;
+    }
     .race-item .ri-sprint-badge {
-      display: inline-block; margin-left: 6px; font-size: 8px; font-weight: 700;
+      display: inline-block; margin-left: 2px; font-size: 8px; font-weight: 700;
       letter-spacing: 0.5px; color: var(--green); border: 1px solid rgba(0,210,70,0.4);
       border-radius: 2px; padding: 1px 4px; vertical-align: middle;
     }
-    .race-item .ri-date, .race-item .kind { font-size: 9px; color: var(--muted); letter-spacing: 0.5px; white-space: nowrap; }
     .race-item .ri-official {
       font-size: 9px; color: var(--muted); letter-spacing: 0.3px;
-      margin-top: 2px; line-height: 1.3;
+      text-transform: uppercase; margin-bottom: 10px; line-height: 1.3;
       overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
       -webkit-line-clamp: 1; -webkit-box-orient: vertical;
     }
-    .race-item .ri-podium { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
+
+    .race-item .ri-podium { display: flex; gap: 6px; }
     .race-item .ri-p {
-      display: flex; align-items: center; gap: 5px; font-size: 10px;
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      border-radius: 4px; padding: 5px 6px;
+    }
+    .race-item .ri-p-pos {
+      flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 700;
+      font-size: 12px; color: var(--muted); width: 16px; text-align: center;
+    }
+    .race-item .ri-p-pos small { font-size: 7px; display: block; font-weight: 400; }
+    .race-item .ri-p:first-child .ri-p-pos { color: #ffd700; }
+    .race-item .ri-p-avatar { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; }
+    .race-item .ri-p-info { min-width: 0; }
+    .race-item .ri-p-info .acr { display: block; font-weight: 700; font-size: 11px; }
+    .race-item .ri-p-info .gap {
+      display: block; font-size: 9px; color: var(--muted);
       font-family: 'JetBrains Mono', monospace;
     }
-    .race-item .ri-p i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
-    .race-item .ri-p .acr { font-weight: 700; width: 28px; flex: 0 0 auto; }
-    .race-item .ri-p .gap { color: var(--muted); margin-left: auto; }
-    .race-item .ri-p:first-child .acr { color: #ffd700; }
 
     #briefing { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
     .card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; }
@@ -279,7 +305,7 @@
     /* championship standings — the default landing view: schedule (in
        #race-list) plus these two cards form three roughly equal columns */
     #briefing.standings-view { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
-    .standings-card { flex: 1 1 240px; min-width: 220px; }
+    .standings-card { flex: 1 1 200px; min-width: 190px; max-width: 300px; }
     .standings-card h2 { font-size: 11px; letter-spacing: 1px; color: var(--purple); margin-bottom: 6px; text-transform: uppercase; }
     .standings-row {
       display: flex; align-items: center; gap: 6px; padding: 3px 0;
@@ -303,9 +329,10 @@
         -webkit-overflow-scrolling: touch;
       }
       .race-item {
-        flex: 0 0 auto; border: 1px solid var(--border); min-width: 190px;
+        flex: 0 0 auto; border: 1px solid var(--border); min-width: 240px;
       }
       .race-item.active { border-left: 3px solid var(--red); }
+      .race-item .ri-podium { flex-direction: column; }
       #briefing { width: 100%; }
       canvas { max-width: 100%; height: auto; }
       .prose { font-size: 13px; }

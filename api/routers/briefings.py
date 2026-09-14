@@ -25,10 +25,12 @@ def race_list(year: int = 2026):
     """Completed Grand Prix weekends for the year, newest first, with the
     official weekend name (OpenF1's own `meeting_official_name`, e.g.
     "FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2026" -- not something built
-    up here) and the top-3 podium. A sprint isn't its own race weekend --
-    it's folded into its Grand Prix's entry as a `sprint` sub-object
-    (session_key/date only, no separate podium) rather than listed as a
-    second, competing card."""
+    up here), a `round_number` (computed across the whole season calendar,
+    not just the completed ones, so it matches /api/next_meeting's numbering)
+    and the top-3 podium. A sprint isn't its own race weekend -- it's folded
+    into its Grand Prix's entry as a `sprint` sub-object (session_key/date
+    only, no separate podium) rather than listed as a second, competing
+    card."""
     try:
         sessions = _cache_get(f"race_list:{year}")
         if sessions is None:
@@ -38,6 +40,24 @@ def race_list(year: int = 2026):
             now = datetime.now(timezone.utc)
             official_name = {m["meeting_key"]: m.get("meeting_official_name")
                              for m in _get("meetings", year=year)}
+
+            # Round numbers, computed across the WHOLE season (completed and
+            # still-upcoming alike) so a completed race's number matches what
+            # the hero/next_meeting already shows for the calendar overall.
+            gp_first_seen: dict = {}
+            for s in raw:
+                if s.get("session_type", "").lower() != "race":
+                    continue
+                if "sprint" in s.get("session_name", "").lower():
+                    continue
+                mk = s.get("meeting_key")
+                d = s.get("date_start")
+                if mk is None or not d:
+                    continue
+                if mk not in gp_first_seen or d < gp_first_seen[mk]:
+                    gp_first_seen[mk] = d
+            round_number = {mk: i for i, mk in
+                            enumerate(sorted(gp_first_seen, key=lambda k: gp_first_seen[k]), 1)}
 
             by_meeting: dict = {}
             # A sprint (Saturday) normally completes before its own Grand
@@ -97,6 +117,7 @@ def race_list(year: int = 2026):
                     "date_start":   s.get("date_start"),
                     "year":         s.get("year"),
                     "official_name": official_name.get(mk),
+                    "round_number": round_number.get(mk),
                     "podium": podium,
                     "sprint": None,
                 }
@@ -116,6 +137,7 @@ def race_list(year: int = 2026):
                     "date_start":   s.get("date_start"),
                     "year":         s.get("year"),
                     "official_name": official_name.get(mk),
+                    "round_number": round_number.get(mk),
                     "podium": [],
                     "sprint": None,
                 }

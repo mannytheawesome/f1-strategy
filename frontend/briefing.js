@@ -62,15 +62,28 @@
     countdownTimer = setInterval(tick, 1000);
   }
 
+  const ORDINAL_SUFFIX = { 1: 'ST', 2: 'ND', 3: 'RD' };
+
   function podiumHTML(podium) {
     if (!podium || !podium.length) return '';
     const rows = podium.map(p => {
-      const gap = (p.position === 1 || p.gap_to_leader == null) ? ''
+      const gap = (p.position === 1 || p.gap_to_leader == null) ? '—'
         : `+${Number(p.gap_to_leader).toFixed(1)}`;
       const colour = (p.team_colour || '888888').replace('#', '');
-      return `<div class="ri-p"><i style="background:#${colour}"></i><span class="acr">${p.acronym}</span><span class="gap">${gap}</span></div>`;
+      return `<div class="ri-p">
+        <span class="ri-p-pos">${p.position}<small>${ORDINAL_SUFFIX[p.position] || ''}</small></span>
+        <span class="ri-p-avatar" style="background:#${colour}"></span>
+        <span class="ri-p-info"><span class="acr">${p.acronym}</span><span class="gap">${gap}</span></span>
+      </div>`;
     }).join('');
     return `<div class="ri-podium">${rows}</div>`;
+  }
+
+  const SHORT_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  function shortDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return `${String(d.getUTCDate()).padStart(2, '0')} ${SHORT_MONTHS[d.getUTCMonth()]}`;
   }
 
   async function loadRaces() {
@@ -89,10 +102,15 @@
         const div = document.createElement('div');
         div.className = 'race-item';
         div.style.borderLeft = '3px solid var(--green)';
-        div.innerHTML = `<div class="ri-top">
-            <span><span class="flag">${flagFor(next.country_name)}</span><span class="ri-circuit">${(next.circuit_short_name || next.country_name || '').toUpperCase()}</span></span>
-            <span class="ri-date" style="color:var(--green)">UPCOMING</span>
-          </div>`;
+        div.innerHTML = `<div class="ri-header">
+            <span class="ri-round-chip">ROUND ${next.round_number}</span>
+            <span class="ri-date-chip" style="color:var(--green);border-color:rgba(0,210,70,0.4)">● LIVE</span>
+          </div>
+          <div class="ri-title-row">
+            <span class="flag">${flagFor(next.country_name)}</span>
+            <span class="ri-circuit">${(next.circuit_short_name || next.country_name || '').toUpperCase()}</span>
+          </div>
+          <div class="ri-official" style="color:var(--green)">UPCOMING · PRE-RACE BRIEFING AVAILABLE</div>`;
         div.onclick = () => { markActive(div); loadPrerace(next.meeting_key); };
         el.appendChild(div);
       }
@@ -103,11 +121,16 @@
         // /api/races) rather than listed as a second, competing entry — it
         // only ever stands alone here if the sprint has run but the GP
         // itself hasn't finished yet (mid-weekend).
-        const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
         const sprintBadge = r.sprint ? '<span class="ri-sprint-badge">SPRINT WKND</span>' : '';
-        div.innerHTML = `<div class="ri-top">
-            <span><span class="flag">${flagFor(r.country_name)}</span><span class="ri-circuit">${(r.circuit_short_name || r.country_name || '').toUpperCase()}</span>${sprintBadge}</span>
-            <span class="ri-date">${kind} · ${(r.date_start || '').slice(5, 10)}</span>
+        const roundLabel = r.round_number ? `ROUND ${r.round_number}` : '';
+        div.innerHTML = `<div class="ri-header">
+            <span class="ri-round-chip">${roundLabel}</span>
+            <span class="ri-date-chip">🏁 ${shortDate(r.date_start)}</span>
+          </div>
+          <div class="ri-title-row">
+            <span class="flag">${flagFor(r.country_name)}</span>
+            <span class="ri-circuit">${(r.circuit_short_name || r.country_name || '').toUpperCase()}</span>
+            ${sprintBadge}
           </div>
           <div class="ri-official">${r.official_name || r.country_name}</div>
           ${podiumHTML(r.podium)}`;
