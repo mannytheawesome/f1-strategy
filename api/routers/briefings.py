@@ -77,8 +77,13 @@ def prerace_briefing(meeting_key: int, total_laps: int = None,
 
 @router.get("/api/next_meeting")
 def next_meeting(year: int = 2026):
-    """The meeting whose grand prix hasn't run yet but which already has at
-    least one completed session — i.e. the weekend currently in progress."""
+    """The next meeting on the calendar, whose grand prix hasn't run yet.
+    `in_progress` distinguishes two cases the frontend needs to treat
+    differently: True means at least one session has completed, so a
+    pre-race briefing can actually be built (FP/quali data exists) --
+    False means it's purely a future date with nothing to build from yet
+    (build_prerace_data would just raise "no completed sessions"), so the
+    frontend should show a countdown, not try to load a briefing."""
     try:
         cached = _cache_get(f"next_meeting:{year}", max_age=600)
         if cached is not None:
@@ -96,7 +101,8 @@ def next_meeting(year: int = 2026):
                                          "country_name": s.get("country_name"),
                                          "circuit_short_name": s.get("circuit_short_name"),
                                          "race_date": None, "race_done": False,
-                                         "completed_sessions": []})
+                                         "completed_sessions": [],
+                                         "is_sprint_weekend": False})
             end = s.get("date_end")
             done = False
             if end:
@@ -104,18 +110,30 @@ def next_meeting(year: int = 2026):
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
                 done = end_dt < now
+            name = s.get("session_name", "")
+            if "sprint" in name.lower() and "qualifying" not in name.lower():
+                m["is_sprint_weekend"] = True
             is_gp = (s.get("session_type", "").lower() == "race"
-                     and "sprint" not in s.get("session_name", "").lower())
+                     and "sprint" not in name.lower())
             if is_gp:
                 m["race_date"] = s.get("date_start")
                 m["race_done"] = done
             elif done:
-                m["completed_sessions"].append(s.get("session_name"))
-        # race_date required: filters out test meetings, which have no GP
-        candidates = [m for m in meetings.values()
-                      if m["race_date"] and not m["race_done"] and m["completed_sessions"]]
-        candidates.sort(key=lambda m: m["race_date"])
-        result = {"meeting": candidates[0] if candidates else None}
+                m["completed_sessions"].append(name)
+        # race_date required: filters out test meetings, which have no GP.
+        all_gps = [m for m in meetings.values() if m["race_date"]]
+        all_gps.sort(key=lambda m: m["race_date"])
+        total_rounds = len(all_gps)
+        # Sorted ascending, so [0] is unambiguously the next GP on the
+        # calendar -- whether or not any of its sessions have run yet.
+        upcoming = [m for m in all_gps if not m["race_done"]]
+        chosen = upcoming[0] if upcoming else None
+        if chosen:
+            round_number = next(i for i, m in enumerate(all_gps, 1)
+                                if m["meeting_key"] == chosen["meeting_key"])
+            chosen = dict(chosen, in_progress=bool(chosen["completed_sessions"]),
+                         round_number=round_number, total_rounds=total_rounds)
+        result = {"meeting": chosen}
         _cache_set(f"next_meeting:{year}", result, 600)
         return result
     except Exception as e:

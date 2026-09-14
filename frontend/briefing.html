@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Race Briefings — F1 Strategy Predictor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/briefing.css?v=__ASSET_VERSION__">
 </head>
 <body>
@@ -11,6 +14,19 @@
     <h1>RACE BRIEFINGS</h1>
     <a href="/live">LIVE TIMING →</a>
   </header>
+
+  <div id="hero" class="hero" style="display:none">
+    <div class="hero-bg"></div>
+    <div class="hero-content">
+      <div class="hero-top-row">
+        <span class="hero-chip" id="hero-round-chip">ROUND —</span>
+        <span class="hero-chip hero-chip-sprint" id="hero-sprint-chip" style="display:none">SPRINT WEEKEND</span>
+      </div>
+      <div class="hero-country" id="hero-country">—</div>
+      <div class="hero-circuit" id="hero-circuit"></div>
+      <div class="hero-countdown" id="hero-countdown"></div>
+    </div>
+  </div>
 
   <div class="layout">
     <div id="race-list">

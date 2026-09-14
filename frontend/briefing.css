@@ -26,21 +26,81 @@
     header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 3px 10px; }
     header a:hover { background: rgba(255,255,255,0.15); }
 
+    /* ── hero: next race ── */
+    .hero {
+      position: relative; overflow: hidden;
+      padding: 34px 28px 30px;
+      border-bottom: 1px solid var(--border);
+    }
+    .hero-bg {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 900px 420px at 12% -10%, rgba(232,0,45,0.28), transparent 60%),
+        linear-gradient(180deg, #150808 0%, var(--bg) 100%);
+      z-index: 0;
+    }
+    .hero-bg::after {
+      /* faint checkered strip, bottom-right — a nod to the flag without
+         aping any real broadcast graphic */
+      content: ""; position: absolute; right: -40px; bottom: -40px;
+      width: 220px; height: 220px; opacity: 0.05;
+      background-image:
+        linear-gradient(45deg, #fff 25%, transparent 25%, transparent 75%, #fff 75%),
+        linear-gradient(45deg, #fff 25%, transparent 25%, transparent 75%, #fff 75%);
+      background-size: 28px 28px; background-position: 0 0, 14px 14px;
+      transform: rotate(-12deg);
+    }
+    .hero-content { position: relative; z-index: 1; }
+    .hero-top-row { display: flex; gap: 8px; margin-bottom: 14px; }
+    .hero-chip {
+      display: inline-block; font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; letter-spacing: 1.5px; color: var(--text);
+      border: 1px solid rgba(255,255,255,0.25); border-radius: 3px;
+      padding: 4px 10px; background: rgba(255,255,255,0.04);
+    }
+    .hero-chip-sprint { color: var(--green); border-color: rgba(0,210,70,0.4); }
+    .hero-country {
+      font-family: 'Oswald', sans-serif; font-weight: 700;
+      font-size: clamp(32px, 5.5vw, 58px); line-height: 1.02;
+      letter-spacing: 0.5px; text-transform: uppercase; color: #fff;
+    }
+    .hero-circuit {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      color: var(--muted); margin-top: 8px; letter-spacing: 0.5px;
+    }
+    .hero-countdown { display: flex; gap: 10px; margin-top: 22px; }
+    .hero-countdown .unit {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+      border-radius: 4px; padding: 8px 14px; min-width: 62px; text-align: center;
+    }
+    .hero-countdown .unit .n {
+      font-family: 'JetBrains Mono', monospace; font-weight: 700;
+      font-size: 26px; color: #fff; line-height: 1;
+    }
+    .hero-countdown .unit .u {
+      font-family: 'JetBrains Mono', monospace; font-size: 9px;
+      letter-spacing: 1.5px; color: var(--muted); margin-top: 5px;
+    }
+    .hero-countdown.live .n { color: var(--green); }
+
     .layout { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
 
     #race-list {
       flex: 0 0 250px;
       background: var(--surface); border: 1px solid var(--border);
-      padding: 10px;
+      padding: 10px; border-radius: 4px;
     }
     #race-list h2 { font-size: 11px; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
     .race-item {
-      padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border);
+      padding: 9px 10px; cursor: pointer; border-radius: 3px;
+      margin-bottom: 2px; transition: background 0.12s ease;
       display: flex; justify-content: space-between; align-items: baseline;
+      border-left: 3px solid transparent;
     }
     .race-item:hover { background: #222; }
     .race-item.active { background: #2a1215; border-left: 3px solid var(--red); }
     .race-item .name { font-weight: 700; }
+    .race-item .name .flag { margin-right: 6px; }
     .race-item .kind { font-size: 10px; color: var(--muted); }
 
     #briefing { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
@@ -176,4 +236,8 @@
       #briefing { width: 100%; }
       canvas { max-width: 100%; height: auto; }
       .prose { font-size: 13px; }
+      .hero { padding: 22px 16px 20px; }
+      .hero-countdown { flex-wrap: wrap; }
+      .hero-countdown .unit { min-width: 54px; padding: 6px 10px; }
+      .hero-countdown .unit .n { font-size: 20px; }
     }

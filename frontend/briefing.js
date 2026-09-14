@@ -9,6 +9,59 @@
   let customizeOpen = { recap: false, prerace: false };
 
   // ── race list ──────────────────────────────────────────────────────────────
+  const COUNTRY_FLAGS = {
+    'Australia': '🇦🇺', 'China': '🇨🇳', 'Japan': '🇯🇵', 'Bahrain': '🇧🇭',
+    'Saudi Arabia': '🇸🇦', 'United States': '🇺🇸', 'Canada': '🇨🇦',
+    'Monaco': '🇲🇨', 'Spain': '🇪🇸', 'Austria': '🇦🇹', 'United Kingdom': '🇬🇧',
+    'Great Britain': '🇬🇧', 'Belgium': '🇧🇪', 'Hungary': '🇭🇺',
+    'Netherlands': '🇳🇱', 'Italy': '🇮🇹', 'Azerbaijan': '🇦🇿',
+    'Singapore': '🇸🇬', 'Mexico': '🇲🇽', 'Brazil': '🇧🇷', 'Qatar': '🇶🇦',
+    'United Arab Emirates': '🇦🇪', 'Abu Dhabi': '🇦🇪',
+  };
+  const flagFor = country => COUNTRY_FLAGS[country] || '🏁';
+
+  let countdownTimer = null;
+
+  function renderHero(next) {
+    const hero = document.getElementById('hero');
+    if (!next) { hero.style.display = 'none'; return; }
+    hero.style.display = 'block';
+    document.getElementById('hero-round-chip').textContent =
+      `ROUND ${next.round_number} OF ${next.total_rounds}`;
+    const sprintChip = document.getElementById('hero-sprint-chip');
+    sprintChip.style.display = next.is_sprint_weekend ? 'inline-block' : 'none';
+    document.getElementById('hero-country').innerHTML =
+      `${flagFor(next.country_name)} ${next.country_name}`;
+    document.getElementById('hero-circuit').textContent =
+      (next.circuit_short_name || '').toUpperCase()
+      + (next.in_progress ? ' · RACE WEEK — LIVE DATA IN' : ' · LIGHTS OUT IN');
+    startCountdown(next.race_date);
+  }
+
+  function startCountdown(raceDateIso) {
+    if (countdownTimer) clearInterval(countdownTimer);
+    const el = document.getElementById('hero-countdown');
+    const target = new Date(raceDateIso).getTime();
+    const unit = (n, label) => `<div class="unit"><div class="n">${String(n).padStart(2,'0')}</div><div class="u">${label}</div></div>`;
+    const tick = () => {
+      const diff = target - Date.now();
+      if (diff <= 0) {
+        el.classList.add('live');
+        el.innerHTML = '<div class="unit"><div class="n">●</div><div class="u">RACE WEEK LIVE</div></div>';
+        clearInterval(countdownTimer);
+        return;
+      }
+      const s = Math.floor(diff / 1000);
+      const days = Math.floor(s / 86400);
+      const hrs = Math.floor((s % 86400) / 3600);
+      const mins = Math.floor((s % 3600) / 60);
+      const secs = s % 60;
+      el.innerHTML = unit(days, 'DAYS') + unit(hrs, 'HRS') + unit(mins, 'MIN') + unit(secs, 'SEC');
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
   async function loadRaces() {
     try {
       const [racesRes, nextRes] = await Promise.all([
@@ -17,28 +70,37 @@
       ]);
       const data = await racesRes.json();
       const next = (await nextRes.json()).meeting;
+      renderHero(next);
       const el = document.getElementById('race-items');
       el.classList.remove('spin');
       el.innerHTML = '';
-      if (next) {
+      let autoItem = null, autoAction = null;
+      if (next && next.in_progress) {
         const div = document.createElement('div');
         div.className = 'race-item';
         div.style.borderLeft = '3px solid var(--green)';
-        div.innerHTML = `<span class="name">${next.country_name}</span>
+        div.innerHTML = `<span class="name"><span class="flag">${flagFor(next.country_name)}</span>${next.country_name}</span>
           <span class="kind" style="color:var(--green)">UPCOMING · PRE-RACE</span>`;
         div.onclick = () => { markActive(div); loadPrerace(next.meeting_key); };
         el.appendChild(div);
+        autoItem = div; autoAction = () => loadPrerace(next.meeting_key);
       }
       for (const r of data.races) {
         const div = document.createElement('div');
         div.className = 'race-item';
         const kind = r.session_name === 'Sprint' ? 'SPRINT' : 'RACE';
-        div.innerHTML = `<span class="name">${r.country_name}</span>
+        div.innerHTML = `<span class="name"><span class="flag">${flagFor(r.country_name)}</span>${r.country_name}</span>
           <span class="kind">${kind} · ${(r.date_start || '').slice(5, 10)}</span>`;
         div.onclick = () => { markActive(div); loadBriefing(r.session_key, r.meeting_key); };
         el.appendChild(div);
+        // Falls back to the most recent completed race (list is newest-first)
+        // whenever there's no in-progress weekend to open instead — the page
+        // should never land on the empty "select a race" state if there's
+        // anything at all to show.
+        if (!autoItem) { autoItem = div; autoAction = () => loadBriefing(r.session_key, r.meeting_key); }
       }
       if (!data.races.length && !next) el.textContent = 'No races yet.';
+      if (autoItem) { markActive(autoItem); autoAction(); }
     } catch (e) {
       document.getElementById('race-items').textContent = 'Failed to load races.';
     }
