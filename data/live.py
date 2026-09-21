@@ -6,6 +6,8 @@ each driver's stint/tyre state, lap times, sector times, and track position.
 
 import os
 import time
+import json
+import sqlite3
 import threading
 import requests
 from datetime import datetime, timezone
@@ -127,7 +129,12 @@ def _auth_headers() -> dict:
     return {}
 
 # ---------------------------------------------------------------------------
-# Simple in-memory cache — avoids re-fetching static historical data
+# In-memory cache, backed by a persistent disk cache (L2) — avoids
+# re-fetching static historical data, and avoids re-fetching it AGAIN after
+# every redeploy, which previously wiped this in-memory dict from scratch
+# each time. The disk layer only stores entries with ttl >= HIST_TTL (skips
+# the frequent 10s live-polling writes, which gain nothing from surviving a
+# restart and would just add I/O to the hottest path for no benefit).
 # ---------------------------------------------------------------------------
 
 _cache: dict = {}
@@ -137,28 +144,95 @@ _cache_lock = threading.Lock()
 # sector polling on top. TTL=10s keeps the total comfortably under budget.
 LIVE_TTL = 10      # seconds — re-fetch live session data frequently
 HIST_TTL = 3600    # seconds — historical data never changes
+# For data provably tied to a long-since-completed race (post-race debriefs,
+# the season schedule/podiums, standings) — NOT a safe default for anything
+# reachable while a session could still be live or has *just* ended, since
+# OpenF1 can lag briefly finalising the last laps of a session. Only wired
+# into call sites that are already filtered to `date_end` well in the past.
+HIST_TTL_FINAL = 10 * 365 * 24 * 3600   # ~10 years — "forever" in practice
+
+HTTP_CACHE_DB_PATH = os.environ.get("HTTP_CACHE_DB_PATH", "var/http_cache.db")
+_disk_lock = threading.Lock()
+
+
+def _disk_conn() -> sqlite3.Connection:
+    dirname = os.path.dirname(HTTP_CACHE_DB_PATH)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
+    conn = sqlite3.connect(HTTP_CACHE_DB_PATH)
+    conn.execute("""CREATE TABLE IF NOT EXISTS cache (
+        key TEXT PRIMARY KEY, data TEXT NOT NULL,
+        fetched_at REAL NOT NULL, ttl REAL NOT NULL
+    )""")
+    return conn
+
+
+def _disk_get(key: str):
+    with _disk_lock:
+        conn = _disk_conn()
+        try:
+            row = conn.execute(
+                "SELECT data, fetched_at, ttl FROM cache WHERE key=?", (key,)).fetchone()
+        finally:
+            conn.close()
+    if row is None:
+        return None
+    data_json, fetched_at, ttl = row
+    try:
+        return json.loads(data_json), fetched_at, ttl
+    except Exception:
+        return None
+
+
+def _disk_set(key: str, data, fetched_at: float, ttl: float):
+    try:
+        data_json = json.dumps(data)
+    except TypeError:
+        return   # not JSON-serialisable — memory-only for this entry
+    with _disk_lock:
+        conn = _disk_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO cache (key, data, fetched_at, ttl) VALUES (?, ?, ?, ?)",
+                (key, data_json, fetched_at, ttl))
+            conn.commit()
+        finally:
+            conn.close()
+
 
 def _cache_get(key: str, max_age: float | None = None):
     """Freshness is reader-decided: an entry is served only if it is younger
     than BOTH the TTL it was stored with and the caller's max_age. This stops
     a long-TTL writer (e.g. /api/predict fetching race laps with HIST_TTL)
     from pinning hour-old data onto short-TTL readers (/api/live) during a
-    live session — the bug that froze the live board mid-race."""
+    live session — the bug that froze the live board mid-race.
+
+    On an in-memory miss, falls through to the disk cache (survives a
+    restart/redeploy) before treating it as a genuine miss."""
     with _cache_lock:
         entry = _cache.get(key)
-        if entry is None:
+    if entry is None:
+        disk = _disk_get(key)
+        if disk is None:
             return None
-        data, fetched_at, stored_ttl = entry
-        limit = stored_ttl if max_age is None else min(stored_ttl, max_age)
-        if time.time() - fetched_at > limit:
-            if time.time() - fetched_at > stored_ttl:
-                del _cache[key]
-            return None
-        return data
+        entry = disk
+        with _cache_lock:
+            _cache.setdefault(key, entry)
+    data, fetched_at, stored_ttl = entry
+    limit = stored_ttl if max_age is None else min(stored_ttl, max_age)
+    if time.time() - fetched_at > limit:
+        if time.time() - fetched_at > stored_ttl:
+            with _cache_lock:
+                _cache.pop(key, None)
+        return None
+    return data
 
 def _cache_set(key: str, data, ttl: float):
+    fetched_at = time.time()
     with _cache_lock:
-        _cache[key] = (data, time.time(), ttl)
+        _cache[key] = (data, fetched_at, ttl)
+    if ttl >= HIST_TTL:
+        _disk_set(key, data, fetched_at, ttl)
 
 def _ttl_for_session(session: dict) -> float:
     """Historical sessions get a long TTL; live sessions get a short one."""

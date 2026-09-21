@@ -447,6 +447,57 @@ Debug: `/api/debug/openf1_auth`, `/api/debug/anthropic_auth`.
   filtering (no OpenF1 calls). Don't add per-lap network fetches.
 - Backtest harness (`backtest_full.py`) has its own resumable disk cache in
   `cache/` and calls the engine **directly, without HTTP** — the accuracy path.
+- **Disk-persistent cache (added 2026-09-21).** `data/live.py`'s
+  `_cache`/`_cache_get`/`_cache_set` was purely in-memory, so every Railway
+  redeploy wiped it and forced a fresh OpenF1 fetch burst on the next
+  requests — this project deploys often, so that burst was happening
+  routinely, not just occasionally. Added a disk-backed L2 layer (SQLite,
+  `HTTP_CACHE_DB_PATH`, defaults to `var/http_cache.db` locally) that
+  `_cache_get` falls through to on an in-memory miss, and `_cache_set`
+  writes through to for anything with `ttl >= HIST_TTL` (skips the frequent
+  10s live-polling writes, which gain nothing from surviving a restart).
+  Production needs `HTTP_CACHE_DB_PATH=/data/http_cache.db` set (same
+  Railway volume as the analytics DB, see "Site analytics" above) or this
+  reverts to ephemeral-only.
+- **`HIST_TTL_FINAL` (~10 years — "forever" in practice).** User-requested:
+  as visitor traffic grows, don't keep re-fetching data for races that will
+  never change again. NOT a safe default everywhere — a session-scoped
+  cache key (e.g. `laps:{session_key}`) doesn't know whether it was first
+  populated while that session was still live, so blindly raising the
+  global `HIST_TTL` would risk permanently freezing a partial mid-race
+  snapshot the moment a live viewer's request happened to populate it.
+  Only wired into call sites that are already provably scoped to a
+  long-completed session: `engine/briefing.py` (post-race debriefs, by
+  definition only for finished races) and `api/routers/briefings.py`'s
+  `race_list`/`standings` (both already filter to `date_end` in the past
+  before touching per-session data, including the `session_result` fetch,
+  which is now routed through `_cached_get` instead of a bare, uncached
+  `_get` call — previously this ran on EVERY cache-rebuild of the season
+  schedule/standings, one OpenF1 call per completed race in the season,
+  regardless of whether anything had actually changed). Deliberately left
+  `engine/prerace.py` on the regular `HIST_TTL` — a "completed" FP/quali
+  session there can be as recent as `date_end` a few seconds in the past,
+  and OpenF1 can lag briefly finalising a session's last laps, so granting
+  those effectively-forever trust felt like the wrong safety margin without
+  separately verifying a buffer window. The outer `race_list`/`standings`
+  response cache itself (`_cache_set(..., 1800)`) was deliberately left at
+  30 minutes, not `HIST_TTL_FINAL` — that's what makes a newly-completed
+  race actually appear in the schedule promptly; only the *per-race* lookups
+  inside it (drivers/session_result for races already known to be over) got
+  the forever treatment.
+- Verified end-to-end against the real dev server: cold-start `/api/races`
+  ~9.9s (full OpenF1 fetch across the season) → after a killed-and-restarted
+  process (simulating a redeploy) ~4.4s (session_result/drivers reused from
+  disk, only the season's `sessions`/`meetings` lists and the outer
+  race_list/standings response actually re-fetch/rebuild) → same-process
+  repeat ~0.02s (pure in-memory hit). 8 new tests
+  (`tests/test_live_cache.py`) plus `tests/test_races_and_standings.py`'s
+  fixtures updated to isolate `data.live`'s module-global cache state
+  between tests (a real test-isolation gap this surfaced: several existing
+  tests reuse `meeting_key=1`, so without resetting `_cache`/`_stale`
+  between tests, a fetch-failure test could silently see "stale" data an
+  earlier test's successful fetch left behind, instead of genuinely
+  exercising the failure path).
 
 ### OpenF1 quirks
 - All endpoints return lists — always sort/filter client-side.

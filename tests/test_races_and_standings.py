@@ -4,7 +4,24 @@ Unit tests for /api/races' podium/official_name additions and the new
 list (official weekend name + top-3 podium per race card) and
 championship standings display.
 """
+import pytest
+
 import api.routers.briefings as briefings
+import data.live as live
+
+
+@pytest.fixture(autouse=True)
+def _isolated_live_cache(tmp_path, monkeypatch):
+    """_cached_get (used for the HIST_TTL_FINAL session_result caching) reads
+    and writes data.live's module-global _cache/_stale dicts and disk-backed
+    HTTP_CACHE_DB_PATH -- several tests below reuse meeting_key=1 (same
+    session_key), so without resetting this state a fetch-failure test could
+    silently see "stale" data left behind by an earlier test's successful
+    fetch instead of genuinely exercising the failure path."""
+    monkeypatch.setattr(live, "_cache", {})
+    monkeypatch.setattr(live, "_stale", {})
+    monkeypatch.setattr(live, "HTTP_CACHE_DB_PATH", str(tmp_path / "http_cache.db"))
+    yield
 
 
 def _session(meeting_key, country, circuit, session_type, session_name,
@@ -39,6 +56,16 @@ class TestRaceListPodium:
         monkeypatch.setattr(briefings, "_get", fake_get)
         monkeypatch.setattr(briefings, "get_drivers",
                             lambda sk, ttl: drivers_by_session.get(sk, {}))
+        # session_result now goes through data.live._cached_get (for the
+        # HIST_TTL_FINAL persistent-cache change) rather than a bare _get
+        # call -- _cached_get is a data.live function, so it resolves _get/
+        # _cache_get/_cache_set from THAT module's globals at call time, not
+        # from whatever api.routers.briefings rebound its own import to.
+        # Patching those too keeps this test hermetic (no real network
+        # calls) and stops it silently falling through to live OpenF1.
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", fake_get)
 
     def test_race_gets_official_name_and_podium(self, monkeypatch):
         sessions = [_session(1, "China", "Shanghai", "Race", "Race",
@@ -160,6 +187,12 @@ class TestStandings:
         monkeypatch.setattr(briefings, "_get", fake_get)
         monkeypatch.setattr(briefings, "get_drivers",
                             lambda sk, ttl: drivers_by_session.get(sk, {}))
+        # See TestRaceListPodium._patch -- session_result now goes through
+        # data.live._cached_get, which resolves _get/_cache_get/_cache_set
+        # from data.live's own globals, not briefings' rebound imports.
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", fake_get)
 
     def test_points_summed_across_multiple_races(self, monkeypatch):
         sessions = [

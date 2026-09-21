@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from data.live import _get, _cache_get, _cache_set, get_drivers, HIST_TTL
+from data.live import _get, _cached_get, _cache_get, _cache_set, get_drivers, HIST_TTL_FINAL
 
 router = APIRouter()
 
@@ -93,11 +93,14 @@ def race_list(year: int = 2026):
 
                 podium = []
                 try:
+                    session_result = _cached_get(
+                        f"session_result:{s['session_key']}", "session_result",
+                        HIST_TTL_FINAL, session_key=s["session_key"])
                     results = sorted(
-                        [r for r in _get("session_result", session_key=s["session_key"])
+                        [r for r in session_result
                          if r.get("position") and r["position"] <= 3],
                         key=lambda r: r["position"])
-                    drivers = get_drivers(s["session_key"], HIST_TTL)
+                    drivers = get_drivers(s["session_key"], HIST_TTL_FINAL)
                     for r in results:
                         d = drivers.get(r["driver_number"], {})
                         podium.append({
@@ -190,8 +193,9 @@ def standings(year: int = 2026):
 
         for sk in scoring_keys:
             try:
-                results = _get("session_result", session_key=sk)
-                drivers = get_drivers(sk, HIST_TTL)
+                results = _cached_get(f"session_result:{sk}", "session_result",
+                                      HIST_TTL_FINAL, session_key=sk)
+                drivers = get_drivers(sk, HIST_TTL_FINAL)
             except Exception:
                 continue
             for r in results:

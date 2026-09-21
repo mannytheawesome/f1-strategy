@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from data.live import (
     get_session, get_laps, get_stints, get_drivers, build_state,
     get_sc_laps_from_race_control, get_avg_pit_loss, get_weather_summary,
-    get_quali_times, get_yellow_laps, _get, HIST_TTL,
+    get_quali_times, get_yellow_laps, _get, HIST_TTL_FINAL,
 )
 from engine.predictor import (
     build_deg_curves, build_pace_model, detect_sc, curves_to_dict, SCEvent,
@@ -287,9 +287,9 @@ def build_briefing_data(session_key: int) -> dict:
     if mode_raw != "race":
         raise ValueError("briefings are only available for races and sprints")
 
-    all_laps    = get_laps(session_key, HIST_TTL)
-    stints_raw  = get_stints(session_key, HIST_TTL)
-    drivers_raw = get_drivers(session_key, HIST_TTL)
+    all_laps    = get_laps(session_key, HIST_TTL_FINAL)
+    stints_raw  = get_stints(session_key, HIST_TTL_FINAL)
+    drivers_raw = get_drivers(session_key, HIST_TTL_FINAL)
     # Last *timed* lap = the race distance. Ignoring untimed laps drops the
     # post-flag in-lap (lap_duration=None) that OpenF1 logs beyond the chequered
     # flag, which otherwise inflates the distance by a lap and spawns a phantom
@@ -311,8 +311,8 @@ def build_briefing_data(session_key: int) -> dict:
                                     if s.get("session_type", "").lower() == "practice"][:3]):
                 try:
                     fp_data.append((fp_names[i],
-                                    get_laps(fp["session_key"], HIST_TTL),
-                                    get_stints(fp["session_key"], HIST_TTL)))
+                                    get_laps(fp["session_key"], HIST_TTL_FINAL),
+                                    get_stints(fp["session_key"], HIST_TTL_FINAL)))
                 except Exception:
                     pass
         except Exception:
@@ -320,7 +320,7 @@ def build_briefing_data(session_key: int) -> dict:
     fp_data.append(("RACE", all_laps, stints_raw))
     curves = build_deg_curves(fp_data)
 
-    rc_events = get_sc_laps_from_race_control(session_key, HIST_TTL)
+    rc_events = get_sc_laps_from_race_control(session_key, HIST_TTL_FINAL)
     if rc_events:
         sc_events = [SCEvent(e["start_lap"], e["end_lap"], e["type"]) for e in rc_events]
         sc_source = "race_control"
@@ -329,7 +329,7 @@ def build_briefing_data(session_key: int) -> dict:
         sc_source = "heuristic"
 
     quali_times = get_quali_times(meeting_key) if meeting_key else {}
-    yellow_laps = get_yellow_laps(session_key, HIST_TTL)
+    yellow_laps = get_yellow_laps(session_key, HIST_TTL_FINAL)
     pace_model = build_pace_model(all_laps, sc_events, drivers_raw, curves,
                                   stints_raw, quali_times=quali_times or None,
                                   exclude_laps=yellow_laps)
@@ -401,7 +401,7 @@ def build_briefing_data(session_key: int) -> dict:
     }
 
     acronyms = {r["driver_number"]: r["acronym"] for r in results}
-    pit_loss = get_avg_pit_loss(session_key, HIST_TTL)
+    pit_loss = get_avg_pit_loss(session_key, HIST_TTL_FINAL)
 
     # Tyre sets each driver still had at race start (for the what-if editor)
     try:
@@ -424,7 +424,7 @@ def build_briefing_data(session_key: int) -> dict:
             "year":         session.get("year"),
             "total_laps":   total_laps,
         },
-        "weather":     get_weather_summary(session_key, HIST_TTL),
+        "weather":     get_weather_summary(session_key, HIST_TTL_FINAL),
         "prerace_scorecard": _prerace_scorecard(meeting_key, results),
         "pit_loss":    pit_loss,
         "sc_events":   [{"start_lap": e.start_lap, "end_lap": e.end_lap, "type": e.type}
