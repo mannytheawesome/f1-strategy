@@ -1,3 +1,26 @@
+  // ── lightweight self-hosted analytics (see data/usage.py) ──────────────────
+  // Visitor identity is a random id kept in localStorage, never an IP or any
+  // other PII. sendBeacon fires on unload too and never blocks/fails visibly
+  // for the visitor even if the endpoint is down.
+  function _visitorId() {
+    let id = localStorage.getItem('f1_visitor_id');
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+      localStorage.setItem('f1_visitor_id', id);
+    }
+    return id;
+  }
+  function track(event_type, page, label) {
+    try {
+      const payload = JSON.stringify({ visitor_id: _visitorId(), event_type, page, label });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/track', new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch('/api/track', { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true });
+      }
+    } catch (e) { /* tracking must never break the page */ }
+  }
+
   // Column configs per session mode
   const MODE_COLS = {
     RACE:   '36px 44px 90px 44px 90px 80px 100px 110px 76px 60px 60px 60px 60px 60px 60px 70px 80px 100px 80px 130px',
@@ -1194,5 +1217,6 @@
     fetchReplayLap(replayLap);
   }
 
+  track('pageview', 'live');
   fetchData();
   fetchAndDrawStrategies();

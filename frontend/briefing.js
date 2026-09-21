@@ -1,3 +1,26 @@
+  // ── lightweight self-hosted analytics (see data/usage.py) ──────────────────
+  // Visitor identity is a random id kept in localStorage, never an IP or any
+  // other PII. sendBeacon fires on unload too and never blocks/fails visibly
+  // for the visitor even if the endpoint is down.
+  function _visitorId() {
+    let id = localStorage.getItem('f1_visitor_id');
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+      localStorage.setItem('f1_visitor_id', id);
+    }
+    return id;
+  }
+  function track(event_type, page, label) {
+    try {
+      const payload = JSON.stringify({ visitor_id: _visitorId(), event_type, page, label });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/track', new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch('/api/track', { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true });
+      }
+    } catch (e) { /* tracking must never break the page */ }
+  }
+
   const COMPOUNDS = ["SOFT", "MEDIUM", "HARD"];
   let currentBriefing = null;
   let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
@@ -111,7 +134,11 @@
             <span class="ri-circuit">${(next.circuit_short_name || next.country_name || '').toUpperCase()}</span>
           </div>
           <div class="ri-official" style="color:var(--green)">UPCOMING · PRE-RACE BRIEFING AVAILABLE</div>`;
-        div.onclick = () => { markActive(div); loadPrerace(next.meeting_key); };
+        div.onclick = () => {
+          markActive(div);
+          track('race_view', 'briefing', `${next.country_name} (prerace)`);
+          loadPrerace(next.meeting_key);
+        };
         el.appendChild(div);
       }
       for (const r of data.races) {
@@ -134,7 +161,11 @@
           </div>
           <div class="ri-official">${r.official_name || r.country_name}</div>
           ${podiumHTML(r.podium)}`;
-        div.onclick = () => { markActive(div); loadBriefing(r.session_key, r.meeting_key); };
+        div.onclick = () => {
+          markActive(div);
+          track('race_view', 'briefing', r.country_name);
+          loadBriefing(r.session_key, r.meeting_key);
+        };
         el.appendChild(div);
       }
       if (!data.races.length && !next) el.textContent = 'No races yet.';
@@ -337,6 +368,7 @@
     root.appendChild(head);
     wireToggle(head);
     head.querySelector('#btn-customize').onclick = () => {
+      if (!customizeOpen.recap) track('feature', 'briefing', 'customize_layout');
       customizeOpen.recap = !customizeOpen.recap;
       renderBriefing(b);
     };
@@ -691,6 +723,7 @@
     root.appendChild(head);
     wireToggle(head);
     head.querySelector('#btn-customize').onclick = () => {
+      if (!customizeOpen.prerace) track('feature', 'briefing', 'customize_layout');
       customizeOpen.prerace = !customizeOpen.prerace;
       renderPrerace(b);
     };
@@ -1039,6 +1072,7 @@
 
   // ── what-if editor ─────────────────────────────────────────────────────────
   function openEditor(driverNumber, rowEl) {
+    track('feature', 'briefing', 'whatif_open');
     document.querySelectorAll('tr.editing').forEach(e => e.classList.remove('editing'));
     rowEl.classList.add('editing');
     const d = currentBriefing.data;
@@ -1565,6 +1599,11 @@
       <div class="notice" style="font-size:10px">Both rows are model projections from the same lap-${r.anchor_lap} state, so the difference isolates the strategy change. All other drivers run their actual pit stops. Drivers who retired after lap ${r.anchor_lap} are simulated as finishing.</div>`;
   }
 
-  document.getElementById('standings-link').onclick = e => { e.preventDefault(); loadStandings(); };
+  document.getElementById('standings-link').onclick = e => {
+    e.preventDefault();
+    track('feature', 'briefing', 'standings');
+    loadStandings();
+  };
+  track('pageview', 'briefing');
   loadRaces();
   loadStandings();

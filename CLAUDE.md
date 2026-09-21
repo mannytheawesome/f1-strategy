@@ -290,6 +290,58 @@ uvicorn api.main:app --reload --port 8000
 - Never log or echo credential values. Diagnostics store outcomes only
   (`/api/debug/openf1_auth`, `/api/debug/anthropic_auth`).
 
+### Site analytics (`/admin`), added 2026-09-14
+User-requested self-hosted analytics: how many people are visiting, and
+which races/features they interact with most. Deliberately not a
+third-party service (Plausible/GA/etc.) — this is a personal-scale hobby
+project, and a plain SQLite table is enough.
+
+- **Public side**: `frontend/briefing.js` and `frontend/index.js` each carry
+  a small `track(event_type, page, label)` helper (duplicated, not shared —
+  matches this project's existing "no build step" convention). Visitor
+  identity is a random UUID generated client-side and kept in
+  `localStorage` (`f1_visitor_id`) — never an IP address or any other PII.
+  Events fire via `navigator.sendBeacon` so they can never block the page
+  or surface an error to a visitor, even if the endpoint is down. Tracked:
+  `pageview` (briefing/live, on load), `race_view` (label = country name,
+  fired the moment a race card is clicked — not gated on the briefing
+  actually loading), `feature` (labels: `whatif_open`, `customize_layout`,
+  `standings`).
+- **Storage**: `data/usage.py`, a single `events` table
+  (ts, visitor_id, event_type, page, label). `record_event` no-ops on a
+  missing visitor_id/event_type and truncates oversized fields rather than
+  raising — `/api/track` is public and unauthenticated, so malformed input
+  must never be able to break or bloat the DB.
+- **Admin dashboard**: `frontend/admin.html`/`.css`/`.js`, served at `/admin`
+  (not linked from anywhere public, gated by ADMIN_TOKEN at the API layer,
+  not by obscurity). Prompts once for the token, stores it in
+  `localStorage`, sends it as an `X-Admin-Token` header on every
+  `/api/admin/stats` call. Shows: total/today/7-day unique visitors,
+  pageviews by page, most-viewed races, most-used features, a daily
+  pageview chart, and a raw recent-events log.
+- **Auth default is the OPPOSITE of `_regen_allowed`**: briefing
+  regeneration (`api/routers/briefings.py`) defaults OPEN when ADMIN_TOKEN
+  isn't configured (harmless — it just costs an LLM call). Stats access
+  (`_admin_allowed` in `api/routers/usage.py`) defaults CLOSED when
+  ADMIN_TOKEN isn't set — visitor data must never become accidentally
+  public just because nobody got around to setting a token.
+- **Persistence — requires a manual one-time Railway step.** Railway's
+  filesystem resets on every redeploy (this project deploys often), so
+  `ANALYTICS_DB_PATH` must point at a mounted persistent volume in
+  production or the dashboard resets to zero on the next push. Volumes
+  aren't configurable via `railway.toml` — they're a dashboard/CLI
+  resource:
+  1. Railway dashboard → this service → **Settings → Volumes → New Volume**.
+  2. Mount path: `/data`.
+  3. Add a service variable: `ANALYTICS_DB_PATH=/data/analytics.db`.
+  4. Redeploy.
+  Locally (and until the volume is set up in prod) it defaults to
+  `var/analytics.db`, gitignored, resets whenever that file is deleted.
+- 15 new tests (`tests/test_usage_analytics.py`): event recording
+  (including the malformed-input no-ops and truncation), stats aggregation
+  (top races/features don't leak into each other, unique-visitor counting,
+  recency ordering), and the admin-auth default-closed behavior.
+
 ---
 
 ## Architecture
@@ -298,6 +350,7 @@ uvicorn api.main:app --reload --port 8000
 frontend/
   briefing.html/.css/.js — briefings SPA (front door, served at "/")
   index.html/.css/.js    — live timing board SPA (served at "/live")
+  admin.html/.css/.js    — analytics dashboard (ADMIN_TOKEN-gated, "/admin")
 api/
   main.py                — app setup, CORS, router wiring, frontend serving (thin)
   helpers.py             — session-mode / driver serialisation / prediction block
@@ -307,7 +360,9 @@ api/
     analysis.py          — FP/quali analysis, tyre inventory, pre-race strategy
     strategy.py          — strategy generation, prediction engine, what-if
     briefings.py         — race listings, pre-race + post-race briefings
+    usage.py             — POST /api/track (public), GET /api/admin/stats
 data/live.py             — OpenF1 client: OAuth, polling, in-memory cache, build_state()
+data/usage.py            — self-hosted site analytics (SQLite; see "Site analytics")
 engine/
   predictor.py           — lap-by-lap race simulation engine (the accuracy core)
   degradation.py         — tyre deg curves via linear regression on session laps
@@ -377,6 +432,8 @@ Analysis: `/api/fp_analysis`, `/api/quali_analysis`, `/api/tyre_inventory`,
 `/api/strategies`, `/api/predict`, `/api/pre_race_strategy`,
 `/api/driver/{n}/laps`, `POST /api/whatif`.
 Briefings: `/api/prerace_briefing`, `/api/briefing`.
+Analytics: `POST /api/track` (public), `GET /api/admin/stats` (ADMIN_TOKEN via
+`X-Admin-Token` header) — see "Site analytics" below.
 Debug: `/api/debug/openf1_auth`, `/api/debug/anthropic_auth`.
 
 ---

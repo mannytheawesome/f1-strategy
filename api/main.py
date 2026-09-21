@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 
-from api.routers import meta, timing, analysis, strategy, briefings
+from api.routers import meta, timing, analysis, strategy, briefings, usage
 
 app = FastAPI(title="F1 Strategy Predictor")
 
@@ -52,6 +52,7 @@ app.include_router(timing.router)
 app.include_router(analysis.router)
 app.include_router(strategy.router)
 app.include_router(briefings.router)
+app.include_router(usage.router)
 
 
 # Serve frontend
@@ -68,6 +69,14 @@ def live_board():
     return _serve_page("index.html")
 
 
+@app.get("/admin")
+def admin_page():
+    # Not linked from anywhere public -- gated behind ADMIN_TOKEN at the API
+    # layer (see api/routers/usage.py), not by obscurity, but there's no
+    # reason to advertise it either.
+    return _serve_page("admin.html")
+
+
 # Direct .html paths (e.g. bookmarked /briefing.html) get the same version
 # injection — defined before the static mount so they win over the raw file.
 @app.get("/briefing.html")
@@ -78,6 +87,11 @@ def briefing_page():
 @app.get("/index.html")
 def index_page():
     return _serve_page("index.html")
+
+
+@app.get("/admin.html")
+def admin_html_page():
+    return _serve_page("admin.html")
 
 
 # Mounted last so it never shadows the API routes above.

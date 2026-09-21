@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin — F1 Strategy Predictor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin.css?v=__ASSET_VERSION__">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <h1>Admin</h1>
+        <span class="brand-sub">SITE ANALYTICS</span>
+      </div>
+      <div class="header-links">
+        <a href="/">← BACK TO SITE</a>
+      </div>
+    </div>
+  </header>
+
+  <div id="gate" class="gate">
+    <div class="card gate-card">
+      <h2>Enter admin token</h2>
+      <div class="notice">Same token as ADMIN_TOKEN on the server (used for briefing regeneration).</div>
+      <div class="gate-row">
+        <input type="password" id="token-input" placeholder="admin token" autocomplete="off">
+        <button id="unlock-btn">UNLOCK</button>
+      </div>
+      <div class="notice" id="gate-error" style="color:var(--red)"></div>
+    </div>
+  </div>
+
+  <div id="dashboard" class="dashboard" style="display:none">
+    <div class="toolbar">
+      <div class="days-select">
+        <button data-days="7">7D</button>
+        <button data-days="30" class="active">30D</button>
+        <button data-days="90">90D</button>
+      </div>
+      <button id="signout-btn">SIGN OUT</button>
+    </div>
+
+    <div id="content"></div>
+  </div>
+
+<script src="/admin.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>

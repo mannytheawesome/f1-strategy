@@ -1,0 +1,83 @@
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #e8e8e8;
+      --muted: #555;
+      --red: #e8002d;
+      --green: #00d246;
+      --purple: #9b00ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { max-width: 100%; overflow-x: hidden; }
+    body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
+
+    header {
+      background: #060606; border-bottom: 3px solid var(--purple);
+      box-shadow: 0 1px 0 rgba(155,0,255,0.25); padding: 0 18px;
+    }
+    .header-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      max-width: 1400px; margin: 0 auto; padding: 12px 0;
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
+    .brand-mark { display: inline-block; width: 9px; height: 20px; background: var(--purple); transform: skewX(-12deg); align-self: center; }
+    header h1 { font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 19px; letter-spacing: 0.5px; text-transform: uppercase; color: #fff; }
+    .brand-sub { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 2px; color: var(--muted); align-self: center; border-left: 1px solid var(--border); padding-left: 10px; }
+    .header-links { display: flex; gap: 8px; }
+    header a { color: #fff; text-decoration: none; font-size: 11px; border: 1px solid rgba(255,255,255,0.5); padding: 5px 12px; border-radius: 2px; white-space: nowrap; }
+    header a:hover { background: var(--purple); border-color: var(--purple); }
+
+    .card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; border-radius: 4px; }
+    .card h2 { font-size: 12px; letter-spacing: 1px; color: var(--purple); margin-bottom: 8px; text-transform: uppercase; }
+    .notice { color: var(--muted); font-style: italic; padding: 6px 0; font-size: 11px; }
+
+    .gate { display: flex; align-items: center; justify-content: center; min-height: 70vh; padding: 20px; }
+    .gate-card { width: 100%; max-width: 380px; }
+    .gate-row { display: flex; gap: 8px; margin-top: 10px; }
+    .gate-row input {
+      flex: 1; background: #111; border: 1px solid var(--border); color: var(--text);
+      font-family: inherit; font-size: 12px; padding: 8px 10px; border-radius: 3px;
+    }
+    .gate-row button, .toolbar button, .days-select button {
+      background: #222; color: var(--text); border: 1px solid var(--border);
+      font-family: inherit; font-size: 11px; padding: 8px 14px; border-radius: 3px; cursor: pointer;
+    }
+    .gate-row button:hover, .toolbar button:hover { background: var(--purple); border-color: var(--purple); }
+
+    .dashboard { max-width: 1400px; margin: 0 auto; padding: 14px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .days-select { display: flex; gap: 4px; }
+    .days-select button.active { background: var(--purple); border-color: var(--purple); }
+
+    .tile-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .tile { flex: 1 1 160px; }
+    .tile .n { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: #fff; }
+    .tile .l { font-size: 10px; letter-spacing: 0.5px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
+
+    .grid-2 { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .grid-2 > .card { flex: 1 1 380px; }
+
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+    .bar-label { flex: 0 0 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: #111; border-radius: 2px; height: 14px; position: relative; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--purple); }
+    .bar-count { flex: 0 0 34px; text-align: right; font-family: 'JetBrains Mono', monospace; color: var(--muted); }
+
+    .daily-chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin-top: 8px; }
+    .daily-bar { flex: 1; background: var(--purple); border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
+    .daily-bar:hover { background: var(--red); }
+    .daily-axis { display: flex; justify-content: space-between; font-size: 9px; color: var(--muted); margin-top: 4px; }
+
+    table.events { border-collapse: collapse; width: 100%; }
+    table.events th, table.events td { padding: 4px 8px; text-align: left; font-size: 10px; border-bottom: 1px solid var(--border); }
+    table.events th { color: var(--muted); font-weight: 400; letter-spacing: 1px; }
+    table.events .et-pageview { color: var(--green); }
+    table.events .et-race_view { color: var(--purple); }
+    table.events .et-feature { color: #ffd700; }
+
+    @media (max-width: 760px) {
+      .header-inner { flex-wrap: wrap; gap: 6px; padding: 10px 0; }
+      .brand-sub { display: none; }
+      .tile-row { gap: 8px; }
+    }
