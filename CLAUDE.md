@@ -498,6 +498,49 @@ Debug: `/api/debug/openf1_auth`, `/api/debug/anthropic_auth`.
   between tests, a fetch-failure test could silently see "stale" data an
   earlier test's successful fetch left behind, instead of genuinely
   exercising the failure path).
+- **Follow-up, same day, from a user audit ("are all the systems
+  optimized... no routes doing unnecessary processes").** Found two more
+  real gaps by actually re-checking rather than assuming the above was the
+  whole story:
+  1. `race_list`, `standings`, and `next_meeting` each independently called
+     `_get("sessions", year=year)` raw and uncached (`race_list` also
+     fetched `meetings` separately) — and `frontend/briefing.js`'s init
+     fires all three together on every single page load. Added
+     `_season_sessions(year)`/`_season_meetings(year)` helpers
+     (`_cached_get`, 10-minute TTL — short enough to catch a newly-added
+     race promptly) and pointed all three call sites at them, so one
+     visitor's page load now shares a single fetch instead of up to three.
+  2. Because these route handlers are sync `def` (FastAPI runs them in a
+     thread pool, not the event loop), the three endpoints can genuinely
+     race on the same cache key — the fix above only helps if requests
+     happen to land sequentially, not concurrently. Confirmed this with a
+     direct threading test before fixing: 5 concurrent callers for one key,
+     no lock, 5 real fetches. Added a per-cache-key `threading.Lock` in
+     `_cached_get` (`_fetch_locks`, keyed by cache key) — a second caller
+     for a key already being fetched now blocks and re-checks the cache
+     instead of duplicating the OpenF1 call. Re-ran the same test after the
+     fix: 5 concurrent callers, 1 real fetch, ~0.3s instead of ~1.5s.
+  Deliberately did NOT add locking around the *outer* `race_list:{year}`/
+  `standings:{year}`/`next_meeting:{year}` response caches themselves (only
+  the shared sub-fetches inside them) — under concurrent cold requests
+  they can still each redundantly re-*assemble* their response, but that's
+  cheap local Python work, not the expensive OpenF1 network I/O the lock
+  above already protects; not worth the extra complexity for CPU cycles.
+  Also audited every other raw `_get(` call site across `api/`, `engine/`,
+  and `data/` (grep for `_get("sessions"`/`_get("meetings"` and similar) —
+  the remaining ones (`engine/whatif.py`, `engine/briefing.py`,
+  `api/routers/{analysis,strategy}.py`, `api/routers/timing.py`'s
+  fallback-session lookup) are all scoped to a specific session/meeting a
+  visitor has to actively open, not fired on every pageview the way
+  race_list/standings/next_meeting are — so they scale with how many
+  distinct races people look at, not with total traffic, and were left as
+  they are rather than chased for a much smaller marginal win. 2 new tests
+  (`TestSharedSeasonListCaching` in `tests/test_races_and_standings.py`,
+  `test_concurrent_requests_for_the_same_cold_key_dedupe_to_one_fetch` in
+  `tests/test_live_cache.py`); `tests/test_next_meeting.py`'s fixtures also
+  needed the same `data.live`-module isolation fix as
+  `test_races_and_standings.py` once `next_meeting` started sharing the
+  same caching path. Full suite 123/123 passing.
 
 ### OpenF1 quirks
 - All endpoints return lists — always sort/filter client-side.

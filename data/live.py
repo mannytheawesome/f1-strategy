@@ -360,22 +360,48 @@ def _get(endpoint: str, **params) -> list:
     raise last_err
 
 
+_fetch_locks: dict[str, threading.Lock] = {}
+_fetch_locks_guard = threading.Lock()
+
+
+def _lock_for(key: str) -> threading.Lock:
+    with _fetch_locks_guard:
+        lock = _fetch_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _fetch_locks[key] = lock
+        return lock
+
+
 def _cached_get(cache_key: str, endpoint: str, ttl: float, **params):
+    """FastAPI runs these sync route handlers in a thread pool, so several
+    requests can genuinely race on the same cold cache key -- e.g. a page
+    load fires /api/races, /api/standings, and /api/next_meeting together,
+    and right after a redeploy all three can miss the season sessions list
+    at once. Without a per-key lock each would independently re-fetch from
+    OpenF1 (the sharing _season_sessions/_season_meetings was built for
+    would only hold up for requests that happen to land sequentially, not
+    genuinely concurrent ones) -- a second thread now blocks on the first
+    thread's fetch and re-checks the cache instead of duplicating it."""
     hit = _cache_get(cache_key, max_age=ttl)
     if hit is not None:
         return hit
-    try:
-        data = _get(endpoint, **params)
-    except Exception:
+    with _lock_for(cache_key):
+        hit = _cache_get(cache_key, max_age=ttl)
+        if hit is not None:
+            return hit
+        try:
+            data = _get(endpoint, **params)
+        except Exception:
+            with _cache_lock:
+                stale = _stale.get(cache_key)
+            if stale is not None:
+                return stale
+            raise
+        _cache_set(cache_key, data, ttl)
         with _cache_lock:
-            stale = _stale.get(cache_key)
-        if stale is not None:
-            return stale
-        raise
-    _cache_set(cache_key, data, ttl)
-    with _cache_lock:
-        _stale[cache_key] = data
-    return data
+            _stale[cache_key] = data
+        return data
 
 
 def get_latest_session() -> dict:

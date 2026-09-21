@@ -53,16 +53,17 @@ class TestRaceListPodium:
                 return results_by_session.get(params["session_key"], [])
             raise AssertionError(f"unexpected endpoint {endpoint}")
 
-        monkeypatch.setattr(briefings, "_get", fake_get)
         monkeypatch.setattr(briefings, "get_drivers",
                             lambda sk, ttl: drivers_by_session.get(sk, {}))
-        # session_result now goes through data.live._cached_get (for the
-        # HIST_TTL_FINAL persistent-cache change) rather than a bare _get
-        # call -- _cached_get is a data.live function, so it resolves _get/
-        # _cache_get/_cache_set from THAT module's globals at call time, not
-        # from whatever api.routers.briefings rebound its own import to.
-        # Patching those too keeps this test hermetic (no real network
-        # calls) and stops it silently falling through to live OpenF1.
+        # sessions/meetings/session_result all now go through
+        # data.live._cached_get (shared season-list caching +
+        # HIST_TTL_FINAL) rather than a bare _get call on briefings' own
+        # rebound import -- _cached_get is a data.live function, so it
+        # resolves _get/_cache_get/_cache_set from THAT module's globals at
+        # call time, not from whatever api.routers.briefings rebound its
+        # own import to. Patching those keeps this test hermetic (no real
+        # network calls) and stops it silently falling through to live
+        # OpenF1.
         monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
         monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
         monkeypatch.setattr(live, "_get", fake_get)
@@ -165,7 +166,9 @@ class TestRaceListPodium:
 
         monkeypatch.setattr(briefings, "_cache_get", lambda *a, **k: None)
         monkeypatch.setattr(briefings, "_cache_set", lambda *a, **k: None)
-        monkeypatch.setattr(briefings, "_get", fake_get)
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", fake_get)
         monkeypatch.setattr(briefings, "get_drivers", lambda sk, ttl: {})
 
         out = briefings.race_list(2026)   # must not raise
@@ -184,11 +187,10 @@ class TestStandings:
                 return results_by_session.get(params["session_key"], [])
             raise AssertionError(f"unexpected endpoint {endpoint}")
 
-        monkeypatch.setattr(briefings, "_get", fake_get)
         monkeypatch.setattr(briefings, "get_drivers",
                             lambda sk, ttl: drivers_by_session.get(sk, {}))
-        # See TestRaceListPodium._patch -- session_result now goes through
-        # data.live._cached_get, which resolves _get/_cache_get/_cache_set
+        # See TestRaceListPodium._patch -- sessions/session_result now go
+        # through data.live._cached_get, which resolves _get/_cache_get/_cache_set
         # from data.live's own globals, not briefings' rebound imports.
         monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
         monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
@@ -256,3 +258,41 @@ class TestStandings:
         out = briefings.standings(2026)
         assert out["drivers"] == []
         assert out["constructors"] == []
+
+
+class TestSharedSeasonListCaching:
+    def test_races_standings_and_next_meeting_share_one_sessions_fetch(self, monkeypatch):
+        # frontend/briefing.js fires /api/races, /api/next_meeting, and
+        # /api/standings together on every single page load -- each used to
+        # independently re-fetch the whole season's /sessions list from
+        # OpenF1 the moment its OWN outer cache went stale, so a single
+        # visitor could trigger it up to 3x (worst case right after a
+        # redeploy, since none of those outer caches survive one). They now
+        # share _season_sessions/_season_meetings's own cache entry instead.
+        sessions = [_session(1, "China", "Shanghai", "Race", "Race",
+                             "2000-01-01T13:00:00+00:00", "2000-01-01T15:00:00+00:00")]
+        meetings = [{"meeting_key": 1, "meeting_official_name": "X"}]
+        calls = {"sessions": 0, "meetings": 0}
+
+        def fake_get(endpoint, **params):
+            if endpoint == "sessions":
+                calls["sessions"] += 1
+                return sessions
+            if endpoint == "meetings":
+                calls["meetings"] += 1
+                return meetings
+            if endpoint == "session_result":
+                return []
+            raise AssertionError(f"unexpected endpoint {endpoint}")
+
+        monkeypatch.setattr(briefings, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(briefings, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", fake_get)
+        monkeypatch.setattr(briefings, "get_drivers", lambda sk, ttl: {})
+
+        briefings.race_list(2026)
+        briefings.standings(2026)
+        briefings.next_meeting(2026)
+
+        assert calls["sessions"] == 1
+        assert calls["meetings"] == 1

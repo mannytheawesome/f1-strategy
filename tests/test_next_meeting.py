@@ -8,7 +8,10 @@ between race weekends) returned nothing at all, which the new hero needs
 to render a countdown for. `in_progress` lets the frontend tell the two
 cases apart: only load a briefing when it's True.
 """
+import pytest
+
 import api.routers.briefings as briefings
+import data.live as live
 
 
 def _session(meeting_key, country, circuit, session_type, session_name,
@@ -19,9 +22,25 @@ def _session(meeting_key, country, circuit, session_type, session_name,
             "date_end": date_end}
 
 
+@pytest.fixture(autouse=True)
+def _isolated_live_cache(tmp_path, monkeypatch):
+    # next_meeting now fetches the season session list via
+    # api.routers.briefings._season_sessions, shared with race_list/
+    # standings through data.live._cached_get -- that reads/writes
+    # data.live's own module-global _cache/_stale/disk cache, not anything
+    # briefings rebinds, so isolating those is what actually keeps this
+    # test file hermetic. See tests/test_races_and_standings.py for the
+    # fuller version of this note.
+    monkeypatch.setattr(live, "_cache", {})
+    monkeypatch.setattr(live, "_stale", {})
+    monkeypatch.setattr(live, "HTTP_CACHE_DB_PATH", str(tmp_path / "http_cache.db"))
+
+
 class TestNextMeeting:
     def _patch(self, monkeypatch, sessions):
-        monkeypatch.setattr(briefings, "_get", lambda *a, **k: sessions)
+        monkeypatch.setattr(live, "_get", lambda *a, **k: sessions)
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
         monkeypatch.setattr(briefings, "_cache_get", lambda *a, **k: None)
         monkeypatch.setattr(briefings, "_cache_set", lambda *a, **k: None)
 

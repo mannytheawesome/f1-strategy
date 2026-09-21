@@ -5,6 +5,9 @@ instead of being wiped and re-fetched from scratch every time, and so
 provably-completed race data (post-race debriefs, the season schedule,
 standings) can be cached effectively forever via HIST_TTL_FINAL.
 """
+import threading
+import time
+
 import pytest
 
 import data.live as live
@@ -98,3 +101,41 @@ class TestCachedGet:
 
         assert first == second == [{"ok": True}]
         assert calls == ["laps"]   # only fetched once, not once per "restart"
+
+    def test_concurrent_requests_for_the_same_cold_key_dedupe_to_one_fetch(self, monkeypatch):
+        # FastAPI runs these sync route handlers in a thread pool -- a page
+        # load fires /api/races, /api/standings, and /api/next_meeting
+        # together, and right after a redeploy all three can miss the same
+        # cache key at once. Without the per-key lock in _cached_get, each
+        # thread would independently re-fetch from OpenF1 instead of the
+        # second/third waiting for the first's result.
+        calls = []
+        call_lock = threading.Lock()
+
+        def slow_fake_get(endpoint, **params):
+            with call_lock:
+                calls.append(endpoint)
+            time.sleep(0.2)   # simulate a real network round-trip
+            return [{"ok": True}]
+
+        monkeypatch.setattr(live, "_get", slow_fake_get)
+
+        results = []
+        results_lock = threading.Lock()
+
+        def worker():
+            r = live._cached_get("shared:1", "sessions", live.HIST_TTL, year=2026)
+            with results_lock:
+                results.append(r)
+
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        start = time.time()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        elapsed = time.time() - start
+
+        assert len(calls) == 1                       # only one real fetch happened
+        assert elapsed < 0.35                         # not 5x0.2s serialised
+        assert all(r == [{"ok": True}] for r in results)

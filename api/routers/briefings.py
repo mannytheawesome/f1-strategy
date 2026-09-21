@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from data.live import _get, _cached_get, _cache_get, _cache_set, get_drivers, HIST_TTL_FINAL
+from data.live import _cached_get, _cache_get, _cache_set, get_drivers, HIST_TTL_FINAL
 
 router = APIRouter()
 
@@ -18,6 +18,24 @@ def _regen_allowed(regenerate: bool, token: str | None) -> bool:
         return False
     admin = os.environ.get("ADMIN_TOKEN")
     return (not admin) or token == admin
+
+
+# race_list, standings, and next_meeting all fire together on every single
+# page load (see frontend/briefing.js's init) and each used to independently
+# re-fetch the whole season's session/meeting list from OpenF1 the moment
+# its OWN outer response cache went stale -- meaning up to 3x redundant
+# identical fetches per visitor, worst case right after every redeploy
+# (their outer caches are all short-lived, so none of them survive a
+# restart). Sharing one cached copy here collapses that back to one fetch.
+_SEASON_LIST_TTL = 600   # 10 min -- short enough to catch a newly-added race
+
+
+def _season_sessions(year: int) -> list[dict]:
+    return _cached_get(f"season_sessions:{year}", "sessions", _SEASON_LIST_TTL, year=year)
+
+
+def _season_meetings(year: int) -> list[dict]:
+    return _cached_get(f"season_meetings:{year}", "meetings", _SEASON_LIST_TTL, year=year)
 
 
 @router.get("/api/races")
@@ -34,12 +52,12 @@ def race_list(year: int = 2026):
     try:
         sessions = _cache_get(f"race_list:{year}")
         if sessions is None:
-            raw = _get("sessions", year=year)
+            raw = _season_sessions(year)
             from datetime import datetime, timezone
             from dateutil.parser import parse as parse_dt
             now = datetime.now(timezone.utc)
             official_name = {m["meeting_key"]: m.get("meeting_official_name")
-                             for m in _get("meetings", year=year)}
+                             for m in _season_meetings(year)}
 
             # Round numbers, computed across the WHOLE season (completed and
             # still-upcoming alike) so a completed race's number matches what
@@ -169,7 +187,7 @@ def standings(year: int = 2026):
         from datetime import datetime, timezone
         from dateutil.parser import parse as parse_dt
         now = datetime.now(timezone.utc)
-        raw = _get("sessions", year=year)
+        raw = _season_sessions(year)
         scoring_keys = []
         for s in raw:
             if s.get("session_type", "").lower() != "race":
@@ -272,7 +290,7 @@ def next_meeting(year: int = 2026):
         from datetime import datetime, timezone
         from dateutil.parser import parse as parse_dt
         now = datetime.now(timezone.utc)
-        raw = _get("sessions", year=year)
+        raw = _season_sessions(year)
         meetings: dict[int, dict] = {}
         for s in sorted(raw, key=lambda x: x.get("date_start", "")):
             mk = s.get("meeting_key")
