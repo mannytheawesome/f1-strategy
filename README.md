@@ -4,7 +4,7 @@ A Formula 1 race strategy and timing web app that predicts race outcomes,
 tyre strategy, and pit windows from real telemetry — and validates every
 claim it makes against 81 real races rather than eyeballing it.
 
-**Live app:** https://f1-strategy-production.up.railway.app/
+**Live app:** https://f1-strategy-briefings.up.railway.app/
 
 Built solo, backend and frontend, on top of the [OpenF1](https://openf1.org/)
 public API. FastAPI + vanilla JS, no frontend build step, no ORM — the whole

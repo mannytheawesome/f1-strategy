@@ -21,7 +21,7 @@ import requests
 
 from mqtt_monitor import MQTTSessionMonitor
 
-BASE = "https://f1-strategy-production.up.railway.app"
+BASE = "https://f1-strategy-briefings.up.railway.app"
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG  = os.path.join(HERE, "silverstone_monitor.log")
 REC  = os.path.join(HERE, "recordings")
