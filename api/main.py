@@ -12,10 +12,11 @@ App setup and wiring only. Routes live in api/routers/, grouped by domain:
 import os
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.routers import meta, timing, analysis, strategy, briefings, usage
 
@@ -38,14 +39,25 @@ ASSET_VERSION = (os.environ.get("RAILWAY_GIT_COMMIT_SHA")
                  or str(int(time.time())))[:12]
 
 
-def _serve_page(filename: str) -> HTMLResponse:
+def _serve_page(filename: str, status_code: int = 200) -> HTMLResponse:
     """Serve an HTML page with the current ASSET_VERSION stamped into its asset
     URLs (the pages use ?v=__ASSET_VERSION__ on their css/js references). The
     HTML document itself is marked no-store so the version tokens are always
     fresh; the versioned css/js can then be cached hard and safely."""
     with open(os.path.join(FRONTEND_DIR, filename)) as f:
         html = f.read().replace("__ASSET_VERSION__", ASSET_VERSION)
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(html, status_code=status_code, headers={"Cache-Control": "no-store"})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """A styled 404 page for a human landing on a bad/stale URL -- API paths
+    (and this app's own frontend JS, which reads `.detail` off the JSON
+    body) keep the plain `{"detail": ...}` shape unchanged for every other
+    case, matching FastAPI's own default handler."""
+    if exc.status_code == 404 and not request.url.path.startswith("/api/"):
+        return _serve_page("404.html", status_code=404)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 app.include_router(meta.router)
 app.include_router(timing.router)

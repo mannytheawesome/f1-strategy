@@ -385,3 +385,18 @@
     .footer-inner strong { color: #888; }
     .footer-inner a { color: var(--muted); text-decoration: underline; }
     .footer-inner a:hover { color: var(--text); }
+
+    /* 404 page */
+    .not-found { display: flex; align-items: center; justify-content: center; min-height: 60vh; padding: 20px; }
+    .not-found-card { width: 100%; max-width: 440px; text-align: center; }
+    .not-found-code {
+      font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 56px;
+      color: var(--red); line-height: 1; margin-bottom: 8px;
+    }
+    .not-found-card h2 { color: var(--text); }
+    .not-found-card p { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .btnrow-link {
+      display: inline-block; color: #fff; text-decoration: none; font-size: 12px;
+      font-weight: 500; background: var(--red); padding: 8px 16px; border-radius: 5px;
+    }
+    .btnrow-link:hover { opacity: 0.9; }

@@ -21,6 +21,14 @@
     } catch (e) { /* tracking must never break the page */ }
   }
 
+  // The real error (often a raw upstream exception string, e.g. an OpenF1
+  // 429) goes to the console for debugging; visitors only ever see a plain,
+  // friendly line, never internal exception text.
+  function friendlyErrorMessage(label, e) {
+    console.error(`[${label}]`, e);
+    return 'Something went wrong loading this — try again in a moment.';
+  }
+
   const COMPOUNDS = ["SOFT", "MEDIUM", "HARD"];
   let currentBriefing = null;
   let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
@@ -244,7 +252,7 @@
       currentBriefing = await res.json();
       renderBriefing(currentBriefing);
     } catch (e) {
-      root.innerHTML = `<div class="card"><span class="notice">Briefing failed: ${e.message}</span></div>`;
+      root.innerHTML = `<div class="card"><span class="notice">${friendlyErrorMessage('briefing', e)}</span></div>`;
     }
   }
 
@@ -695,7 +703,7 @@
       if (!res.ok) throw new Error((await res.json()).detail || res.status);
       renderPrerace(await res.json());
     } catch (e) {
-      root.innerHTML = `<div class="card"><span class="notice">Pre-race briefing failed: ${e.message}</span></div>`;
+      root.innerHTML = `<div class="card"><span class="notice">${friendlyErrorMessage('prerace briefing', e)}</span></div>`;
     }
   }
 
@@ -1247,7 +1255,7 @@
       if (!res.ok) throw new Error((await res.json()).detail || res.status);
       renderWhatifResult(await res.json());
     } catch (e) {
-      if (seq === whatifSeq) out.innerHTML = `<span class="notice">simulation failed: ${e.message}</span>`;
+      if (seq === whatifSeq) out.innerHTML = `<span class="notice">${friendlyErrorMessage('what-if simulation', e)}</span>`;
     }
   }
 

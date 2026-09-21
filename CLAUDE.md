@@ -2174,6 +2174,46 @@ monospace in body copy... staying data-dense") plus the trust content (3).
   axis ticks) were unaffected by the CSS change, since those come from
   their own JS-set canvas font, not the stylesheet.
 
+**Round four, same day: cheap technical polish, user asked "what else
+should I work on" and approved doing all four found.**
+- **Favicon**: none existed (browsers showed the generic default icon) --
+  added `frontend/favicon.svg`, a minimal on-brand mark (dark rounded
+  square, red angled bar echoing the header's `.brand-mark`), wired into
+  all four HTML pages via `<link rel="icon">`.
+- **Raw error messages were leaking to visitors.** `briefing.js` displayed
+  `e.message` directly in three places -- for a failed fetch that's
+  literally the backend's `HTTPException(detail=str(e))` string, e.g. a
+  raw `requests.exceptions.HTTPError` from an upstream OpenF1 429, shown
+  verbatim on a live page (this exact failure mode happened earlier in
+  this session during testing). Added a `friendlyErrorMessage(label, e)`
+  helper: logs the real error to the console for debugging, shows visitors
+  a plain "something went wrong, try again" instead. Deliberately scoped
+  to `briefing.js` only -- `index.js`'s equivalent messages are already
+  clean (`HTTP {status}`, not raw exception text) and that page is the
+  documented lower-priority one; `admin.js` is a private, ADMIN_TOKEN-
+  gated tool where the detail is actually useful, not a public-facing
+  polish issue.
+- **No custom 404 page** -- a bad/stale URL returned bare
+  `{"detail":"Not Found"}` JSON with no styling or way back to the site.
+  Added `frontend/404.html` (reuses `briefing.css`'s existing header/card/
+  footer language) plus a `StarletteHTTPException` handler in
+  `api/main.py` that serves it, with a real 404 status, for any
+  non-`/api/` path -- `/api/*` 404s (and every other HTTPException the
+  routers already raise) keep the exact same `{"detail": ...}` JSON shape
+  as before, since this app's own frontend JS parses `.detail` off error
+  responses and existing API consumers/tests shouldn't see a shape change.
+- **No social preview or meta description** -- pasting the link anywhere
+  showed nothing useful. Added `<meta name="description">` +
+  Open Graph/Twitter card tags to `briefing.html` (the front door) and
+  `index.html`; skipped on `admin.html` (already `noindex, nofollow`,
+  no reason to make it more shareable) and didn't add an `og:image` --
+  no designed banner asset exists yet, and a preview with just title +
+  description is still a real improvement over nothing.
+- No new tests (pure HTML/config-level additions); existing 123-test suite
+  passing confirms no regression. Verified in-browser: favicon serves
+  (200), the 404 page renders styled with a real 404 status, `/api/*`
+  404s are unchanged JSON, no console errors.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
