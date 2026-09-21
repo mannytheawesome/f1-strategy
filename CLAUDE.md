@@ -2116,6 +2116,64 @@ failure not crashing the whole race list, multi-race point summation,
 mid-season constructor attribution, and the zero-point-finish edge case.
 Full suite 95/95 passing (`-m "not integration"`).
 
+**Round three, 2026-09-21: a "how professional does this look" honesty
+check, then a visual polish pass.** User asked directly; rather than just
+reassure, actually loaded the live site and gave a specific critique: the
+analytical content (deg curves, race-trace charts, what-if simulator) reads
+as genuinely credible, but three things undercut it — (1) every briefing
+showed a raw "Narrative unavailable (no API key configured)" string, which
+turned out to be inaccurate too (checked `/api/debug/anthropic_auth`
+directly: the key *is* configured, the Anthropic account is out of credit —
+a billing issue, not a code bug, left for the user to fix), (2) the
+`railway.app` subdomain, (3) no trust/about content anywhere, (4) the
+Courier-New-monospace-everywhere aesthetic reads as "engineering dashboard"
+rather than "finished product" to a general audience. User chose to skip
+the custom domain for now and asked for a genuine style shift on (4)
+("bigger shift toward a polished product feel... refined palette, less
+monospace in body copy... staying data-dense") plus the trust content (3).
+
+- **Trust/about footer**, added to `briefing.html`, `index.html` (shorter
+  version): what the site is (independent, not affiliated with F1/FIA/any
+  team), how predictions are made, and an honest accuracy caveat —
+  deliberately did NOT cite the flattering 84.8%-winner-hit in-race number
+  (that's for checkpoints with real lap data already in hand); the
+  lap-0 pre-race-only projection this site's briefing pages actually lead
+  with has a much lower winner-hit rate (see the sixteenth issue above) —
+  citing the wrong number in the site's own trust copy would have
+  undermined the very thing it's meant to build. Framed honestly instead
+  ("calibrated to avoid false confidence rather than chase a flattering
+  hit-rate"). Also credits OpenF1 as the data source.
+- **Typography**: added Inter (Google Fonts) as the base body/UI font
+  across all three pages, replacing `'Courier New', monospace` as the
+  default. Monospace (JetBrains Mono) is now reserved for genuinely
+  tabular/numeric content via `font-variant-numeric: tabular-nums` plus
+  explicit `font-family` on the specific elements that need digit
+  alignment (countdown, table numeric cells, chip/date labels) — general
+  UI chrome, section headers, buttons, and prose read as a normal
+  proportional typeface now. `index.css`'s live timing board deliberately
+  kept `.board-wrap` itself on monospace (a dense real-time grid of
+  positions/gaps/sector times genuinely needs columns to line up) while
+  still moving its surrounding page chrome to the sans font — CLAUDE.md's
+  existing "live board is frozen, not the differentiated part" framing is
+  why this page got a lighter touch than the briefings front door.
+- **Card/section polish**: `.card`/`#race-list`/`.standings-card`/gate
+  cards gained `border-radius: 8px` + a subtle box-shadow (elevation
+  instead of flat bordered boxes); `.card h2` and similar section titles
+  dropped `text-transform: uppercase` + heavy letter-spacing in favour of
+  sentence-case + a solid font-weight — this hits ~20+ section headers per
+  page for free since the text content itself (`"Race simulation pace — by
+  team"`, `"The trade, calculated"`, etc.) was already written in natural
+  case in `briefing.js`, only the CSS was forcing it upper. Small
+  structural labels (table column headers, `SCHEDULE`, round/date chips)
+  deliberately kept as small-caps eyebrow labels — that's a legitimate,
+  still-modern pattern, not the thing that read as "terminal."
+- No backend changes this round — pure CSS/HTML, so the existing 123-test
+  suite is the regression check, not new tests. Verified visually across
+  all three pages (briefing front door, live board, admin gate) in-browser
+  before shipping, including that canvas-drawn chart labels (driver codes,
+  axis ticks) were unaffected by the CSS change, since those come from
+  their own JS-set canvas font, not the stylesheet.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

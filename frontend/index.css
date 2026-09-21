@@ -17,7 +17,16 @@
     /* The page itself never scrolls sideways — wide content (the timing board,
        tables, charts) scrolls inside its own container instead. */
     html, body { max-width: 100%; overflow-x: hidden; }
-    body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 12px; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 12px;
+    }
+    /* The timing board itself stays on a tabular/monospace font on purpose —
+       a dense real-time grid of positions, gaps, and sector times genuinely
+       needs digits to line up column-to-column; only the surrounding page
+       chrome (header, buttons, labels) moved to the sans body font above. */
+    .board-wrap { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
 
     header {
       background: var(--red);
@@ -355,3 +364,9 @@
       #controls input { max-width: 140px; }
       #replay-bar { flex-wrap: wrap; gap: 6px; }
     }
+
+    .site-footer { border-top: 1px solid var(--border); margin-top: 8px; padding: 20px 14px 30px; }
+    .footer-inner { max-width: 900px; margin: 0 auto; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+    .footer-inner strong { color: #888; }
+    .footer-inner a { color: var(--muted); text-decoration: underline; }
+    .footer-inner a:hover { color: var(--text); }
