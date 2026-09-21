@@ -2214,6 +2214,66 @@ should I work on" and approved doing all four found.**
   (200), the 404 page renders styled with a real 404 status, `/api/*`
   404s are unchanged JSON, no console errors.
 
+**Round five, same day: a real accessibility audit, not a guess.** User
+asked "can you take a look at the accessibility" — measured actual WCAG
+contrast ratios (Python, the real relative-luminance formula) and checked
+what's genuinely keyboard/screen-reader operable, rather than eyeballing
+it.
+
+- **Contrast failures, measured**: `--muted` (#555) on `--bg`/`--surface`
+  came out at 2.57:1 / 2.33:1 -- WCAG AA needs 4.5:1 for normal text, and
+  `--muted` is the secondary-text color used ~46 times across the three
+  stylesheets (meta-rows, table headers, timestamps). Replaced with
+  `#828282` (4.5-5.0:1 on both). Section headings in `--red`/`--purple`
+  measured 4.08:1 / 3.50:1 at their actual rendered size (14px/13px --
+  neither hits WCAG's "large text" exemption threshold, which needs ~19px
+  bold or ~24px regular). Rather than change the shared `--red`/`--purple`
+  brand variables (which would also re-color every button/border/hero
+  accent -- a much bigger, unrequested visual change), added
+  `--red-text`/`--purple-text` lightened variants (#f70030/#b33dff, both
+  4.5+:1 on `--bg`) used ONLY where these colors are actual text, not
+  backgrounds/borders/accent-color (buttons already pair red/purple
+  backgrounds with white text, which independently passes). The 56px bold
+  "404" numeral was left on the original `--red` -- genuinely large enough
+  to qualify for the relaxed 3:1 threshold, verified before leaving it.
+- **Core interactions were keyboard/screen-reader unusable**: every race
+  card in the schedule and every driver row (which opens the what-if
+  editor) was a bare `<div>`/`<tr>` with only an `onclick` -- no
+  `tabindex`, no `role`, not reachable by Tab at all. This is the site's
+  primary navigation, not an edge case. Added a `makeActivatable(el,
+  handler)` helper in `briefing.js` (`role="button"`, `tabindex="0"`,
+  click handler, and a keydown handler firing the same handler on
+  Enter/Space) and applied it at all three sites. Verified for real, not
+  just by reading the code: tabbed through the page and confirmed a
+  visible focus ring lands on each race card in order, pressed Enter and
+  confirmed it loaded the briefing exactly like a click; separately
+  dispatched a synthetic `KeyboardEvent('keydown', {key:'Enter'})` directly
+  at a `tr.clickable` driver row and confirmed the what-if editor opened.
+  Added a global `:focus-visible` outline (red on the two public pages,
+  purple on admin, matching each page's own accent) -- there was no custom
+  focus style at all before, so even the elements that WERE already
+  focusable (buttons, links) had only the browser's inconsistent default.
+- **Form inputs relied on placeholder text alone** (admin token input,
+  live board's session-key input, lap-replay slider, replay-speed select)
+  -- placeholder disappears the moment someone types and isn't reliably
+  announced as a persistent label by every screen reader. Added a
+  `.sr-only` utility class (visually hidden, still in the accessibility
+  tree) plus real `<label for="...">` elements for the token/session
+  inputs, and `aria-label` directly on the slider/select (a `<label>`
+  needs static text to point at; the slider's adjacent "LAP N" display is
+  dynamic, so `aria-label="Replay lap"` was the more honest fit there).
+- **Deliberately NOT touched**: the what-if editor's drag-based pit-stop
+  track (`.seg`/`.seg-age` in `briefing.js`) is still mouse/touch-only.
+  Making a genuinely drag-based interaction keyboard-operable needs real
+  interaction-design work (what does Enter/arrow-keys even mean on a drag
+  handle without redesigning the control), not a five-minute tabindex
+  bolt-on like the rest of this pass -- flagged here rather than shipped
+  half-done.
+- No new automated tests (this is CSS-variable + HTML-attribute level, not
+  new logic to unit-test); existing 123-test suite passing confirms no
+  regression, and the keyboard-activation behavior itself was verified for
+  real in-browser as described above, not just asserted.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

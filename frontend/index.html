@@ -76,6 +76,7 @@
   <!-- Table -->
   <div class="table-wrap">
     <div id="controls">
+      <label for="session-input" class="sr-only">Session key</label>
       <input id="session-input" type="number" placeholder="Session key (blank = live)" />
       <button onclick="loadSession()">LOAD</button>
       <button id="replay-mode-btn" onclick="toggleReplayMode()">REPLAY</button>
@@ -87,9 +88,9 @@
       <button onclick="stepLap(-1)">◀</button>
       <button onclick="stepLap(1)">▶</button>
       <span id="lap-display">LAP 1</span>
-      <input id="lap-slider" type="range" min="1" max="70" value="1" oninput="onSlider(this.value)" />
+      <input id="lap-slider" type="range" min="1" max="70" value="1" oninput="onSlider(this.value)" aria-label="Replay lap" />
       <span id="lap-max" style="color:var(--muted);font-size:10px">/ 70</span>
-      <select id="replay-speed">
+      <select id="replay-speed" aria-label="Replay speed">
         <option value="real" selected>REAL TIME</option>
         <option value="2000">0.5×</option>
         <option value="1000">1×</option>

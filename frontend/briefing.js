@@ -29,6 +29,24 @@
     return 'Something went wrong loading this — try again in a moment.';
   }
 
+  // Makes a plain <div>/<tr> operable from the keyboard, not just a mouse --
+  // race cards and driver rows were previously onclick-only, which meant a
+  // keyboard or screen-reader user couldn't select a race or open the
+  // what-if editor at all. role="button" + tabindex makes it a real stop in
+  // the tab order that assistive tech announces correctly; the keydown
+  // handler makes Enter/Space activate it the same way a native button would.
+  function makeActivatable(el, handler) {
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.onclick = handler;
+    el.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        handler();
+      }
+    };
+  }
+
   const COMPOUNDS = ["SOFT", "MEDIUM", "HARD"];
   let currentBriefing = null;
   let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
@@ -142,11 +160,11 @@
             <span class="ri-circuit">${(next.circuit_short_name || next.country_name || '').toUpperCase()}</span>
           </div>
           <div class="ri-official" style="color:var(--green)">UPCOMING · PRE-RACE BRIEFING AVAILABLE</div>`;
-        div.onclick = () => {
+        makeActivatable(div, () => {
           markActive(div);
           track('race_view', 'briefing', `${next.country_name} (prerace)`);
           loadPrerace(next.meeting_key);
-        };
+        });
         el.appendChild(div);
       }
       for (const r of data.races) {
@@ -169,11 +187,11 @@
           </div>
           <div class="ri-official">${r.official_name || r.country_name}</div>
           ${podiumHTML(r.podium)}`;
-        div.onclick = () => {
+        makeActivatable(div, () => {
           markActive(div);
           track('race_view', 'briefing', r.country_name);
           loadBriefing(r.session_key, r.meeting_key);
-        };
+        });
         el.appendChild(div);
       }
       if (!data.races.length && !next) el.textContent = 'No races yet.';
@@ -403,7 +421,7 @@
       </table>`;
     root.appendChild(resCard);
     resCard.querySelectorAll('tr.clickable').forEach(tr => {
-      tr.onclick = () => openEditor(parseInt(tr.dataset.driver), tr);
+      makeActivatable(tr, () => openEditor(parseInt(tr.dataset.driver), tr));
     });
 
     // what-if editor placeholder
