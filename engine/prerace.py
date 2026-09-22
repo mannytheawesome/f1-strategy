@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 31   # 31: MEDIUM->HARD undercut shift is now per-circuit calibrated, not a flat constant
+PACK_VERSION = 32   # 32: deg-curve baseline now excludes resumed-tyre samples when enough fresh ones exist
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat

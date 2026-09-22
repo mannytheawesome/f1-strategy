@@ -2199,6 +2199,52 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       calibration table contains BOTH signs, guarding against silently
       reverting to an early-only assumption); full suite 139/139 passing
       (unit), 5/5 passing (integration).
+
+      **Twenty-second issue, same day, user question: are degradation
+      rates different for a used vs a genuinely fresh tyre?** Checked
+      with real 2026 race data, matched tyre age (3-8 laps), normalised
+      within each race so circuit pace cancels out. Degradation RATE:
+      no meaningful difference for SOFT (fresh median 0.040 s/lap vs
+      resumed 0.037, n=55/27) — HARD/MEDIUM's resumed samples were too
+      thin (n=2, n=7) to say anything. BASELINE pace: a real, consistent
+      finding — a resumed (previously-fitted, refitted) SOFT runs ~1.5s
+      FASTER than a fresh one at the same nominal age, in 5/5 races with
+      enough data in both groups (Canada, Barcelona, Austria, Hungary,
+      Netherlands; mean -1.83s), likely the initial graining/bedding-in
+      phase a genuinely fresh tyre hasn't been through yet. MEDIUM showed
+      no such effect (4 races, mixed signs, median +0.14 — essentially
+      flat); HARD only had 1 usable race, too thin to trust either way.
+      `build_deg_curves` previously pooled fresh and resumed stints into
+      one baseline fit — biased faster than a genuinely fresh tyre's real
+      pace, exactly what `optimize_strategy` always simulates (every
+      candidate stint starts at age 0). Tagged each `_stint_deg_samples`
+      row with `age0 == 0` (fresh) and scoped the baseline weighted-median
+      to fresh-only samples, leaving the degradation-rate fit pooling
+      everything as before (matches the rate-showed-no-difference
+      evidence). A naive, unconditional version of this immediately broke
+      on real Monza data: MEDIUM's curve had exactly ONE fresh 8-lap
+      sample in the whole strict pool (most FP long runs continue an
+      already-opened tyre, not a fresh one), and that one sample was
+      itself a noisy outlier — its baseline was ~4 seconds below every
+      other sample, and fresh-only filtering made it the ENTIRE baseline,
+      overriding 7 other reasonable samples. Fixed by requiring at least
+      2 independent fresh stints before trusting fresh-only, falling back
+      to the full pool otherwise. Re-checked the fix's actual real-world
+      reach across Spa/Suzuka/Hungary/Monza's FP data: the >=2 threshold
+      almost never fires in practice — FP long-run data is dominated by
+      resumed/continuation stints, genuinely fresh 8+-lap long runs are
+      rare, so this correction is mostly a no-op for standard weekends'
+      FP-only curves right now. Reported that honestly rather than
+      claiming a bigger practical win than the evidence supports — the
+      fix is correct, tested, and safe, and would engage more where fresh
+      long-run data is actually plentiful (a sprint race session, weighted
+      highest via `FP_WEIGHTS`, or the separate live-race system in
+      `engine/degradation.py`, not touched by this change and structured
+      quite differently — flagged as a natural next step, not done here).
+      5 new tests (`tests/test_deg_curve_fresh_vs_resumed.py`, including a
+      dedicated regression test for the single-fresh-sample-outlier bug);
+      full suite 144/144 passing (unit), 5/5 passing (integration).
+      `PACK_VERSION` 31 -> 32.
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/

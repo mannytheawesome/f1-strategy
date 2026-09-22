@@ -434,7 +434,17 @@ def _stint_deg_samples(laps_raw, stints_raw, weight, session_name,
         # stays comparable with the compound-offset sanity check further down).
         raw_med = statistics.median(d for _, d in pts)
         base = raw_med - slope * statistics.median(xs)
-        out.setdefault(c, []).append((slope, base, weight, n, session_name))
+        # A stint that starts on a used, previously-fitted set (age0 > 0)
+        # already has its graining/bedding-in phase behind it — measured
+        # directly (5 real 2026 races, matched tyre age 3-8 laps, same-race
+        # normalised so circuit pace cancels out): a resumed SOFT runs
+        # ~1.5s/lap FASTER than a fresh one at the same nominal age, in
+        # 5/5 races checked. Tagging fresh vs resumed here lets
+        # build_deg_curves keep this stint's slope (degradation RATE showed
+        # no such difference) while excluding it from the BASELINE fit,
+        # which needs to answer "how fast is a genuinely fresh tyre", not a
+        # blend of fresh and already-bedded-in rubber.
+        out.setdefault(c, []).append((slope, base, weight, n, session_name, age0 == 0))
     return out
 
 
@@ -486,7 +496,19 @@ def build_deg_curves(
         # Median over stints, not a mean: a single traffic-wrecked run should
         # not drag the whole compound's deg rate up.
         deg  = _weighted_median([(s[0], s[2]) for s in samps])
-        base = _weighted_median([(s[1], s[2]) for s in samps])
+        # Baseline specifically: fresh-start stints only, and only when
+        # there are ENOUGH of them (see _stint_deg_samples' comment for why
+        # resumed stints bias the fresh baseline faster than reality).
+        # Found by checking real Monza data directly: a single fresh
+        # 8-lap stint can itself be a noisy outlier (one such sample here
+        # put MEDIUM's baseline 4s below every other sample), so filtering
+        # to "fresh-only" with too few of them trades a small systematic
+        # bias for a much bigger variance problem. Require at least 2
+        # independent fresh stints before trusting fresh-only; otherwise
+        # the full pool (fresh+resumed) is the safer estimate.
+        fresh_samps = [s for s in samps if s[5]]
+        base_samps = fresh_samps if len(fresh_samps) >= 2 else samps
+        base = _weighted_median([(s[1], s[2]) for s in base_samps])
         pts  = sum(s[3] for s in samps)
         conf = "HIGH" if pts >= 20 else "MEDIUM" if pts >= 8 else "LOW"
         curves[c] = DegCurve(c, max(deg, 0.0), base, pts, conf, [s[4] for s in samps])
