@@ -2067,7 +2067,42 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       long runs) rather than a fixable measurement bug. Closes the
       roadmap item under "Prediction accuracy."
 
-### Refactor / cleanup (deferred)
+      **Nineteenth issue, 2026-09-22, user-reported by directly comparing our
+      "Tyres available for race" chart against F1.com's own race-morning
+      chart for Monza 2026: our totals per driver ranged 5-10 sets, F1's
+      ranged a tight 6-7 across the whole field.** First ruled out the pit-
+      stop strategy chart the user also flagged in the same report — re-ran
+      `build_prerace_data(1293)` and its 5 pit windows (`[19,25]`, `[35,40]`,
+      `[21,27]`, `[28,34]`, `[35,40]`) matched F1's chart exactly; that one
+      was a pure label collision (every row read "Strategy 1-stop" because
+      all 5 candidates genuinely are 1-stop plans — not a data bug). The
+      tyre chart was real: traced VER's worst outlier (shown holding 2/2
+      HARD, F1.com showed 1) to zero recorded FP1 stints (and zero laps) for
+      driver_number 3 in OpenF1's raw data. Root cause: Monza FP1 had four
+      teams run their FIA-mandated rookie/reserve outing (Red Bull/IWA for
+      VER, Alpine/ARO for GAS, Williams/BRO for ALB, Cadillac/HER for PER) —
+      a different driver_number drove that one session in the same car, and
+      `compute_inventory` tracks purely by driver_number, so the substitute's
+      tyre usage was invisible to VER/GAS/ALB/PER's inventories entirely,
+      inflating their shown availability. Confirmed team_name is the only
+      safe pairing key — driver-number proximity is actively misleading here
+      (HER/25 subs for PER/11, not the numerically-closer VER/3). Added
+      `engine.tyre_inventory.remap_fp1_substitutes(stints, session_drivers,
+      primary_drivers)`: for a session, diffs the primary weekend roster
+      against that session's own roster, pairs each extra (substitute)
+      number to a missing (regular) number sharing the same `team_name`
+      (skipped if the pairing is ambiguous — two missing drivers on one
+      team in the same session), and rewrites `driver_number` on that
+      session's stints before they reach `compute_inventory`. Wired into
+      `build_prerace_data` (`engine/prerace.py`): each non-grid-source
+      session now also fetches that session's own `get_drivers` (cheap,
+      `HIST_TTL`-cached) and remaps before appending to `stints_by_session`.
+      Re-verified against live Monza data: GAS and ALB now match F1.com's
+      totals exactly (were off by 2 and 2); VER's shown HARD dropped from
+      2 to 1, matching F1.com exactly (total sets off by 1, down from 3).
+      PER unchanged (his substitute's stint was short enough to land in
+      "used," not "discarded" — a genuine case, not a remaining bug). 5 new
+      tests (`TestFP1SubstituteRemap`); full suite 128/128 passing.
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/

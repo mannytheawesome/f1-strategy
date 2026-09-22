@@ -50,8 +50,8 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 28   # 28: pace_data_incomplete surfaces silently-dropped session fetch failures
-from engine.tyre_inventory import compute_inventory
+PACK_VERSION = 29   # 29: FP1 rookie/reserve substitute stints remap onto the regular driver's tyre inventory
+from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
 
@@ -1182,7 +1182,16 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         session_is_qualifying = []
         for s in sources:
             try:
-                stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+                stints = get_stints(s["session_key"], HIST_TTL)
+                # A team's mandatory rookie/reserve FP1 outing runs a
+                # different driver number under the same car -- remap those
+                # stints onto the regular driver so their tyre usage isn't
+                # silently dropped from the weekend inventory (see
+                # engine.tyre_inventory.remap_fp1_substitutes docstring).
+                if s["session_key"] != grid_source["session_key"]:
+                    session_drivers = get_drivers(s["session_key"], HIST_TTL)
+                    stints = remap_fp1_substitutes(stints, session_drivers, drivers_raw)
+                stints_by_session.append(stints)
                 session_is_qualifying.append(
                     s.get("session_type", "").lower() == "qualifying")
             except Exception:

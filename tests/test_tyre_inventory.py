@@ -8,6 +8,7 @@ import pytest
 from conftest import make_driver, make_stint
 from engine.tyre_inventory import (
     ALLOCATION, COMPOUNDS, SHORT_STINT_LAPS, compute_inventory,
+    remap_fp1_substitutes,
 )
 
 DRIVERS = {1: make_driver(1, "NOR")}
@@ -173,6 +174,76 @@ class TestQualifyingNoCap:
         ]
         inv = _inv([session], session_is_qualifying=[True])
         assert inv.reconciled()["SOFT"]["used"] == 4
+
+
+class TestFP1SubstituteRemap:
+    """Real case (Monza 2026 FP1): a team's mandatory rookie/reserve outing
+    runs a different driver number under the same car for that one session.
+    Without remapping, that driver number isn't in the weekend's primary
+    roster at all, so compute_inventory silently drops every set the
+    substitute opened -- inflating the regular driver's shown availability
+    (confirmed: VER's shown HARD count was wrong by a full set vs F1.com's
+    own published number until this fix)."""
+
+    PRIMARY = {
+        3: make_driver(3, "VER", team_name="Red Bull Racing"),
+        11: make_driver(11, "PER", team_name="Cadillac"),
+    }
+
+    def test_substitute_stints_remap_to_the_regular_driver_by_team(self):
+        session_drivers = {
+            36: make_driver(36, "IWA", team_name="Red Bull Racing"),  # subs for VER
+            11: make_driver(11, "PER", team_name="Cadillac"),          # PER drove as normal
+        }
+        stints = [
+            make_stint(36, "HARD", 1, 15, tyre_age_at_start=0),
+            make_stint(11, "SOFT", 1, 3, tyre_age_at_start=0),
+        ]
+        out = remap_fp1_substitutes(stints, session_drivers, self.PRIMARY)
+        nums = sorted(s["driver_number"] for s in out)
+        assert nums == [3, 11]
+
+    def test_driver_number_proximity_is_not_used_as_a_tiebreaker(self):
+        # HER (25) is numerically closer to VER (3) than IWA (36) is, but
+        # HER is Cadillac -- the same team as PER (11), not Red Bull. Only
+        # team_name may decide the pairing.
+        session_drivers = {
+            25: make_driver(25, "HER", team_name="Cadillac"),  # subs for PER, not VER
+        }
+        stints = [make_stint(25, "HARD", 1, 5, tyre_age_at_start=0)]
+        out = remap_fp1_substitutes(stints, session_drivers, self.PRIMARY)
+        assert out[0]["driver_number"] == 11
+
+    def test_ambiguous_team_pairing_is_left_unmapped(self):
+        # Two regular drivers missing from the same team in one session --
+        # no way to tell which car the substitute is standing in for, so
+        # leave the stint keyed to a number outside the primary roster
+        # (compute_inventory then simply ignores it, same as today).
+        primary = {
+            3: make_driver(3, "VER", team_name="Red Bull Racing"),
+            22: make_driver(22, "TSU", team_name="Red Bull Racing"),
+        }
+        session_drivers = {36: make_driver(36, "IWA", team_name="Red Bull Racing")}
+        stints = [make_stint(36, "HARD", 1, 5, tyre_age_at_start=0)]
+        out = remap_fp1_substitutes(stints, session_drivers, primary)
+        assert out[0]["driver_number"] == 36
+
+    def test_no_substitution_leaves_stints_unchanged(self):
+        session_drivers = {3: make_driver(3, "VER", team_name="Red Bull Racing")}
+        stints = [make_stint(3, "SOFT", 1, 5, tyre_age_at_start=0)]
+        out = remap_fp1_substitutes(stints, session_drivers, self.PRIMARY)
+        assert out == stints
+
+    def test_remapped_stints_feed_into_the_regular_drivers_inventory(self):
+        # End-to-end: a substitute's long HARD stint, once remapped, is what
+        # actually gets VER's shown HARD availability down from 2 to 1.
+        session_drivers = {36: make_driver(36, "IWA", team_name="Red Bull Racing")}
+        fp1 = remap_fp1_substitutes(
+            [make_stint(36, "HARD", 1, 15, tyre_age_at_start=0)],
+            session_drivers, self.PRIMARY)
+        result = compute_inventory([fp1], self.PRIMARY, session_is_qualifying=[False])
+        ver = next(i for i in result if i.acronym == "VER")
+        assert ver.reconciled()["HARD"]["new"] == 1
 
 
 class TestAllocationNeverExceeded:

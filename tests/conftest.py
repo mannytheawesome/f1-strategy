@@ -21,5 +21,5 @@ def make_stint(driver_number, compound, lap_start, lap_end, tyre_age_at_start=0,
     }
 
 
-def make_driver(driver_number, acronym, team_colour="ffffff"):
-    return {"name_acronym": acronym, "team_colour": team_colour}
+def make_driver(driver_number, acronym, team_colour="ffffff", team_name=None):
+    return {"name_acronym": acronym, "team_colour": team_colour, "team_name": team_name}

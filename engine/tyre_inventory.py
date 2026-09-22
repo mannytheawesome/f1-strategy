@@ -133,6 +133,50 @@ class DriverInventory:
         }
 
 
+def remap_fp1_substitutes(
+    stints: list[dict],
+    session_drivers: dict[int, dict],
+    primary_drivers: dict[int, dict],
+) -> list[dict]:
+    """A team's FIA-mandated rookie/reserve outing (nearly always FP1) swaps
+    its car's regular driver number for a substitute's for that one session
+    -- but it's the same car, same tyre allocation, so sets the substitute
+    opens must still count against the regular driver's weekend inventory,
+    not vanish from tracking entirely (the substitute's number isn't in
+    `primary_drivers` at all, so compute_inventory would otherwise silently
+    drop every stint keyed to it).
+
+    Confirmed against real Monza 2026 FP1 data: four teams ran a substitute
+    that session (Cadillac/HER for PER, Red Bull/IWA for VER, Williams/BRO
+    for ALB, Alpine/ARO for GAS). team_name is the correct pairing key --
+    driver-number proximity is NOT reliable: HER (25) actually subs for PER
+    (11), not VER (3), despite being numerically closer to VER. Folding
+    IWA's FP1 stints into VER correctly dropped his shown HARD availability
+    from 2 (our prior, substitute-blind count) to 1, matching F1.com's own
+    race-morning tyre chart exactly.
+    """
+    missing = {num: d for num, d in primary_drivers.items() if num not in session_drivers}
+    extra = {num: d for num, d in session_drivers.items() if num not in primary_drivers}
+    if not missing or not extra:
+        return stints
+    remap: dict[int, int] = {}
+    for ex_num, ex_d in extra.items():
+        team = ex_d.get("team_name")
+        candidates = [num for num, d in missing.items() if d.get("team_name") == team]
+        if len(candidates) == 1:
+            remap[ex_num] = candidates[0]
+    if not remap:
+        return stints
+    out = []
+    for s in stints:
+        num = s.get("driver_number")
+        if num in remap:
+            s = dict(s)
+            s["driver_number"] = remap[num]
+        out.append(s)
+    return out
+
+
 def _stint_laps(stint: dict) -> int:
     start = stint.get("lap_start") or 0
     end = stint.get("lap_end") or start
