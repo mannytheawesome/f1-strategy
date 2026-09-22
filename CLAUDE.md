@@ -2103,6 +2103,55 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       PER unchanged (his substitute's stint was short enough to land in
       "used," not "discarded" — a genuine case, not a remaining bug). 5 new
       tests (`TestFP1SubstituteRemap`); full suite 128/128 passing.
+
+      **Twentieth issue, same day, follow-up on the same user report: the
+      pit-strategy chart's MEDIUM->HARD row also disagreed with F1.com —
+      window 19-25 (pure-pace optimum lap 22) vs F1.com's published 22-28.**
+      First hypothesis (SOFT/MEDIUM `MIN_DEG` floors too aggressive for an
+      ultra-low-deg circuit) was checked against REAL race-measured Monza
+      degradation (2023-2026 race stints, fuel-corrected) and DISPROVEN:
+      measured MEDIUM (+0.064s/lap) and HARD (+0.055s/lap) were both HIGHER
+      than the floors, the opposite direction needed — raising them would
+      have pushed the prediction earlier, not later. Rather than tune on
+      the one Monza anecdote, built `backtest_pit_timing.py`: for every
+      completed 2026 race, compare `optimize_strategy`'s predicted pit lap
+      for a given compound sequence against every REAL driver who ran a
+      genuine one-stop (excluding a pit lap < 8, added after the first run
+      showed six different Monza drivers all "pitting" on lap 3 — a mass
+      Turn-1 incident, not six independent strategy calls) with that exact
+      sequence. Result across 39 real MEDIUM->HARD one-stop finishers
+      (Australia, Suzuka, Spa, Spain): pure-pace prediction was LATER than
+      the real stop in 37/39 cases, median 7 laps. SOFT->HARD showed no
+      such bias (n=3, median +1 lap). Root cause: `optimize_strategy` has
+      no concept of undercut/track-position risk at all — every car is
+      optimized as if racing alone, but real strategists (and evidently
+      F1.com's own guide) pit a MEDIUM starter earlier than the pure
+      lap-time optimum to defend against being undercut, since a MEDIUM
+      starter is usually mid-pack and more exposed to that threat than a
+      SOFT starter running up front. Checked whether the existing
+      `_undercut_power` signal (`net_undercut_s`) could scale this
+      per-circuit instead of using one flat number — it didn't correlate
+      with the real bias size across the 4 races (Australia had the
+      LARGEST real-world bias despite the WEAKEST undercut signal), so
+      used a flat, empirically-measured correction instead (the same
+      approach `pit_loss_for()` already takes for its circuit-measured
+      pit-loss average): `MEDIUM_START_UNDERCUT_SHIFT_LAPS = 6` (rounded
+      down from the 7-lap median to stay conservative on a 4-race sample),
+      applied in `build_prerace_data` via new
+      `engine.prerace._shift_medium_start_earlier`, scoped specifically to
+      1-stop candidates starting MEDIUM with a non-softer ending compound
+      — excluding MEDIUM->SOFT deliberately, since shifting that split
+      earlier would push the final SOFT splash stint's length past
+      `SOFT_SPLASH_MAX`, making the DP's own chosen sequence illegal.
+      Re-verified against live Monza data: MEDIUM->HARD now shows pit lap
+      25, window [22, 28] — an exact match to F1.com's published number,
+      though the correction was calibrated on the cross-race backtest, not
+      tuned to hit this one figure. Re-ran the backtest after the fix as a
+      sanity check (partially in-sample, 3 of the same 4 races): mean bias
+      for MEDIUM->HARD fell from -7.46 to -1.76 laps. `PACK_VERSION` 29 ->
+      30. 8 new tests (`TestMediumStartUndercutShift` unit tests plus 2 new
+      Monza integration tests); full suite 132/132 passing (unit), 5/5
+      passing (integration).
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/

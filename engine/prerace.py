@@ -24,7 +24,7 @@ from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
     DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
-    FP_WEIGHTS, _weighted_median,
+    FP_WEIGHTS, _weighted_median, STOP_RISK, _hardness,
 )
 from engine.pit_loss import pit_loss_for
 
@@ -50,7 +50,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 29   # 29: FP1 rookie/reserve substitute stints remap onto the regular driver's tyre inventory
+PACK_VERSION = 30   # 30: MEDIUM->HARD one-stop pit lap gets a backtested undercut/track-position early shift
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -451,6 +451,51 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
         elif time_at(1) is not None:
             hi = 1
     return [boundary + lo, boundary + hi]
+
+
+# optimize_strategy finds the pure lap-time-optimal split with no concept of
+# a rival threatening the undercut -- every car races alone in that search.
+# Backtested (backtest_pit_timing.py) against every completed 2026 race with
+# a real, clean (pit lap >= 8, so not a Lap-1-incident stop) one-stop
+# MEDIUM->HARD finisher -- Australia, Suzuka, Spa, Spain, 39 real drivers:
+# the pure-pace pit lap was LATER than the real stop in 37/39 cases, median
+# 7 laps. SOFT-starting one-stops showed no such bias (n=3, median +1 lap)
+# -- a soft starter is usually already at the front with less undercut
+# exposure to defend against, so this correction is scoped to MEDIUM starts
+# only -- and further restricted to a non-softer ending compound (in
+# practice, MEDIUM->HARD) at the call site, matching the actual evidence and
+# avoiding pulling a MEDIUM->SOFT splash stint's final leg past
+# SOFT_SPLASH_MAX. Other starting compounds are left as the pure-pace
+# answer for lack of evidence either way. The circuit's own _undercut_power
+# signal
+# (net_undercut_s) was checked as a way to scale this per-circuit instead of
+# using one flat number, but didn't correlate with the size of the real
+# bias across these 4 races (Australia had the LARGEST real-world bias
+# despite the WEAKEST undercut signal) -- so this is a flat, empirically-
+# measured correction, the same approach pit_loss_for() already takes for
+# its circuit-measured average, not a physics-derived undercut model.
+# Median was 7; used 6 to stay slightly conservative given the small sample.
+MEDIUM_START_UNDERCUT_SHIFT_LAPS = 6
+
+
+def _shift_medium_start_earlier(start_c: str, end_c: str, stint_lengths: list[int],
+                                total_laps: int, curves: dict, field_baseline: float,
+                                pit_loss: float) -> tuple[list[int], list[int], float]:
+    """For a 1-stop MEDIUM-starting plan, pull the pit lap
+    MEDIUM_START_UNDERCUT_SHIFT_LAPS earlier than optimize_strategy's pure-
+    pace answer (floored at MIN_STINT either side) and recompute total_time
+    for that split, so pit_laps/stint_lengths/total_time all stay
+    consistent with each other and with what _pit_window then draws.
+    Returns (pit_laps, stint_lengths, total_time)."""
+    optimal_pit = stint_lengths[0]
+    new_pit = max(MIN_STINT, min(total_laps - MIN_STINT,
+                                 optimal_pit - MEDIUM_START_UNDERCUT_SHIFT_LAPS))
+    new_lengths = [new_pit, total_laps - new_pit]
+    t = (_stint_time(start_c, 0, new_pit, 0, total_laps, 0.0, curves, field_baseline)
+         + pit_loss + STOP_RISK
+         + _stint_time(end_c, 0, total_laps - new_pit, new_pit, total_laps, 0.0,
+                       curves, field_baseline))
+    return [new_pit], new_lengths, round(t, 2)
 
 
 def _quali_speed_sectors(quali_key: int) -> list[dict]:
@@ -1311,6 +1356,16 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 pit_laps = [p.lap for p in pits]
                 bounds = [0] + pit_laps + [total_laps]
                 stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
+                total_time = strat.total_time_from_now
+                # Scoped to MEDIUM->HARD specifically, matching the actual
+                # backtested evidence -- also keeps this from ever shifting
+                # a MEDIUM->SOFT splash stint's final leg past
+                # SOFT_SPLASH_MAX, which pulling the pit lap earlier would
+                # otherwise risk (a longer, no-longer-legal "splash" stint).
+                if stops == 1 and start_c == "MEDIUM" and _hardness(seq[1]) >= _hardness(start_c):
+                    pit_laps, stint_lengths, total_time = _shift_medium_start_earlier(
+                        seq[0], seq[1], stint_lengths, total_laps, curves,
+                        field_baseline, pit_loss)
                 pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
                                            pit_loss, total_laps)
                               for i in range(len(pit_laps))]
@@ -1321,7 +1376,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                     "pit_laps": pit_laps,
                     "pit_windows": pit_windows,
                     "stint_lengths": stint_lengths,
-                    "total_time": strat.total_time_from_now,
+                    "total_time": total_time,
                 })
     for s in strategies:
         s["track_position_cost_s"] = _track_position_cost(s["stops"], circuit, pit_loss)

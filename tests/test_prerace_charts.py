@@ -14,8 +14,9 @@ import engine.prerace as prerace
 from engine.predictor import DegCurve
 from engine.prerace import (
     PIT_WINDOW_MARGIN_S, PIT_WINDOW_MAX_SHIFT, _pit_window, _team_pace,
-    _long_run_pace,
+    _long_run_pace, MEDIUM_START_UNDERCUT_SHIFT_LAPS, _shift_medium_start_earlier,
 )
+from engine.predictor import MIN_STINT, optimize_strategy
 
 
 def _curve(compound, deg_rate=0.05, baseline=90.0):
@@ -53,6 +54,57 @@ class TestPitWindow:
             lens = [total_laps // 2, total_laps - total_laps // 2]
             w = _pit_window(seq, lens, 0, CURVES, 90.0, 22.0, total_laps=total_laps)
             assert w[1] - w[0] >= 0
+
+
+class TestMediumStartUndercutShift:
+    """Real case (Monza 2026, user-reported): our MEDIUM->HARD one-stop
+    candidate recommended pitting at lap 25's pure-pace optimum of 31 --
+    backtested (backtest_pit_timing.py) against 39 real MEDIUM->HARD
+    one-stop finishers across 4 completed 2026 races and found a
+    consistent, ~7-lap-median real-world early-pit bias the pure lap-time
+    DP has no way to see (no undercut/track-position concept at all).
+    _shift_medium_start_earlier applies that backtested correction."""
+
+    def test_shifts_pit_lap_earlier_by_the_calibrated_amount(self):
+        # Pure-pace optimum at lap 25 of 53 -- plenty of room either side
+        # of MIN_STINT for the full shift to apply unclamped.
+        pit_laps, lens, _ = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [25, 28], 53, CURVES, 90.0, 22.0)
+        assert pit_laps == [25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS]
+        assert lens == [25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS,
+                        53 - (25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS)]
+
+    def test_shift_floored_at_min_stint_not_below(self):
+        # Pure-pace optimum already close to MIN_STINT -- the full 6-lap
+        # shift would go below it; must floor there instead.
+        pit_laps, lens, _ = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [10, 40], 50, CURVES, 90.0, 22.0)
+        assert pit_laps == [MIN_STINT]
+        assert lens[0] == MIN_STINT
+
+    def test_lengths_still_sum_to_total_laps(self):
+        pit_laps, lens, _ = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [30, 23], 53, CURVES, 90.0, 22.0)
+        assert sum(lens) == 53
+
+    def test_total_time_recomputed_for_the_shifted_split_not_the_optimum(self):
+        # Ask optimize_strategy for its own genuine pure-pace optimum under
+        # these curves, then confirm the shifted split -- built starting
+        # from that same optimum -- scores a strictly WORSE (higher) time.
+        # If this instead returned the original optimum's total_time
+        # unchanged, a UI relying on it (viability/time_delta) would show a
+        # pit lap inconsistent with its own quoted time cost.
+        skewed_curves = {"MEDIUM": _curve("MEDIUM", deg_rate=0.02, baseline=90.0),
+                         "HARD": _curve("HARD", deg_rate=0.01, baseline=90.6),
+                         "SOFT": _curve("SOFT", deg_rate=0.06, baseline=89.4)}
+        strat = optimize_strategy(0, 53, "MEDIUM", 0, 0.0, skewed_curves, 90.0, 22.0,
+                                  needs_compound_change=True, force_stops=1,
+                                  forbid_repeat_compound=True, force_end_compound="HARD")
+        optimal_pit = strat.pits_remaining[0].lap
+        optimum_time = strat.total_time_from_now
+        _, _, shifted_time = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [optimal_pit, 53 - optimal_pit], 53, skewed_curves, 90.0, 22.0)
+        assert shifted_time > optimum_time
 
 
 class TestTeamPace:
@@ -408,3 +460,33 @@ class TestRealMeetingIntegration:
                 assert lo <= hi
                 assert lo <= s["pit_laps"][j] <= hi
             assert s["viability"] in ("in play", "needs a Safety Car", "not on the table")
+
+    MONZA_2026 = 1293
+
+    def test_monza_medium_hard_matches_f1coms_published_window(self):
+        # User-reported: F1.com's own Monza 2026 strategy guide showed
+        # MEDIUM->HARD's pit window as 22-28; our pure-pace optimizer alone
+        # said 19-22 (lap 25's pure-pace answer was 31, no relation to
+        # F1.com's number at all until the undercut shift). Real-world
+        # backtest evidence (backtest_pit_timing.py, 39 real MEDIUM->HARD
+        # one-stop finishers) is what the shift is actually calibrated on;
+        # this exact match to F1.com's independently-published number is a
+        # bonus confirmation, not what was tuned for.
+        from engine.prerace import build_prerace_data
+        pack = build_prerace_data(self.MONZA_2026)
+        mh = next(s for s in pack["strategies"]
+                  if s["compound_sequence"] == ["MEDIUM", "HARD"])
+        assert mh["pit_laps"] == [25]
+        assert mh["pit_windows"] == [[22, 28]]
+
+    def test_monza_medium_soft_splash_stint_is_not_shifted(self):
+        # MEDIUM->SOFT also starts on MEDIUM, but the shift is scoped off
+        # of it (end_c softer than start_c) -- shifting it would otherwise
+        # risk pushing the final SOFT splash stint's length past
+        # SOFT_SPLASH_MAX, making the DP's own chosen sequence illegal.
+        from engine.prerace import build_prerace_data
+        from engine.predictor import SOFT_SPLASH_MAX
+        pack = build_prerace_data(self.MONZA_2026)
+        ms = next(s for s in pack["strategies"]
+                  if s["compound_sequence"] == ["MEDIUM", "SOFT"])
+        assert ms["stint_lengths"][1] <= SOFT_SPLASH_MAX
