@@ -14,9 +14,10 @@ import engine.prerace as prerace
 from engine.predictor import DegCurve
 from engine.prerace import (
     PIT_WINDOW_MARGIN_S, PIT_WINDOW_MAX_SHIFT, _pit_window, _team_pace,
-    _long_run_pace, MEDIUM_START_UNDERCUT_SHIFT_LAPS, _shift_medium_start_earlier,
+    _long_run_pace, _shift_medium_start_earlier,
 )
 from engine.predictor import MIN_STINT, optimize_strategy
+from engine.undercut_shift import CIRCUIT_UNDERCUT_SHIFT, DEFAULT_UNDERCUT_SHIFT, undercut_shift_for
 
 
 def _curve(compound, deg_rate=0.05, baseline=90.0):
@@ -58,33 +59,51 @@ class TestPitWindow:
 
 class TestMediumStartUndercutShift:
     """Real case (Monza 2026, user-reported): our MEDIUM->HARD one-stop
-    candidate recommended pitting at lap 25's pure-pace optimum of 31 --
-    backtested (backtest_pit_timing.py) against 39 real MEDIUM->HARD
-    one-stop finishers across 4 completed 2026 races and found a
-    consistent, ~7-lap-median real-world early-pit bias the pure lap-time
-    DP has no way to see (no undercut/track-position concept at all).
-    _shift_medium_start_earlier applies that backtested correction."""
+    candidate recommended pitting at lap 31, well past F1.com's published
+    window. backtest_pit_timing.py found a real, consistent early-pit bias
+    across 4 clean 2026 races the pure lap-time DP has no way to see (no
+    undercut/track-position concept at all) -- but calibrate_undercut_shift
+    .py then found, across each circuit's full 2023-2026 history, that the
+    bias is genuinely circuit-specific and not always early (see
+    engine.undercut_shift's module docstring). _shift_medium_start_earlier
+    applies whatever shift (positive = earlier, negative = later) that
+    calibration supplies for a given circuit."""
 
-    def test_shifts_pit_lap_earlier_by_the_calibrated_amount(self):
+    def test_positive_shift_moves_the_pit_lap_earlier(self):
         # Pure-pace optimum at lap 25 of 53 -- plenty of room either side
         # of MIN_STINT for the full shift to apply unclamped.
         pit_laps, lens, _ = _shift_medium_start_earlier(
-            "MEDIUM", "HARD", [25, 28], 53, CURVES, 90.0, 22.0)
-        assert pit_laps == [25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS]
-        assert lens == [25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS,
-                        53 - (25 - MEDIUM_START_UNDERCUT_SHIFT_LAPS)]
+            "MEDIUM", "HARD", [25, 28], 53, CURVES, 90.0, 22.0, shift_laps=6)
+        assert pit_laps == [19]
+        assert lens == [19, 34]
+
+    def test_negative_shift_moves_the_pit_lap_later(self):
+        # Real case: Mexico City's calibrated shift is negative (-10) --
+        # real one-stoppers there pit LATER than the pure-pace answer.
+        pit_laps, lens, _ = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [20, 33], 53, CURVES, 90.0, 22.0, shift_laps=-10)
+        assert pit_laps == [30]
+        assert lens == [30, 23]
 
     def test_shift_floored_at_min_stint_not_below(self):
-        # Pure-pace optimum already close to MIN_STINT -- the full 6-lap
+        # Pure-pace optimum already close to MIN_STINT -- a 6-lap earlier
         # shift would go below it; must floor there instead.
         pit_laps, lens, _ = _shift_medium_start_earlier(
-            "MEDIUM", "HARD", [10, 40], 50, CURVES, 90.0, 22.0)
+            "MEDIUM", "HARD", [10, 40], 50, CURVES, 90.0, 22.0, shift_laps=6)
         assert pit_laps == [MIN_STINT]
         assert lens[0] == MIN_STINT
 
+    def test_shift_capped_at_total_laps_minus_min_stint_not_above(self):
+        # A large negative (later) shift must not push the final stint
+        # below MIN_STINT either.
+        pit_laps, lens, _ = _shift_medium_start_earlier(
+            "MEDIUM", "HARD", [40, 13], 53, CURVES, 90.0, 22.0, shift_laps=-20)
+        assert pit_laps == [53 - MIN_STINT]
+        assert lens[1] == MIN_STINT
+
     def test_lengths_still_sum_to_total_laps(self):
         pit_laps, lens, _ = _shift_medium_start_earlier(
-            "MEDIUM", "HARD", [30, 23], 53, CURVES, 90.0, 22.0)
+            "MEDIUM", "HARD", [30, 23], 53, CURVES, 90.0, 22.0, shift_laps=6)
         assert sum(lens) == 53
 
     def test_total_time_recomputed_for_the_shifted_split_not_the_optimum(self):
@@ -103,8 +122,31 @@ class TestMediumStartUndercutShift:
         optimal_pit = strat.pits_remaining[0].lap
         optimum_time = strat.total_time_from_now
         _, _, shifted_time = _shift_medium_start_earlier(
-            "MEDIUM", "HARD", [optimal_pit, 53 - optimal_pit], 53, skewed_curves, 90.0, 22.0)
+            "MEDIUM", "HARD", [optimal_pit, 53 - optimal_pit], 53, skewed_curves, 90.0, 22.0,
+            shift_laps=6)
         assert shifted_time > optimum_time
+
+
+class TestUndercutShiftLookup:
+    def test_known_circuit_returns_its_calibrated_value(self):
+        assert undercut_shift_for("Monza") == CIRCUIT_UNDERCUT_SHIFT["monza"]
+
+    def test_lookup_is_case_insensitive(self):
+        assert undercut_shift_for("MONZA") == undercut_shift_for("monza")
+
+    def test_unknown_circuit_falls_back_to_default(self):
+        assert undercut_shift_for("Nonexistent Circuit") == DEFAULT_UNDERCUT_SHIFT
+
+    def test_none_circuit_falls_back_to_default(self):
+        assert undercut_shift_for(None) == DEFAULT_UNDERCUT_SHIFT
+
+    def test_calibration_includes_both_signs(self):
+        # The real, evidence-based finding this session: roughly half of
+        # the well-sampled circuits need a LATER correction, not earlier
+        # -- not a uniformly-early "undercut defense everywhere" rule.
+        values = CIRCUIT_UNDERCUT_SHIFT.values()
+        assert any(v > 0 for v in values)
+        assert any(v < 0 for v in values)
 
 
 class TestTeamPace:
@@ -463,21 +505,22 @@ class TestRealMeetingIntegration:
 
     MONZA_2026 = 1293
 
-    def test_monza_medium_hard_matches_f1coms_published_window(self):
+    def test_monza_medium_hard_uses_monzas_own_calibrated_shift(self):
         # User-reported: F1.com's own Monza 2026 strategy guide showed
-        # MEDIUM->HARD's pit window as 22-28; our pure-pace optimizer alone
-        # said 19-22 (lap 25's pure-pace answer was 31, no relation to
-        # F1.com's number at all until the undercut shift). Real-world
-        # backtest evidence (backtest_pit_timing.py, 39 real MEDIUM->HARD
-        # one-stop finishers) is what the shift is actually calibrated on;
-        # this exact match to F1.com's independently-published number is a
-        # bonus confirmation, not what was tuned for.
+        # MEDIUM->HARD's pit window as 22-28. A flat, 4-race-derived 6-lap
+        # shift happened to reproduce that exactly (lap 25) -- but Monza's
+        # OWN full 2023-2026 history (n=20 real matched drivers,
+        # calibrate_undercut_shift.py) says the genuine circuit-specific
+        # bias is only +1 lap, not +6. That's the more rigorous number
+        # (20 real historical samples beats matching one external
+        # screenshot), even though it moves away from the exact F1.com
+        # figure -- pure-pace optimum was lap 31, so lap 30 here.
         from engine.prerace import build_prerace_data
+        from engine.undercut_shift import CIRCUIT_UNDERCUT_SHIFT
         pack = build_prerace_data(self.MONZA_2026)
         mh = next(s for s in pack["strategies"]
                   if s["compound_sequence"] == ["MEDIUM", "HARD"])
-        assert mh["pit_laps"] == [25]
-        assert mh["pit_windows"] == [[22, 28]]
+        assert mh["pit_laps"] == [31 - round(CIRCUIT_UNDERCUT_SHIFT["monza"])]
 
     def test_monza_medium_soft_splash_stint_is_not_shifted(self):
         # MEDIUM->SOFT also starts on MEDIUM, but the shift is scoped off

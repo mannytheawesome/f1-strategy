@@ -2152,6 +2152,53 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       30. 8 new tests (`TestMediumStartUndercutShift` unit tests plus 2 new
       Monza integration tests); full suite 132/132 passing (unit), 5/5
       passing (integration).
+
+      **Twenty-first issue, same day, follow-up: is the flat 6-lap shift
+      itself right, or just an average that happens to fit 4 circuits?**
+      User asked directly whether prior years' data could calibrate this
+      per circuit instead of leaning on one global number, "so it's
+      accurate first time around" for circuits never manually checked.
+      Built `calibrate_undercut_shift.py`: a LEAN version of the same
+      backtest (skips build_prerace_data's team-pace/Monte-Carlo/narrative
+      work entirely, computing only degradation curves + one
+      `optimize_strategy` call) run across every completed race at every
+      circuit, 2023-2026 (96 meetings). Result was a real surprise: roughly
+      HALF the well-sampled circuits (n>=10 real matched MEDIUM->HARD
+      one-stop finishers) need a LATER correction, not earlier — Mexico
+      City's real one-stoppers pit 10 laps *later* than the pure-pace
+      optimum, Miami's 2 laps later, Austin's 3.5, Hungaroring's 5, Imola's
+      7 — directly contradicting the "MEDIUM starters always defend the
+      undercut" read from the original 4-race sample, which turned out to
+      have been an unlucky, all-early-biased subset (Australia, Suzuka,
+      Spa, Spain). Also surfaced a genuine tension with the twentieth
+      issue's own result: Monza's OWN full history (n=20, 2023-2025 only —
+      2026 Monza's real one-stops were still the Lap-1-incident-contaminated
+      ones filtered out entirely) gives a shift of only +1 lap, not +6 — the
+      flat correction's exact match to F1.com's published window for Monza
+      was a coincidence of averaging OTHER circuits' bias, not a real
+      Monza-specific signal. Flagged this directly to the user (screenshot
+      match vs 20 real historical data points) rather than silently keeping
+      whichever number looked better; user chose the rigorous per-circuit
+      number over preserving the one exact screenshot match. Small samples
+      were genuinely wild, not just noisy-but-close — Monte Carlo's n=3
+      implied a 32-lap shift — so a circuit needs n>=10 real matched
+      drivers to get its own figure; 13 circuits qualify (Miami n=43 down
+      to Hungaroring n=10), everything else (including brand-new circuits)
+      falls back to the field-median default of 4.0 laps. New module
+      `engine/undercut_shift.py` (`CIRCUIT_UNDERCUT_SHIFT` dict +
+      `undercut_shift_for()`), mirroring `engine/pit_loss.py`'s existing
+      circuit-measured-average pattern exactly. `_shift_medium_start_earlier`
+      now takes an explicit signed `shift_laps` (positive = earlier,
+      negative = later) instead of a hardcoded constant. Re-verified Monza:
+      MEDIUM->HARD now shows pit lap 30 (down from the unshifted pure-pace
+      31, using Monza's own +1 lap figure), window [27, 33] — no longer an
+      exact F1.com match, and that's the honest, correct outcome given the
+      evidence. `PACK_VERSION` 30 -> 31. Tests rewritten for the new signed,
+      per-circuit signature (`TestMediumStartUndercutShift`,
+      `TestUndercutShiftLookup` — including a test asserting the
+      calibration table contains BOTH signs, guarding against silently
+      reverting to an early-only assumption); full suite 139/139 passing
+      (unit), 5/5 passing (integration).
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/

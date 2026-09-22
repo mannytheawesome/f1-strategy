@@ -27,6 +27,7 @@ from engine.predictor import (
     FP_WEIGHTS, _weighted_median, STOP_RISK, _hardness,
 )
 from engine.pit_loss import pit_loss_for
+from engine.undercut_shift import undercut_shift_for
 
 # Clean-lap filter for _long_run_pace (below): keep only laps within this
 # ratio of a stint's own best lap, same idea as predictor.DEG_LONGRUN but
@@ -50,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 30   # 30: MEDIUM->HARD one-stop pit lap gets a backtested undercut/track-position early shift
+PACK_VERSION = 31   # 31: MEDIUM->HARD undercut shift is now per-circuit calibrated, not a flat constant
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -467,29 +468,36 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
 # avoiding pulling a MEDIUM->SOFT splash stint's final leg past
 # SOFT_SPLASH_MAX. Other starting compounds are left as the pure-pace
 # answer for lack of evidence either way. The circuit's own _undercut_power
-# signal
-# (net_undercut_s) was checked as a way to scale this per-circuit instead of
-# using one flat number, but didn't correlate with the size of the real
-# bias across these 4 races (Australia had the LARGEST real-world bias
-# despite the WEAKEST undercut signal) -- so this is a flat, empirically-
-# measured correction, the same approach pit_loss_for() already takes for
-# its circuit-measured average, not a physics-derived undercut model.
-# Median was 7; used 6 to stay slightly conservative given the small sample.
-MEDIUM_START_UNDERCUT_SHIFT_LAPS = 6
+# signal (net_undercut_s) was checked as a way to scale this per-circuit
+# instead of using one flat number, but didn't correlate with the size of
+# the real bias across those 4 races (Australia had the LARGEST real-world
+# bias despite the WEAKEST undercut signal).
+#
+# That 4-race sample turned out to be a biased one, though: extending the
+# same backtest to every circuit's full 2023-2026 history
+# (calibrate_undercut_shift.py) found roughly HALF the well-sampled
+# circuits actually need a LATER correction, not earlier (Mexico City's
+# real one-stoppers pit 10 laps LATER than the pure-pace optimum; Miami's
+# pit 2 laps later) -- the original 4-race sample just happened to be all
+# early-biased circuits. engine.undercut_shift.undercut_shift_for() now
+# supplies the real, per-circuit-calibrated figure (falling back to the
+# field-median default for a circuit with no track record yet), the same
+# pattern engine.pit_loss.pit_loss_for() already established for its own
+# circuit-measured average.
 
 
 def _shift_medium_start_earlier(start_c: str, end_c: str, stint_lengths: list[int],
                                 total_laps: int, curves: dict, field_baseline: float,
-                                pit_loss: float) -> tuple[list[int], list[int], float]:
-    """For a 1-stop MEDIUM-starting plan, pull the pit lap
-    MEDIUM_START_UNDERCUT_SHIFT_LAPS earlier than optimize_strategy's pure-
-    pace answer (floored at MIN_STINT either side) and recompute total_time
-    for that split, so pit_laps/stint_lengths/total_time all stay
-    consistent with each other and with what _pit_window then draws.
-    Returns (pit_laps, stint_lengths, total_time)."""
+                                pit_loss: float, shift_laps: float) -> tuple[list[int], list[int], float]:
+    """For a 1-stop MEDIUM-starting plan, pull the pit lap `shift_laps`
+    earlier than optimize_strategy's pure-pace answer (floored at
+    MIN_STINT either side; a negative shift_laps instead pushes it later)
+    and recompute total_time for that split, so pit_laps/stint_lengths/
+    total_time all stay consistent with each other and with what
+    _pit_window then draws. Returns (pit_laps, stint_lengths, total_time)."""
     optimal_pit = stint_lengths[0]
     new_pit = max(MIN_STINT, min(total_laps - MIN_STINT,
-                                 optimal_pit - MEDIUM_START_UNDERCUT_SHIFT_LAPS))
+                                 round(optimal_pit - shift_laps)))
     new_lengths = [new_pit, total_laps - new_pit]
     t = (_stint_time(start_c, 0, new_pit, 0, total_laps, 0.0, curves, field_baseline)
          + pit_loss + STOP_RISK
@@ -1365,7 +1373,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 if stops == 1 and start_c == "MEDIUM" and _hardness(seq[1]) >= _hardness(start_c):
                     pit_laps, stint_lengths, total_time = _shift_medium_start_earlier(
                         seq[0], seq[1], stint_lengths, total_laps, curves,
-                        field_baseline, pit_loss)
+                        field_baseline, pit_loss, undercut_shift_for(circuit))
                 pit_windows = [_pit_window(seq, stint_lengths, i, curves, field_baseline,
                                            pit_loss, total_laps)
                               for i in range(len(pit_laps))]
