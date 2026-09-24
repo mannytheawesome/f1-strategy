@@ -2245,6 +2245,38 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       dedicated regression test for the single-fresh-sample-outlier bug);
       full suite 144/144 passing (unit), 5/5 passing (integration).
       `PACK_VERSION` 31 -> 32.
+
+      **Twenty-third issue, 2026-09-24, user-reported: Baku 2026 FP1 "not
+      showing up" on the live-timing board.** Confirmed live: `/live` with
+      FP1's session_key sat on "Connecting…" indefinitely; a direct call to
+      our own `/api/live?session_key=...` succeeded but took ~11s on a cold
+      cache (fast, ~0.2s, once warm). Root cause: OpenF1 restricts public
+      API access to an ENTIRE meeting -- including already-completed
+      sessions like FP1 -- while any other session in that event is
+      currently live (confirmed directly: an unauthenticated call to
+      OpenF1 for this meeting returned `401 Live F1 session in progress.
+      Global API access (including past sessions) is restricted...` while
+      FP2 was live). Our disk cache already shields users from this once
+      populated (`data.live._ttl_for_session` gives a completed session a
+      long TTL), but nobody had loaded FP1's board yet that weekend, so
+      the first real user paid the cold-start cost with the live board's
+      "Connecting…" state giving no indication anything was happening --
+      indistinguishable from broken. Built `data/warmer.py`: a daemon
+      background thread (started from `api/main.py`'s FastAPI `lifespan`
+      hook, this app's first use of one) that checks every 2 minutes
+      whether any session in the current race weekend ended recently and
+      pre-fetches its `build_state` (the same call `/api/live` makes) so
+      the cache is already warm before a real user asks. A session is
+      re-checked every tick until it's past the same 300s settle window
+      `_ttl_for_session` itself uses (matches the point that function
+      switches from its own short live-TTL to the long historical one),
+      then marked warmed and skipped thereafter; failures (OpenF1 hiccups)
+      are swallowed and retried next tick rather than crashing the loop.
+      10 new tests (`tests/test_warmer.py`, no real network/threads/sleep
+      -- pure decision-logic tests via monkeypatched dependencies); full
+      suite 154/154 passing (unit), 5/5 passing (integration). No
+      PACK_VERSION bump -- this doesn't change any computed value, only
+      when the cache for it gets populated.
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/

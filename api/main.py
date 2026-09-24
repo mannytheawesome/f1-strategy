@@ -11,6 +11,7 @@ App setup and wiring only. Routes live in api/routers/, grouped by domain:
 
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,8 +20,19 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.routers import meta, timing, analysis, strategy, briefings, usage
+from data.warmer import start_background_warmer
 
-app = FastAPI(title="F1 Strategy Predictor")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-fetches a recently-completed session's live-board data so the
+    # first real user request is a cache hit, not a 10+s cold OpenF1
+    # round-trip that looks broken on the frontend (see data/warmer.py).
+    start_background_warmer()
+    yield
+
+
+app = FastAPI(title="F1 Strategy Predictor", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
