@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 32   # 32: deg-curve baseline now excludes resumed-tyre samples when enough fresh ones exist
+PACK_VERSION = 33   # 33: lap-0 projection blends a driver's real quali gap into their pace_delta
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -555,6 +555,50 @@ def _quali_speed_sectors(quali_key: int) -> list[dict]:
 GRID_SPREAD_S = 1.0   # assumed first-lap spread per grid slot for projection
 
 
+def _parse_grid_gap(gap) -> float:
+    if not gap or gap == "LEADER":
+        return 0.0
+    try:
+        return float(str(gap).replace("+", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# How much weight a driver's real qualifying gap carries as a prior against
+# their FP long-run pace_delta, in equivalent "FP laps" -- mirrors
+# build_pace_model's QUALI_PRIOR_LAPS exactly, so a thin FP sample gets
+# pulled back towards where the driver actually qualified instead of
+# standing entirely on its own.
+#
+# Real bug (Baku 2026, user-reported: "surely Russell should be the
+# favorite, he completely destroyed the field in quali"): pace_rows'
+# pace_delta was fed into the projection completely unblended, with no
+# regard for its own low_confidence flag or sample size. BEA's FP3-only,
+# 5-lap sample (low_confidence=True) read -2.73s/lap -- by far the best in
+# the field -- and with nothing to weigh against it, the projection gave
+# him the highest win probability and a predicted P1 finish despite
+# qualifying P11, +2.2s off pole. RUS, who actually took pole by a
+# healthy 0.84s over P2, was projected only P2 with a lower win
+# probability than a driver who qualified 10 places behind him. Blending
+# in the driver's real quali gap (already sitting on `grid`, no extra
+# fetch needed) the same way build_pace_model blends a quali-lap prior
+# fixes this: BEA's blended delta moves from -2.73 to roughly -0.94 (his
+# grid slot puts him almost exactly at the field's own median gap, so the
+# prior pulls him towards "about average", not "fastest car on track");
+# RUS's moves from -1.25 to roughly -1.77 (his big quali margin makes him
+# MORE favoured, not less) -- flipping the field lead to the driver who
+# actually earned it in qualifying.
+QUALI_GRID_PRIOR_LAPS = 10
+
+
+def _blend_pace_delta(raw_delta: float, r_w: float, quali_delta: float,
+                      prior_laps: float = QUALI_GRID_PRIOR_LAPS) -> float:
+    """Weighted blend of an FP-derived pace_delta (weight r_w, in laps) with
+    a quali-gap-derived one (fixed weight prior_laps) -- see
+    QUALI_GRID_PRIOR_LAPS's comment for why this exists."""
+    return (raw_delta * r_w + quali_delta * prior_laps) / (r_w + prior_laps)
+
+
 def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                     strategies: list[dict], total_laps: int, pit_loss: float,
                     circuit: str, inventory: dict | None = None) -> list:
@@ -566,6 +610,8 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
         return []
     pace_by_num = {r["driver_number"]: r for r in pace_rows}
     start_c = strategies[0]["start_compound"]
+    median_grid_gap = (statistics.median(_parse_grid_gap(g.get("gap")) for g in grid)
+                       if grid else 0.0)
     serialised, pace_model = [], {}
     for g in grid:
         # Prefer the grid's own driver number. Resolving it from pace_rows
@@ -592,11 +638,15 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
             "interval": f"+{GRID_SPREAD_S:.3f}" if g["position"] > 1 else "LEADER",
             "retired": False, "compounds_used": [own_start], "current_lap": 0,
         })
+        raw_delta = pr["pace_delta"] if pr else 0.0
+        r_w = pr["laps"] if pr else 0
+        quali_delta = _parse_grid_gap(g.get("gap")) - median_grid_gap
+        blended_delta = _blend_pace_delta(raw_delta, r_w, quali_delta)
         pace_model[num] = DriverPace(
             driver_number=num, acronym=g["acronym"],
             pace_median=0.0, pace_std=0.3,
-            pace_delta=pr["pace_delta"] if pr else 0.0,
-            laps_counted=pr["laps"] if pr else 0)
+            pace_delta=round(blended_delta, 3),
+            laps_counted=r_w)
     # Each car is planned against its own garage: subtract the set it starts on.
     inv_left = None
     if inventory:

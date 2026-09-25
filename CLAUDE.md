@@ -2277,6 +2277,51 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       suite 154/154 passing (unit), 5/5 passing (integration). No
       PACK_VERSION bump -- this doesn't change any computed value, only
       when the cache for it gets populated.
+
+      **Twenty-fourth issue, 2026-09-25/26, user pushed back hard on the
+      race prediction: "surely Russell should be the favorite, he
+      completely destroyed the field in quali."** Checked the real Baku
+      grid against the projection and the user was completely right: RUS
+      took pole by 0.84s over P2 (a big margin) but was projected only P2
+      with 15.0% win probability, BEHIND a driver — BEA — who qualified
+      P11, +2.2s off pole, yet was given the field's HIGHEST win
+      probability (24.4%) and a predicted P1 finish. Traced it to
+      `_run_projection`: it feeds `pace_rows`' FP-long-run `pace_delta`
+      straight into the Monte Carlo with zero regard for that same row's
+      own `low_confidence` flag. BEA's entire race-pace signal was 5 laps
+      from Practice 3 only (`low_confidence: true`), which happened to
+      read -2.73s/lap — by far the best in the field — and nothing
+      weighed against it. Contrast RUS: -1.25s/lap off a properly-sampled
+      10 laps across FP1+FP2, not low-confidence, but still LESS extreme
+      than BEA's noisy 5-lap reading, so the unblended number let a small
+      sample dominate an entire grid position's worth of real, demonstrated
+      form. `engine.predictor.build_pace_model` already solves exactly
+      this for the LIVE system (blends a qualifying-lap prior against
+      thin race-lap samples, weighted by `QUALI_PRIOR_LAPS`) but
+      `_run_projection` is a separate, standalone function that never
+      called it. Rather than restructure to share that machinery (two
+      independently-tuned pace models, real risk of unrelated regressions
+      elsewhere in the pipeline), mirrored the same blending approach
+      locally: added `_parse_grid_gap` (reads the real qualifying gap
+      already sitting on `grid` -- no extra fetch) and `_blend_pace_delta`
+      (identical weighted-average formula to `build_pace_model`'s quali
+      blend, `QUALI_GRID_PRIOR_LAPS = 10` matching its `QUALI_PRIOR_LAPS`),
+      applied against each driver's gap-to-FIELD-MEDIAN (not gap-to-pole,
+      to match `pace_delta`'s existing "vs field median" convention
+      elsewhere). Re-verified against live Baku data: BEA's blended delta
+      moved from -2.73 to -0.94 (his grid slot sits almost exactly at the
+      field's own median gap, so the prior correctly pulls him to "about
+      average," not "fastest car on track") and now projects P8, 2.8% win;
+      RUS's moved from -1.25 to -1.77 (his big quali margin makes him MORE
+      favoured, not less, exactly as it should) and now projects P1, 32.8%
+      win — the clear favourite, matching what actually happened on
+      track. 14 new tests (`tests/test_projection_quali_blend.py`: pure
+      unit tests for both new helpers plus an end-to-end synthetic-grid
+      test asserting a dominant pole-sitter beats a thin noisy outlier,
+      checked stable across 5 repeated runs given the Monte Carlo
+      involved); full suite 164/164 passing (unit), 5/5 passing
+      (integration, one transient real-network 429 confirmed to pass on
+      retry). `PACK_VERSION` 32 -> 33.
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/
