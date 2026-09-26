@@ -574,6 +574,30 @@ def build_deg_curves(
                                      med.baseline + expected, cur.data_points,
                                      cur.confidence.rstrip("*") + "*", cur.sessions)
 
+    # Ordering, not just magnitude: a harder compound must never look
+    # FASTER on a fresh lap than a softer one, however small the gap --
+    # real case (Baku 2026, user-reported after checking the actual race
+    # against the pre-race strategy chart): HARD's raw baseline read
+    # 0.19s faster than MEDIUM's off a thin 15-point/3-stint sample, well
+    # inside OFFSET_TOLERANCE so the clamp above never fired, but still
+    # physically backwards -- it made the optimizer's two top-ranked
+    # one-stop candidates both HARD-based, when not one of the 22 real
+    # drivers in that race chose to run HARD at all. Mirrors the deg_rate
+    # monotonicity check just below, applied to baseline instead.
+    med = curves.get("MEDIUM")
+    sft = curves.get("SOFT")
+    hrd = curves.get("HARD")
+    if med and sft and sft.baseline > med.baseline:
+        curves["SOFT"] = DegCurve("SOFT", sft.deg_rate,
+                                  med.baseline + EXPECTED_OFFSET["SOFT"],
+                                  sft.data_points,
+                                  sft.confidence.rstrip("*") + "*", sft.sessions)
+    if med and hrd and hrd.baseline < med.baseline:
+        curves["HARD"] = DegCurve("HARD", hrd.deg_rate,
+                                  med.baseline + EXPECTED_OFFSET["HARD"],
+                                  hrd.data_points,
+                                  hrd.confidence.rstrip("*") + "*", hrd.sessions)
+
     # Deg rate caps, floors, and monotonicity (SOFT wears fastest)
     for c, cur in list(curves.items()):
         floored = max(cur.deg_rate, MIN_DEG.get(c, 0.0))

@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 33   # 33: lap-0 projection blends a driver's real quali gap into their pace_delta
+PACK_VERSION = 34   # 34: deg-curve baseline enforces SOFT<=MEDIUM<=HARD ordering, not just tolerance
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat

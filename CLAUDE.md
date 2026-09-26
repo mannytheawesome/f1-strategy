@@ -2322,6 +2322,44 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       involved); full suite 164/164 passing (unit), 5/5 passing
       (integration, one transient real-network 429 confirmed to pass on
       retry). `PACK_VERSION` 32 -> 33.
+
+      **Twenty-fifth issue, 2026-09-26, user follow-up after the race:
+      "what about the tyre strategy."** Checked the pre-race strategy
+      chart's top-ranked candidates against what the real 22-car field
+      actually ran: not one driver used HARD tyres at Baku, at all -- the
+      whole race was SOFT/MEDIUM only -- yet the chart's top TWO ranked
+      one-stops were both HARD-based (`HARD->SOFT` and `SOFT->HARD`), and
+      `SOFT->MEDIUM` (what roughly half the real field actually drove) was
+      ranked dead last, "not on the table" at +21.6s. Root cause: HARD's
+      baseline, fit from a thin 15-point/3-stint FP sample, read 0.19s
+      FASTER than MEDIUM's -- physically backwards, since a harder
+      compound never generates more peak grip on a fresh lap -- but the
+      existing `EXPECTED_OFFSET`/`OFFSET_TOLERANCE` clamp (`build_deg_curves`,
+      `engine/predictor.py`) only corrects a deviation bigger than 1.0s
+      from the expected +0.4s/-0.6s offsets, so this smaller-but-still-
+      backwards reading slipped through untouched. Confirmed not
+      Baku-specific by checking Spa and Suzuka's own curves: both had
+      raw HARD readings extreme enough (>1.0s off) that the EXISTING
+      clamp already forced them to exactly `MEDIUM + 0.4` -- the ordering
+      violation itself is a real, recurring pattern the tolerance check
+      was never built to catch; Baku was just the first case low-grade
+      enough to expose the gap. Added a direct ordering guard right after
+      the tolerance clamp -- HARD's baseline may never sit below MEDIUM's,
+      nor SOFT's above it, regardless of how small the gap is -- mirroring
+      the deg_rate monotonicity check that already exists a few lines
+      below it in the same function. Re-verified against live Baku data:
+      HARD's baseline corrected to `MEDIUM + 0.4` as intended, and
+      `SOFT->MEDIUM` jumped from "not on the table" (+21.6s) to a genuine
+      top-3 "in play" candidate (+0.7s) -- matching what half the real
+      field actually drove. HARD-based candidates still edge out slightly
+      on pure pace even after the fix (HARD's deg_rate is genuinely low),
+      which may be a separate, softer real-world-conservatism gap the
+      model doesn't capture (teams avoiding an unfamiliar/unraced compound
+      even when the linear model says it's close) -- left as a known
+      open question, not chased further this session. 5 new tests
+      (`tests/test_baseline_ordering.py`); full suite 169/169 passing
+      (unit), 5/5 passing (integration, one transient real-network 429
+      confirmed to pass on retry). `PACK_VERSION` 33 -> 34.
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/
