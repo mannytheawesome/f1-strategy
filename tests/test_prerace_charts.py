@@ -128,6 +128,18 @@ class TestMediumStartUndercutShift:
 
 
 class TestUndercutShiftLookup:
+    """undercut_shift_for() prefers the live, self-updating calibration
+    (engine.undercut_calibration.load_calibration) when it exists, falling
+    back to the hardcoded CIRCUIT_UNDERCUT_SHIFT/DEFAULT_UNDERCUT_SHIFT
+    bootstrap otherwise. These tests force the bootstrap path explicitly
+    (rather than relying on there being no var/undercut_shift.json on the
+    machine running them, which would make the test outcome depend on
+    whether the background recalibrator has ever run here)."""
+
+    @pytest.fixture(autouse=True)
+    def _force_bootstrap_path(self, monkeypatch):
+        monkeypatch.setattr("engine.undercut_calibration.load_calibration", lambda: None)
+
     def test_known_circuit_returns_its_calibrated_value(self):
         assert undercut_shift_for("Monza") == CIRCUIT_UNDERCUT_SHIFT["monza"]
 
@@ -147,6 +159,22 @@ class TestUndercutShiftLookup:
         values = CIRCUIT_UNDERCUT_SHIFT.values()
         assert any(v > 0 for v in values)
         assert any(v < 0 for v in values)
+
+
+class TestUndercutShiftPrefersLiveCalibration:
+    """User asked directly: "automatic recalibration." undercut_shift_for()
+    must prefer a live, self-updating calibration over the frozen
+    hardcoded snapshot whenever one has been produced."""
+
+    def test_live_calibration_overrides_the_bootstrap_value(self, monkeypatch):
+        live = {"by_circuit": {"monza": 99.0}, "default": 4.0}
+        monkeypatch.setattr("engine.undercut_calibration.load_calibration", lambda: live)
+        assert undercut_shift_for("Monza") == 99.0
+
+    def test_live_calibration_default_is_used_for_an_uncalibrated_circuit(self, monkeypatch):
+        live = {"by_circuit": {"monza": 99.0}, "default": 42.0}
+        monkeypatch.setattr("engine.undercut_calibration.load_calibration", lambda: live)
+        assert undercut_shift_for("Nonexistent Circuit") == 42.0
 
 
 class TestTeamPace:

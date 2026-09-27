@@ -30,11 +30,23 @@ from the 4-race sample alone. This is real, circuit-specific behaviour
 not noise -- a circuit needs n>=10 real matched samples to appear below;
 smaller samples were genuinely wild (Monte Carlo's n=3 implied a 32-lap
 shift) and fall back to the field-median default instead.
+
+User later asked directly: "automatic recalibration" -- this one-off
+snapshot doesn't absorb a new race's result on its own, so
+engine/undercut_calibration.py turns the same logic into a live,
+persisted, incrementally-updated calibration that a background job
+(data/recalibrator.py) refreshes daily in production. CIRCUIT_UNDERCUT_
+SHIFT/DEFAULT_UNDERCUT_SHIFT below stay in the codebase as the bootstrap
+default -- what a fresh deploy uses before that job has produced its own
+file (or if the persisted file is ever missing/corrupt) -- but
+undercut_shift_for() prefers the live, self-updating numbers whenever
+they exist.
 """
 
 # circuit_short_name (lowercased) -> measured shift in laps (positive =
 # pit earlier than optimize_strategy's pure-pace answer; negative = later).
-# Trailing comment is the real matched-driver sample size behind each figure.
+# Trailing comment is the real matched-driver sample size behind each figure,
+# as of the snapshot this bootstrap default was taken from (2026-09-22).
 CIRCUIT_UNDERCUT_SHIFT = {
     "baku":                 9.0,    # n=33
     "suzuka":               8.0,    # n=33
@@ -59,5 +71,16 @@ DEFAULT_UNDERCUT_SHIFT = 4.0
 
 def undercut_shift_for(circuit: str) -> float:
     """Measured MEDIUM->HARD one-stop early-pit shift for a circuit
-    (laps), falling back to the field median."""
-    return CIRCUIT_UNDERCUT_SHIFT.get((circuit or "").lower(), DEFAULT_UNDERCUT_SHIFT)
+    (laps). Prefers the live, self-updating calibration (refreshed daily
+    by data/recalibrator.py) if it exists; falls back to the hardcoded
+    bootstrap snapshot otherwise (a fresh deploy, or the persisted file
+    being missing/unreadable)."""
+    # Deferred: engine.undercut_calibration imports from engine.prerace
+    # (for _prerace_sources/CIRCUIT_LAPS), which imports undercut_shift_for
+    # from THIS module -- a top-level import here would be circular.
+    from engine.undercut_calibration import load_calibration
+    key = (circuit or "").lower()
+    live = load_calibration()
+    if live is not None:
+        return live["by_circuit"].get(key, live["default"])
+    return CIRCUIT_UNDERCUT_SHIFT.get(key, DEFAULT_UNDERCUT_SHIFT)

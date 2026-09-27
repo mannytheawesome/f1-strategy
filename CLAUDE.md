@@ -2360,6 +2360,55 @@ python backtest_full.py sweep       # phase 3: grid-search tunables (e.g. track_
       (`tests/test_baseline_ordering.py`); full suite 169/169 passing
       (unit), 5/5 passing (integration, one transient real-network 429
       confirmed to pass on retry). `PACK_VERSION` 33 -> 34.
+
+      **Twenty-sixth issue, 2026-09-27, user question led to a direct
+      ask: "automatic recalibration."** Asked whether race pace/tyre
+      strategy get remodelled fresh each race -- answer was nuanced: the
+      per-race prediction itself always rebuilds from that weekend's own
+      FP/quali data, but the per-circuit `undercut_shift` numbers
+      (`engine/undercut_shift.py`) were a frozen snapshot from a one-off,
+      manually-run script (`calibrate_undercut_shift.py`) -- Baku's own
+      result wouldn't feed back into Baku's own number without someone
+      re-running it by hand and hand-editing the hardcoded dict. User
+      asked for genuine automation. Refactored the script's logic into
+      `engine/undercut_calibration.py` (importable, same per-race-cache-
+      then-aggregate approach, same `MIN_SAMPLES=10` safety rail the
+      original calibration was manually given after finding a real n=3
+      case implying a wild 32-lap shift -- the script itself had drifted
+      to a looser, unshipped `n>=3` threshold, fixed to match what
+      actually shipped) and added `data/recalibrator.py`, a daemon thread
+      (mirrors `data/warmer.py`'s existing pattern exactly) started from
+      `api/main.py`'s lifespan hook that reruns the calibration once a
+      day. It's genuinely incremental: the persisted per-race cache means
+      a daily tick only ever evaluates races that completed since the
+      last run, not the full 2023-2026 sweep every time. Real operational
+      catch before shipping: the module's persisted output defaulted to a
+      bare `var/...` path, but production's actual persistent volume is
+      only reachable through `HTTP_CACHE_DB_PATH`/`ANALYTICS_DB_PATH`'s
+      own explicit Railway env vars (`/data/...`) -- a bare `var/` default
+      would have silently lived in the ephemeral container filesystem and
+      been wiped on every redeploy, defeating the entire point. Fixed by
+      deriving the default directory from `HTTP_CACHE_DB_PATH` itself
+      (already correctly pointed at the volume in production), so the
+      calibration data persists automatically with zero new Railway
+      configuration required. `engine/undercut_shift.py`'s hardcoded
+      `CIRCUIT_UNDERCUT_SHIFT` dict stays in the codebase as the bootstrap
+      default -- what a fresh deploy uses before the background job has
+      produced its own file, or if that file is ever missing/corrupt;
+      `undercut_shift_for()` prefers the live file whenever it exists.
+      Migrated the already-computed local calibration data
+      (`cache/undercut_shift_results.json`, gitignored, from the earlier
+      manual run) into the new persisted location rather than
+      re-fetching all ~90 historical races from scratch. No PACK_VERSION
+      bump -- doesn't change what a fresh generation computes, only keeps
+      one of its inputs current over time (same reasoning as the
+      twenty-third issue's cache-warmer). 19 new tests
+      (`tests/test_undercut_calibration.py`,
+      `tests/test_recalibrator.py`, plus 2 new/updated tests in
+      `tests/test_prerace_charts.py`'s undercut-shift-lookup coverage,
+      now properly isolated from whatever `var/undercut_shift.json`
+      happens to exist on the machine running them); full suite 185/185
+      passing (unit), 5/5 passing (integration).
 - [ ] Consider merging `degradation.TyreDegradation` and `predictor.DegCurve`
       into one curve type. Deferred: their builders take different inputs and
       feed different subsystems, so a merge changes behaviour on the live/
