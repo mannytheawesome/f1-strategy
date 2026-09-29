@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from api.routers import meta, timing, analysis, strategy, briefings, usage
+from api.routers import meta, timing, analysis, strategy, briefings, usage, circuits
 from data.warmer import start_background_warmer
 from data.recalibrator import start_background_recalibrator
 
@@ -82,6 +82,7 @@ app.include_router(analysis.router)
 app.include_router(strategy.router)
 app.include_router(briefings.router)
 app.include_router(usage.router)
+app.include_router(circuits.router)
 
 
 # Serve frontend
@@ -121,6 +122,14 @@ def index_page():
 @app.get("/admin.html")
 def admin_html_page():
     return _serve_page("admin.html")
+
+
+@app.get("/circuits.html")
+def circuits_page():
+    # Not linked from the site's own nav yet -- standalone, reachable by
+    # direct URL only (e.g. /circuits.html?circuit=baku), while the
+    # per-circuit dataset in engine/circuit_guide.py is still just Baku.
+    return _serve_page("circuits.html")
 
 
 # Mounted last so it never shadows the API routes above.

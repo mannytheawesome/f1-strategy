@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Circuit Guide — F1 Strategy Predictor</title>
+  <meta name="description" content="Where a circuit actually goes wrong: every named, sourced Safety Car, VSC and red flag plotted at its real corner.">
+  <meta name="robots" content="noindex">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/circuits.css?v=__ASSET_VERSION__">
+</head>
+<body>
+  <div class="page" id="page" hidden>
+    <div class="masthead">
+      <div>
+        <div class="masthead-label">Race Control &middot; Geography</div>
+        <h1 id="title">Loading&hellip;</h1>
+      </div>
+      <div class="masthead-meta" id="meta"></div>
+    </div>
+
+    <p class="dek" id="dek"></p>
+
+    <div class="stage">
+      <div class="stage-head">
+        <div class="stage-title" id="map-title"></div>
+        <div class="stage-sub" id="map-sub">Every named, sourced Safety Car / VSC / red flag we could verify, plotted at its real corner.</div>
+      </div>
+
+      <svg class="map-frame" id="map" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="Schematic circuit map with real incident locations marked"></svg>
+
+      <div class="legend">
+        <div class="item"><span class="sw" style="background:var(--sc)"></span>Full Safety Car</div>
+        <div class="item"><span class="sw" style="background:var(--vsc)"></span>Virtual Safety Car</div>
+        <div class="item"><span class="sw square" style="background:var(--redflag)"></span>Red flag</div>
+      </div>
+    </div>
+
+    <div class="stage" style="margin-top:8px">
+      <div class="stage-head">
+        <div class="stage-title">The price of a stop</div>
+        <div class="stage-sub">Circuit-measured pit loss, and what each neutralisation actually saves against it.</div>
+      </div>
+      <div class="pitchart" id="pitchart"></div>
+      <div class="method" style="margin-top:20px;padding-top:14px;">
+        <p style="margin:0" id="pit-method"></p>
+      </div>
+    </div>
+
+    <div class="log">
+      <div class="section-label">Incident log &middot; every year we could name and verify</div>
+      <table class="incidents">
+        <thead>
+          <tr><th>Year</th><th>Where</th><th>Who</th><th>Lap</th><th>Call</th></tr>
+        </thead>
+        <tbody id="incident-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="method">
+      <p id="method-note"></p>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">Loading circuit guide&hellip;</div>
+  <div id="error" class="loading" hidden></div>
+
+  <script src="/circuits.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>
