@@ -584,6 +584,439 @@ CIRCUITS = {
                             "source (a Safety Car history site) that a second "
                             "outlet couldn't independently confirm."),
     },
+
+    "catalunya": {
+        "name": "Circuit de Barcelona-Catalunya",
+        "location": "Montmeló, Spain",
+        "corners": 14,
+        "length_km": 4.657,
+        "view_box": [0, 0, 1000, 875],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Geometry is the CURRENT layout only (raced 2023 onward, post the
+        # reconfiguration that removed the old final chicane before the pit
+        # straight, turning the last corner into a fast sweeper -- 14
+        # numbered corners, down from 16). Read directly off the official
+        # FIA "2024 Barcelona Event - Circuit Map" PDF: corner-number
+        # glyphs isolated by exact pixel color (pure blue, distinct from
+        # the yellow/red FIA Marshal Light numbers sharing the same
+        # digits), each snapped to the nearest track-centerline pixel
+        # rather than used at the label's own position -- the fix applied
+        # after Shanghai/Suzuka's spurious self-intersections. Verified 0
+        # crossings via check_crossings.py.
+        "points": [
+            ("SF", 821.3, 391.6), ("1", 541.6, 816.1), ("2", 484.1, 788.9),
+            ("3", 320.0, 831.1), ("4", 449.7, 522.8), ("5", 407.5, 717.3),
+            ("6", 554.0, 699.9), ("7", 617.6, 593.3), ("8", 565.0, 551.7),
+            ("9", 518.5, 373.1), ("10", 862.9, 173.2), ("11", 772.5, 160.5),
+            ("12", 693.9, 179.0), ("13", 795.9, 40.0), ("14", 960.0, 158.8),
+        ],
+        "corner_labels": [
+            ["1", 536, 841], ["2", 474, 813], ["3", 308, 851], ["4", 425, 531],
+            ["5", 391, 737], ["6", 547, 725], ["7", 616, 619], ["8", 550, 573],
+            ["9", 499, 356], ["10", 879, 153], ["11", 784, 137], ["12", 700, 154],
+            ["13", 806, 16], ["14", 979, 141],
+        ],
+        "start_finish": {"x1": 808.7, "y1": 374.1, "x2": 833.9, "y2": 409.1,
+                          "label_x": 853, "label_y": 412},
+        # Turn 10 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (2 named Safety Cars, 2021 and 2025, both mechanical
+        # failures into the same gravel trap).
+        "highlight_point": [862.9, 173.2],
+        "headline": "Turn 10 has ended a Grand Prix early twice in the last "
+                     "five years — both times the same failure, a car "
+                     "stranded in the gravel trap on the run out of the back "
+                     "straight.",
+        "dek": ("Six real, named incidents since 2016, and the closest thing "
+                "to a repeat is Turn 10: Tsunoda's engine failure triggered "
+                "the Safety Car there in 2021, and Antonelli's retirement did "
+                "the same in 2025 — four years and one full circuit "
+                "reconfiguration apart, same corner, same result. Barcelona-"
+                "Catalunya is otherwise one of the calendar's quietest circuits "
+                "for cautions — which makes 2026's Barcelona-Catalunya Grand "
+                "Prix (the Spanish GP itself moved to Madrid's new Madring "
+                "circuit that year) stand out: it alone needed two separate "
+                "Virtual Safety Cars, one for Alonso's home-race retirement at "
+                "Turn 9 and another for Leclerc's late hydraulic failure at "
+                "Turn 2."),
+        "incidents": [
+            {"year": 2026, "corner": "9", "corner_label": "Turn 9",
+             "who": "Alonso retires, battery/technical failure", "lap": 41,
+             "type": "VSC", "point": [518.5, 373.1],
+             "source": "formula1.com / honda.racing"},
+            {"year": 2026, "corner": "2", "corner_label": "Turn 2",
+             "who": "Leclerc retires, hydraulic/power-steering failure",
+             "lap": 63, "type": "VSC", "point": [484.1, 788.9],
+             "source": "formula1.com / racingnews365.com / crash.net"},
+            {"year": 2025, "corner": "10", "corner_label": "Turn 10",
+             "who": "Antonelli retires, mechanical failure", "lap": 55,
+             "type": "SC", "point": [862.9, 173.2],
+             "source": "en.wikipedia.org / formula1.com"},
+            {"year": 2021, "corner": "10", "corner_label": "Turn 10",
+             "who": "Tsunoda retires, engine failure", "lap": 8, "type": "SC",
+             "point": [862.9, 173.2],
+             "source": "lightsoutblog.com"},
+            {"year": 2017, "corner": "1", "corner_label": "Turn 1",
+             "who": "Vandoorne/Massa collide", "lap": 34, "type": "VSC",
+             "point": [541.6, 816.1],
+             "source": "lightsoutblog.com"},
+            {"year": 2016, "corner": "3", "corner_label": "Turn 3",
+             "who": "Rosberg/Hamilton collide (Mercedes teammates, lap 1)",
+             "lap": 1, "type": "SC", "point": [320.0, 831.1],
+             "source": "lightsoutblog.com / skysports.com"},
+        ],
+        "incidents_note": ("The 2023 and 2024 Spanish Grands Prix both ran "
+                            "their full distance with no Safety Car, VSC or "
+                            "red flag at all -- a genuine gap, not a missing "
+                            "data point. Left off rather than guessed: "
+                            "Verstappen's deliberate lap-64 collision with "
+                            "Russell in 2025 was real and heavily reported, "
+                            "but it happened under green-flag racing after an "
+                            "earlier Safety Car had already been withdrawn and "
+                            "didn't itself trigger a new caution, so it doesn't "
+                            "fit this SC/VSC/red-flag-keyed list. A 2008 "
+                            "Sutil/Vettel Safety Car is real but sources split "
+                            "on whether it was Turn 3 or Turn 4, so it's "
+                            "excluded rather than guessed. Norris/Stroll's "
+                            "2019 Safety Car and a multi-car 2009 pile-up both "
+                            "happened at the old final chicane before the pit "
+                            "straight — removed in the 2023 "
+                            "reconfiguration — so neither maps onto the "
+                            "current layout and both are excluded, the same "
+                            "convention Melbourne's entry uses for its own "
+                            "pre-reconfiguration incidents."),
+    },
+
+    "spielberg": {
+        "name": "Red Bull Ring",
+        "location": "Spielberg, Austria",
+        "corners": 10,
+        "length_km": 4.318,
+        "view_box": [0, 0, 1000, 491],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2020 Austrian Grand Prix -
+        # Circuit Map" PDF -- the modern 10-corner layout raced since 2016,
+        # gridded and verified corner-by-corner against actual track-edge
+        # pixels (not label text -- this map's yellow boxes are a separate
+        # "FIA Marshal Light No." sequence that looks similar to the blue
+        # corner numbers at a glance). Verified 0 crossings.
+        "points": [
+            ("SF", 823.7, 381.5), ("1", 567.6, 451.0), ("2", 434.6, 148.5),
+            ("3", 320.0, 40.0), ("4", 734.6, 83.9), ("5", 654.1, 144.9),
+            ("6", 496.8, 153.4), ("7", 562.7, 281.5), ("8", 668.8, 224.1),
+            ("9", 939.5, 218.0), ("10", 970.0, 322.9),
+        ],
+        "corner_labels": [
+            ["1", 556, 476], ["2", 412, 141], ["3", 301, 29], ["4", 746, 65],
+            ["5", 655, 125], ["6", 477, 144], ["7", 544, 294], ["8", 679, 204],
+            ["9", 962, 206], ["10", 991, 330],
+        ],
+        "start_finish": {"x1": 808, "y1": 366, "x2": 840, "y2": 398,
+                          "label_x": 846, "label_y": 408},
+        # Turn 3 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (6 named incidents across 5 of the last 7 races here).
+        "highlight_point": [320.0, 40.0],
+        "headline": "Turn 3 has triggered a Safety Car or VSC in 5 of the 7 "
+                     "Austrian Grands Prix run since the circuit's 2020 "
+                     "return — twice in the same race in 2020 alone.",
+        "dek": ("Nine real, named incidents since 2000, and the pattern is "
+                "overwhelmingly Turn 3 — the tight right-hander that opens "
+                "the circuit's climb has brought out a Safety Car or VSC in "
+                "five of the seven races run here since 2020: Leclerc "
+                "collecting Vettel there on lap 1 of the 2020 Styrian GP, "
+                "Magnussen (lap 26) and Russell (lap 51) both stopped there "
+                "in the very same 2020 Austrian GP, Ocon sandwiched entering "
+                "it on lap 1 in 2021, Verstappen and Norris colliding there "
+                "fighting for the lead in 2024, and Antonelli taking "
+                "Verstappen out there on the opening lap of 2025. The "
+                "circuit's short lap means most of these are first-lap "
+                "incidents rather than mechanical failures — the "
+                "exceptions are Vettel's 2016 tyre explosion on the start "
+                "straight and Sainz's 2022 engine fire at Turn 4."),
+        "incidents": [
+            {"year": 2025, "corner": "3", "corner_label": "Turn 3",
+             "who": "Antonelli crashes into Verstappen", "lap": 1, "type": "SC",
+             "point": [320.0, 40.0],
+             "source": "autosport.com / planetf1.com"},
+            {"year": 2024, "corner": "3", "corner_label": "Turn 3",
+             "who": "Verstappen and Norris collide fighting for the lead",
+             "lap": 64, "type": "VSC", "point": [320.0, 40.0],
+             "source": "autosport.com / gpfans.com"},
+            {"year": 2022, "corner": "4", "corner_label": "Turn 4",
+             "who": "Sainz retires, engine fire", "lap": 57, "type": "VSC",
+             "point": [734.6, 83.9],
+             "source": "motorsport.com"},
+            {"year": 2021, "corner": "3-4", "corner_label": "Turns 3/4",
+             "who": "Ocon retires, sandwiched between Giovinazzi and Schumacher",
+             "lap": 1, "type": "SC", "point": [527.3, 62.0],
+             "source": "formula1.com"},
+            {"year": 2020, "corner": "3", "corner_label": "Turn 3",
+             "who": "Leclerc spins into teammate Vettel (Styrian GP)", "lap": 1,
+             "type": "SC", "point": [320.0, 40.0],
+             "source": "formula1.com"},
+            {"year": 2020, "corner": "3", "corner_label": "Turn 3",
+             "who": "Magnussen, brake failure", "lap": 26, "type": "SC",
+             "point": [320.0, 40.0],
+             "source": "lightsoutblog.com"},
+            {"year": 2020, "corner": "3", "corner_label": "Turn 3",
+             "who": "Russell, fuel pressure loss (Grosjean also retires same lap)",
+             "lap": 51, "type": "SC", "point": [320.0, 40.0],
+             "source": "motorsport.com"},
+            {"year": 2016, "corner": "straight", "corner_label": "Start/finish straight",
+             "who": "Vettel, tyre explosion while leading", "lap": 27,
+             "type": "SC", "point": [860.0, 368.0],
+             "source": "skysports.com / autoblog.com"},
+            {"year": 2000, "corner": "1", "corner_label": "Turn 1",
+             "who": "Zonta punts Schumacher out at the first corner", "lap": 1,
+             "type": "SC", "point": [567.6, 451.0],
+             "source": "racefans.net / f1.fandom.com"},
+        ],
+        "incidents_note": ("This isn't every Austrian GP incident since 2000, "
+                            "only the ones public reporting let us confirm "
+                            "cleanly enough to place at a specific corner. Left "
+                            "off rather than guessed: 2002's Heidfeld/Sato "
+                            "crash is real and well documented, but the most "
+                            "detailed account places it spanning Turn 2 and "
+                            "Turn 3, conflicting with a flatter 'Turn 3' from a "
+                            "second source; 2023's Tsunoda/Ocon lap-1 Safety "
+                            "Car had contact reported at the exit of Turn 1 but "
+                            "the gravel excursion that actually brought out the "
+                            "Safety Car at Turn 4 — two different corners "
+                            "depending on which part of the incident you'd "
+                            "plot; 2023's Hulkenberg (lap 14) and 2018's Bottas "
+                            "(lap 14) Virtual Safety Cars were both reported "
+                            "only as mechanical retirements with no corner "
+                            "named."),
+    },
+
+    "montreal": {
+        "name": "Circuit Gilles Villeneuve",
+        "location": "Montreal, Canada",
+        "corners": 14,
+        "length_km": 4.361,
+        "view_box": [0, 0, 1000, 2150],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2024 Canadian Grand Prix -
+        # Event Notes - Circuit Map" PDF, gridded and verified against
+        # actual track-fill pixels (not label text), current 14-turn
+        # layout only (the 1996-2001 configuration had 13 turns with
+        # different numbering through the middle of the lap -- see
+        # incidents_note). Verified 0 crossings.
+        "points": [
+            ("SF", 902.4, 1791.5), ("1", 896.5, 2062.6), ("2", 960.0, 2101.7),
+            ("3", 603.4, 1960.0), ("4", 637.6, 1908.7), ("5", 432.4, 1710.8),
+            ("6", 403.1, 1469.0), ("7", 351.8, 1465.6), ("8", 320.0, 736.2),
+            ("9", 364.0, 728.9), ("10", 449.5, 40.0), ("11", 503.2, 181.7),
+            ("12", 574.0, 357.6), ("13", 811.0, 1311.7), ("14", 796.3, 1325.9),
+        ],
+        "corner_labels": [
+            ["1", 855, 2062], ["2", 930, 2130], ["3", 575, 1985], ["4", 655, 1885],
+            ["5", 460, 1715], ["6", 430, 1460], ["7", 310, 1470], ["8", 290, 745],
+            ["9", 395, 715], ["10", 449, 15], ["11", 535, 175], ["12", 605, 355],
+            ["13", 845, 1300], ["14", 760, 1345],
+        ],
+        "start_finish": {"x1": 880, "y1": 1780, "x2": 925, "y2": 1803,
+                          "label_x": 930, "label_y": 1770},
+        # Turn 14 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (4 named incidents: 1999 x2, 2005, 2007), the wall that
+        # gave the corner its "Wall of Champions" nickname in the first place.
+        "highlight_point": [796.3, 1325.9],
+        "headline": "The Wall of Champions has caused a real, named Safety "
+                     "Car in 4 separate years — twice in the very 1999 "
+                     "race that gave it its name.",
+        "dek": ("Twelve real, named Safety Cars since 1999, and the clearest "
+                "repeat is the final-chicane wall itself: Ricardo Zonta and "
+                "Jacques Villeneuve both hit it in the same 1999 race that "
+                "coined \"Wall of Champions,\" and Jenson Button (2005) and "
+                "Vitantonio Liuzzi (2007) each added their own. The next-"
+                "clearest pattern is Turn 2, the tight right-hander onto the "
+                "pit straight — Nick Heidfeld was launched into the barrier "
+                "there by Kamui Kobayashi in 2011's rain-hit, six-Safety-Car "
+                "\"longest race in F1 history,\" and Yuki Tsunoda speared "
+                "into the same wall exiting the pits in 2022. Turn 4 has its "
+                "own quieter repeat too: Adrian Sutil's gearbox fire there "
+                "in 2007, then Jules Bianchi launched into the wall by "
+                "teammate Max Chilton on the opening lap of 2014."),
+        "incidents": [
+            {"year": 2023, "corner": "9", "corner_label": "Turn 9",
+             "who": "Russell crashes on exit, running wide", "lap": 12,
+             "type": "SC", "point": [364.0, 728.9],
+             "source": "formula1.com / racingnews365.com"},
+            {"year": 2022, "corner": "2", "corner_label": "Turn 2",
+             "who": "Tsunoda crashes exiting the pits", "lap": 49,
+             "type": "SC", "point": [960.0, 2101.7],
+             "source": "racefans.net / formula1.com"},
+            {"year": 2014, "corner": "1", "corner_label": "Turn 1",
+             "who": "Massa/Perez collide on the final lap", "lap": 70,
+             "type": "SC", "point": [896.5, 2062.6],
+             "source": "skysports.com / sportskeeda.com"},
+            {"year": 2014, "corner": "4", "corner_label": "Turn 4",
+             "who": "Bianchi launched into the wall by teammate Chilton",
+             "lap": 1, "type": "SC", "point": [637.6, 1908.7],
+             "source": "racefans.net"},
+            {"year": 2011, "corner": "2", "corner_label": "Turn 2",
+             "who": "Heidfeld launched into the wall by Kobayashi", "lap": 56,
+             "type": "SC", "point": [960.0, 2101.7],
+             "source": "racefans.net"},
+            {"year": 2008, "corner": "3", "corner_label": "Turn 3",
+             "who": "Sutil, gearbox failure and fire", "lap": 17,
+             "type": "SC", "point": [603.4, 1960.0],
+             "source": "racefans.net / gpfans.com"},
+            {"year": 2007, "corner": "10", "corner_label": "Turn 10 (hairpin)",
+             "who": "Kubica launched into the wall after contact with Fisichella",
+             "lap": 27, "type": "SC", "point": [449.5, 40.0],
+             "source": "motorsport.com / racingnews365.com"},
+            {"year": 2007, "corner": "14", "corner_label": "Turn 14 (Wall of Champions)",
+             "who": "Liuzzi crashes", "lap": 56, "type": "SC",
+             "point": [796.3, 1325.9],
+             "source": "lightsoutblog.com"},
+            {"year": 2007, "corner": "4", "corner_label": "Turn 4",
+             "who": "Sutil crashes into the wall", "lap": 23, "type": "SC",
+             "point": [637.6, 1908.7],
+             "source": "grandprix.com / lightsoutblog.com"},
+            {"year": 2005, "corner": "14", "corner_label": "Turn 14 (Wall of Champions)",
+             "who": "Button crashes", "lap": 47, "type": "SC",
+             "point": [796.3, 1325.9],
+             "source": "formula1.com / lightsoutblog.com"},
+            {"year": 1999, "corner": "14", "corner_label": "Turn 14 (Wall of Champions)",
+             "who": "Villeneuve crashes, understeers into the wall", "lap": 37,
+             "type": "SC", "point": [796.3, 1325.9],
+             "source": "lightsoutblog.com / motorsportmagazine.com"},
+            {"year": 1999, "corner": "14", "corner_label": "Turn 14 (Wall of Champions)",
+             "who": "Zonta crashes, the incident that named the wall", "lap": 4,
+             "type": "SC", "point": [796.3, 1325.9],
+             "source": "lightsoutblog.com / motorsportmagazine.com"},
+        ],
+        "incidents_note": ("This isn't every Montreal incident since 1999, "
+                            "only the ones public reporting let us confirm "
+                            "cleanly enough to place at a specific corner. "
+                            "Montreal's own 2001 Wall of Champions incident "
+                            "(Barrichello) came back with a corner given as "
+                            "Turn 4 in one detailed race report but credited "
+                            "to the Wall of Champions itself with no lap in "
+                            "another, and was left off rather than guessed. "
+                            "Kevin Magnussen's 2019 Wall of Champions crash "
+                            "and Max Verstappen/Alex Albon's 2024 versions "
+                            "were real but happened in Qualifying and Free "
+                            "Practice respectively, not the race. Sergio "
+                            "Pérez's 2022 retirement (lap 8, VSC) had no "
+                            "corner given in any source. The dramatic 2026 "
+                            "race (Antonelli's win, a late Norris/Piastri "
+                            "collision, Russell's retirement, two more VSCs) "
+                            "is excluded entirely — neither F1.com's own "
+                            "report nor follow-up coverage names a specific "
+                            "corner for any of its incidents. Corner numbers "
+                            "before Montreal's 2002 layout change (13 turns, "
+                            "not 14, with different numbering through the "
+                            "middle of the lap) aren't used here except for "
+                            "the Wall of Champions itself, a fixed physical "
+                            "feature whose position on track hasn't moved "
+                            "regardless of how the corners around it were "
+                            "renumbered."),
+    },
+
+    "miami": {
+        "name": "Miami International Autodrome",
+        "location": "Miami Gardens, Florida",
+        "corners": 19,
+        "length_km": 5.412,
+        "view_box": [0, 0, 1000, 340],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2026 Miami Grand Prix -
+        # Circuit Map, Pit Lane Drawing, Emergency Exits Map and Red Zone"
+        # PDF, gridded and verified. The map draws the front (SF) straight
+        # and the back (16->17) straight running close/parallel near the
+        # paddock -- re-traced at high resolution to find the real fork
+        # point after SF and kept the SF->1 diagonal clear of the 16->17
+        # line's y-coordinates so the two straights don't cross in this
+        # straight-segment representation. Verified 0 crossings.
+        "points": [
+            ("SF", 567.3, 58.9), ("1", 717.6, 167.9), ("2", 703.0, 194.6),
+            ("3", 700.4, 233.2), ("4", 486.6, 189.4), ("5", 433.3, 212.6),
+            ("6", 382.7, 175.7), ("7", 325.2, 199.7), ("8", 320.0, 239.2),
+            ("9", 562.2, 266.7), ("10", 691.0, 295.9), ("11", 914.2, 189.4),
+            ("12", 897.0, 148.2), ("13", 959.7, 132.7), ("14", 961.4, 103.5),
+            ("15", 970.9, 93.2), ("16", 970.0, 56.3), ("17", 399.0, 40.0),
+            ("18", 433.3, 70.9), ("19", 486.6, 57.2),
+        ],
+        "corner_labels": [
+            ["1", 735, 165], ["2", 735, 196], ["3", 735, 233], ["4", 480, 172],
+            ["5", 425, 228], ["6", 378, 158], ["7", 302, 202], ["8", 296, 250],
+            ["9", 558, 282], ["10", 695, 312], ["11", 930, 192], ["12", 872, 148],
+            ["13", 978, 135], ["14", 938, 100], ["15", 985, 88], ["16", 985, 50],
+            ["17", 370, 24], ["18", 428, 86], ["19", 486, 40],
+        ],
+        "start_finish": {"x1": 550, "y1": 48, "x2": 584, "y2": 68,
+                          "label_x": 590, "label_y": 38},
+        # Turn 14 is drawn as a highlighted ring on the page -- the only
+        # corner with a verified incident in two different years (2024, 2026).
+        "highlight_point": [961.4, 103.5],
+        "headline": "Turn 14 has caused a real, named Safety Car or VSC in "
+                     "two of Miami's five runnings so far — 2024 and 2026.",
+        "dek": ("Eight real, named incidents since Miami's 2022 debut, and "
+                "the clearest repeat is Turn 14, the marina-area chicane: "
+                "Verstappen clattered a loose bollard there under VSC in "
+                "2024, then Isack Hadjar crashed into the wall there under "
+                "Safety Car in 2026. 2026 was the wildest race by far — "
+                "Hadjar's Turn 14 shunt was followed moments later by Liam "
+                "Lawson's gearbox failing under braking for Turn 17, pitching "
+                "Pierre Gasly's Alpine into a barrel roll — two separate "
+                "crashes, one Safety Car period. Turn 1 has bitten early "
+                "too: Jack Doohan and Lawson collided there on the opening "
+                "lap of 2025."),
+        "incidents": [
+            {"year": 2026, "corner": "14", "corner_label": "Turn 14",
+             "who": "Hadjar crashes into the chicane wall", "lap": 5,
+             "type": "SC", "point": [961.4, 103.5],
+             "source": "formula1.com / gpfans.com"},
+            {"year": 2026, "corner": "17", "corner_label": "Turn 17 (hairpin)",
+             "who": "Gasly flipped after Lawson's gearbox fails under braking",
+             "lap": 6, "type": "SC", "point": [399.0, 40.0],
+             "source": "formula1.com / motorsport.com"},
+            {"year": 2025, "corner": "16", "corner_label": "Turn 16",
+             "who": "Bortoleto stops, power unit failure", "lap": 33,
+             "type": "VSC", "point": [970.0, 56.3],
+             "source": "lightsoutblog.com / en.wikipedia.org"},
+            {"year": 2025, "corner": "4", "corner_label": "Turn 4",
+             "who": "Bearman retires, engine failure", "lap": 28,
+             "type": "VSC", "point": [486.6, 189.4],
+             "source": "lightsoutblog.com / en.wikipedia.org"},
+            {"year": 2025, "corner": "12", "corner_label": "Turn 12",
+             "who": "Alonso spins into the barrier after Lawson contact",
+             "lap": 14, "type": "SC", "point": [897.0, 148.2],
+             "source": "en.wikipedia.org"},
+            {"year": 2025, "corner": "1", "corner_label": "Turn 1",
+             "who": "Doohan and Lawson collide, Doohan retires", "lap": 1,
+             "type": "VSC", "point": [717.6, 167.9],
+             "source": "en.wikipedia.org"},
+            {"year": 2024, "corner": "3", "corner_label": "Turn 3",
+             "who": "Magnussen and Sargeant collide, Sargeant into the wall",
+             "lap": 29, "type": "SC", "point": [700.4, 233.2],
+             "source": "espn.com / formula1.com"},
+            {"year": 2024, "corner": "14", "corner_label": "Turn 14",
+             "who": "Verstappen strikes a loose bollard in the chicane",
+             "lap": 21, "type": "VSC", "point": [961.4, 103.5],
+             "source": "racefans.net / gpfans.com"},
+            {"year": 2022, "corner": "8", "corner_label": "Turn 8",
+             "who": "Norris and Gasly collide", "lap": 41, "type": "SC",
+             "point": [320.0, 239.2],
+             "source": "formula1.com / crash.net"},
+        ],
+        "incidents_note": ("This isn't every Miami incident since 2022, only "
+                            "the ones public reporting let us confirm cleanly "
+                            "enough to place at a specific corner. 2023's race "
+                            "ran completely clean — no Safety Car, VSC, or "
+                            "red flag at all, confirmed independently by two "
+                            "sources, not a missing data point. Left off "
+                            "rather than guessed: 2025's late Hamilton/Sainz "
+                            "contact at Turn 17 and 2026's opening-lap "
+                            "Verstappen/Leclerc (Turn 1) and Hamilton/"
+                            "Colapinto (Turn 11) incidents all triggered no "
+                            "Safety Car or VSC, so they don't belong on this "
+                            "list even though they're real, named moments. "
+                            "The exact lap of 2024's Verstappen bollard VSC "
+                            "varies across sources (19-23 all appear); 21 is "
+                            "the most consistently cited and is used here."),
+    },
 }
 
 
