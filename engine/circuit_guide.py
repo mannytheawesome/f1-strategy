@@ -1450,6 +1450,176 @@ CIRCUITS = {
                             "fatality and 1961's disaster both predate the "
                             "Safety Car's own introduction to F1 in 1973."),
     },
+
+    "spa-francorchamps": {
+        "name": "Circuit de Spa-Francorchamps",
+        "location": "Stavelot, Belgium",
+        "corners": 19,
+        "length_km": 7.004,
+        "view_box": [0, 0, 1000, 1100],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2026 Belgian Grand Prix -
+        # Circuit Map, Pit Lane Drawing, Emergency Exits Map and Red Zone"
+        # PDF (fia.com), gridded and read corner-by-corner off the actual
+        # track-edge pixels. The map's blue "CORNER NUMBER" labels (1-19)
+        # were carefully kept separate from its yellow "FIA LIGHT PANEL"
+        # boxes (01-21) -- a visually similar but unrelated numbering on
+        # the same map. Corner-to-name mapping (La Source, Eau Rouge/
+        # Raidillon, Les Combes, Pouhon, Fagnes, Blanchimont, Bus Stop,
+        # etc.) cross-checked against formula1.com's own named-corner list
+        # and matches the pixel-read topology exactly. Verified 0
+        # crossings.
+        "points": [
+            ("SF", 501.7, 235.6), ("1", 439.0, 40.0), ("2", 687.0, 259.3),
+            ("3", 761.0, 276.6), ("4", 756.1, 341.8), ("5", 960.0, 866.1),
+            ("6", 937.7, 898.2), ("7", 950.2, 977.3), ("8", 784.2, 1049.4),
+            ("9", 829.1, 997.0), ("10", 789.1, 703.7), ("11", 685.4, 763.0),
+            ("12", 578.3, 952.6), ("13", 499.3, 923.2), ("14", 390.6, 1029.1),
+            ("15", 320.0, 962.5), ("16", 548.6, 705.1), ("17", 590.6, 586.6),
+            ("18", 546.2, 312.1), ("19", 563.5, 288.9),
+        ],
+        "corner_labels": [
+            ["1", 439, 20], ["2", 705, 250], ["3", 779, 268], ["4", 774, 338],
+            ["5", 978, 860], ["6", 952, 912], ["7", 968, 980], ["8", 784, 1068],
+            ["9", 848, 995], ["10", 808, 698], ["11", 682, 784], ["12", 576, 972],
+            ["13", 497, 903], ["14", 372, 1044], ["15", 296, 962], ["16", 528, 703],
+            ["17", 570, 582], ["18", 524, 308], ["19", 582, 284],
+        ],
+        "start_finish": {"x1": 486, "y1": 220, "x2": 518, "y2": 252,
+                          "label_x": 524, "label_y": 214},
+        # Turn 1 (La Source) is drawn as a highlighted ring on the page --
+        # the repeat flashpoint (5 named incidents across 4 different
+        # years, including twice in the very same 1998 race).
+        "highlight_point": [439.0, 40.0],
+        "headline": "Turn 1 (La Source) has caused a Safety Car or Red "
+                     "Flag in 4 separate years — including twice in the "
+                     "very same 1998 race.",
+        "dek": ("Twenty real, named incidents across Spa's long history, and "
+                "the clearest repeat is Turn 1 — the tight hairpin right "
+                "after the start/finish straight has triggered chaos in "
+                "1998 (a 13-car red-flag pileup on the first start, then a "
+                "Hakkinen/Herbert Safety Car on the second), 2012 (Grosjean "
+                "launched over Alonso), 2018 (Hülkenberg into Alonso, who "
+                "flew over Leclerc's halo) and 2019 (Räikkönen/"
+                "Verstappen). Les Combes has its own repeat pattern across "
+                "an even wider spread of eras — 2009, 2011, 2016 and 2026 "
+                "all saw a Safety Car or VSC start there. And Spa's length "
+                "and weather have twice cancelled a race outright: 2021's "
+                "near-total washout (the entire race classified from barely "
+                "more than one lap behind the Safety Car) and 2025's "
+                "rain-delayed start, both red-flagged before real racing "
+                "could begin."),
+        "incidents": [
+            {"year": 2026, "corner": "5", "corner_label": "Turn 5 (Les Combes)",
+             "who": "Hamilton understeers into Russell, who spins into the gravel",
+             "lap": 1, "type": "SC", "point": [960.0, 866.1],
+             "source": "formula1.com / grandprix247.com"},
+            {"year": 2025, "corner": "straight", "corner_label": "Start/finish straight",
+             "who": "Red-flagged on the formation lap for torrential rain; "
+                    "race delayed ~80 minutes, restarted behind the Safety Car",
+             "lap": 0, "type": "REDFLAG", "point": [501.7, 235.6],
+             "source": "crash.net / planetf1.com / racefans.net"},
+            {"year": 2022, "corner": "6", "corner_label": "Turn 6 (Les Combes)",
+             "who": "Latifi runs wide exiting Les Combes and collects Bottas; "
+                    "Hamilton also stranded", "lap": 2, "type": "SC",
+             "point": [937.7, 898.2],
+             "source": "en.wikipedia.org"},
+            {"year": 2021, "corner": "straight", "corner_label": "Start/finish straight",
+             "who": "Race red-flagged for rain after 2 laps behind the Safety "
+                    "Car and never restarted — classified from lap 1, half points",
+             "lap": 3, "type": "REDFLAG", "point": [501.7, 235.6],
+             "source": "en.wikipedia.org / formula1.com"},
+            {"year": 2020, "corner": "14", "corner_label": "Turn 14 (Campus)",
+             "who": "Giovinazzi crashes exiting the corner, wheel hits Russell's car",
+             "lap": 10, "type": "SC", "point": [390.6, 1029.1],
+             "source": "en.wikipedia.org"},
+            {"year": 2019, "corner": "1", "corner_label": "Turn 1 (La Source)",
+             "who": "Räikkönen turns into Verstappen, who later hits the "
+                    "Turn 4 barrier", "lap": 1, "type": "SC",
+             "point": [439.0, 40.0],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2018, "corner": "1", "corner_label": "Turn 1 (La Source)",
+             "who": "Hülkenberg hits Alonso, who flies over Leclerc's halo",
+             "lap": 1, "type": "SC", "point": [439.0, 40.0],
+             "source": "racefans.net / espn.com"},
+            {"year": 2017, "corner": "2", "corner_label": "Turn 2 (Eau Rouge)",
+             "who": "Pérez squeezes Ocon (Force India teammates), debris SC",
+             "lap": 30, "type": "SC", "point": [687.0, 259.3],
+             "source": "racefans.net / motorsport.com"},
+            {"year": 2016, "corner": "3", "corner_label": "Turn 3 (Raidillon)",
+             "who": "Magnussen crashes at 12.5g, damages the barrier",
+             "lap": 9, "type": "REDFLAG", "point": [761.0, 276.6],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2016, "corner": "5", "corner_label": "Turn 5 (Les Combes)",
+             "who": "Sainz, tyre failure", "lap": 1, "type": "VSC",
+             "point": [960.0, 866.1],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2015, "corner": "18", "corner_label": "Turn 18 (Bus Stop)",
+             "who": "Ricciardo retires, system failure — F1's first-ever VSC",
+             "lap": 20, "type": "VSC", "point": [546.2, 312.1],
+             "source": "lightsoutblog.com / fia.com"},
+            {"year": 2012, "corner": "1", "corner_label": "Turn 1 (La Source)",
+             "who": "Grosjean launches over Alonso; Hamilton, Pérez, "
+                    "Kobayashi also collected", "lap": 1, "type": "SC",
+             "point": [439.0, 40.0],
+             "source": "racefans.net / en.wikipedia.org"},
+            {"year": 2011, "corner": "5", "corner_label": "Turn 5 (Les Combes)",
+             "who": "Hamilton and Kobayashi collide, Hamilton retires",
+             "lap": 13, "type": "SC", "point": [960.0, 866.1],
+             "source": "en.wikipedia.org"},
+            {"year": 2009, "corner": "5", "corner_label": "Turn 5 (Les Combes)",
+             "who": "Grosjean into Button; Hamilton and Alguersuari also crash",
+             "lap": 1, "type": "SC", "point": [960.0, 866.1],
+             "source": "en.wikipedia.org"},
+            {"year": 2005, "corner": "3", "corner_label": "Turn 3 (Raidillon)",
+             "who": "Fisichella spins and hits the barrier heavily",
+             "lap": 11, "type": "SC", "point": [761.0, 276.6],
+             "source": "autosport.com / en.wikipedia.org"},
+            {"year": 2004, "corner": "straight", "corner_label": "Kemmel Straight",
+             "who": "Coulthard hits the back of Klien, debris in bodywork",
+             "lap": 39, "type": "SC", "point": [858.1, 604.0],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2004, "corner": "straight", "corner_label": "Kemmel Straight",
+             "who": "Button, rear tyre failure at ~205mph, hits Baumgartner",
+             "lap": 31, "type": "SC", "point": [858.1, 604.0],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2004, "corner": "2", "corner_label": "Turn 2 (Eau Rouge)",
+             "who": "Sato/Webber/Pantano/Bruni collide, fire on Bruni's car",
+             "lap": 1, "type": "SC", "point": [687.0, 259.3],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 1998, "corner": "1", "corner_label": "Turn 1 (La Source)",
+             "who": "Häkkinen spins, Herbert crashes into him (second start)",
+             "lap": 1, "type": "SC", "point": [439.0, 40.0],
+             "source": "grandprix.com / lightsoutblog.com"},
+            {"year": 1998, "corner": "1", "corner_label": "Turn 1 (La Source)",
+             "who": "13-car pileup on the run out of La Source in the rain "
+                    "(first start)", "lap": 1, "type": "REDFLAG",
+             "point": [439.0, 40.0],
+             "source": "formula1.com / en.wikipedia.org"},
+        ],
+        "incidents_note": ("This isn't every Belgian GP incident on record, "
+                            "only the ones public reporting let us confirm "
+                            "cleanly enough to place at a specific corner. "
+                            "Left off rather than guessed: a widely-repeated "
+                            "claim of a lap-28 Fisichella/Nakano Bus Stop "
+                            "collision in the 1998 race came back "
+                            "contradicted by other sources (Fisichella "
+                            "actually retired lap 26 with no Bus Stop "
+                            "mention, and Nakano finished the race) and was "
+                            "dropped. Several other listed cautions (1995, "
+                            "1996, 1997, 2000, a second 2010 incident) had no "
+                            "corner named in any source and are excluded. "
+                            "The 2023 Belgian Grand Prix ran its full race "
+                            "distance clean — no Safety Car, VSC or red "
+                            "flag at all (that weekend's SC drama was "
+                            "entirely in the Sprint, excluded here, matching "
+                            "the convention used elsewhere in this file). "
+                            "2017's earlier lap-1 Pérez/Ocon contact (a "
+                            "separate incident from their SC-triggering "
+                            "lap-30 clash) isn't confirmed to have itself "
+                            "caused a caution, so only the lap-30 one is "
+                            "listed."),
+    },
 }
 
 
