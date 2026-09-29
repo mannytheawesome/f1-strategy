@@ -1620,6 +1620,113 @@ CIRCUITS = {
                             "caused a caution, so only the lap-30 one is "
                             "listed."),
     },
+
+    "silverstone": {
+        "name": "Silverstone Circuit",
+        "location": "Silverstone, United Kingdom",
+        "corners": 18,
+        "length_km": 5.891,
+        "view_box": [0, 0, 1000, 1180],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2025 British Grand Prix -
+        # Circuit Map" PDF (fia.com), gridded and verified corner-by-corner
+        # against actual track-fill pixels (not label text -- this map's
+        # yellow boxes are a separate "FIA Marshal Light No." sequence,
+        # not corner numbers). The Vale/Club double-apex (16-18) needed
+        # particular care: the map draws a second, parallel grey band
+        # there that is pit lane (runs alongside the main straight,
+        # terminates near the Club hairpin at pit entry) rather than a
+        # second piece of track -- resolved via pixel scanning before
+        # placing those points. Verified 0 crossings.
+        "points": [
+            ("SF", 368.3, 798.3), ("1", 540.3, 588.9), ("2", 639.0, 596.9),
+            ("3", 787.9, 505.0), ("4", 845.8, 583.9), ("5", 860.5, 457.2),
+            ("6", 485.8, 202.4), ("7", 443.8, 272.5), ("8", 498.8, 91.2),
+            ("9", 837.0, 40.0), ("10", 928.5, 390.0), ("11", 953.7, 426.9),
+            ("12", 934.8, 523.5), ("13", 960.0, 632.6), ("14", 905.9, 681.3),
+            ("15", 578.1, 1136.2), ("16", 443.8, 934.7), ("17", 372.5, 957.8),
+            ("18", 320.0, 876.0),
+        ],
+        "corner_labels": [
+            ["1", 536, 565], ["2", 635, 575], ["3", 770, 485], ["4", 862, 600],
+            ["5", 880, 455], ["6", 480, 180], ["7", 415, 275], ["8", 495, 68],
+            ["9", 845, 18], ["10", 948, 385], ["11", 972, 425], ["12", 953, 520],
+            ["13", 978, 630], ["14", 884, 690], ["15", 578, 1158],
+            ["16", 418, 930], ["17", 350, 970], ["18", 298, 876],
+        ],
+        "start_finish": {"x1": 353, "y1": 783, "x2": 384, "y2": 814,
+                          "label_x": 390, "label_y": 825},
+        # Turn 1 (Abbey) is drawn as a highlighted ring on the page -- the
+        # repeat flashpoint (3 named incidents across 3 different eras:
+        # 2016/2018/2022, and 3 different caution types).
+        "highlight_point": [540.3, 588.9],
+        "headline": "Turn 1 (Abbey) has triggered a real, named caution in "
+                     "three different eras — 2016, 2018 and 2022.",
+        "dek": ("Nine real, named incidents since 2014, and the clearest "
+                "repeat is Abbey — the fast right-hander right after the "
+                "pit straight has caught out Wehrlein aquaplaning there in "
+                "2016, Ericsson crashing in 2018, and Zhou's frightening "
+                "barrel roll there in 2022. The next-clearest pattern is "
+                "Copse, the daunting high-speed right-hander a third of the "
+                "way round the lap — Grosjean and Sainz collided there in "
+                "2018, and Verstappen and Hamilton's title-fight crash there "
+                "in 2021 needed a full red flag to repair the barrier. "
+                "2025's rain-hit race alone needed separate stoppages at "
+                "The Loop and Farm inside the first six laps."),
+        "incidents": [
+            {"year": 2025, "corner": "2", "corner_label": "Turn 2 (Farm)",
+             "who": "Bortoleto spins, damages rear wing", "lap": 6, "type": "VSC",
+             "point": [639.0, 596.9],
+             "source": "racefans.net"},
+            {"year": 2025, "corner": "4", "corner_label": "Turn 4 (The Loop)",
+             "who": "Ocon collides with Lawson", "lap": 1, "type": "VSC",
+             "point": [845.8, 583.9],
+             "source": "lightsoutblog.com / medium.com"},
+            {"year": 2023, "corner": "straight", "corner_label": "Wellington Straight",
+             "who": "Magnussen, power unit fire", "lap": 33, "type": "SC",
+             "point": [673.2, 329.8],
+             "source": "formula1.com"},
+            {"year": 2022, "corner": "1", "corner_label": "Turn 1 (Abbey)",
+             "who": "Zhou barrel-rolls after contact with Russell/Gasly",
+             "lap": 1, "type": "REDFLAG", "point": [540.3, 588.9],
+             "source": "motorsport.com / skysports.com"},
+            {"year": 2021, "corner": "9", "corner_label": "Turn 9 (Copse)",
+             "who": "Verstappen/Hamilton collide", "lap": 1, "type": "REDFLAG",
+             "point": [837.0, 40.0],
+             "source": "racefans.net / autosport.com"},
+            {"year": 2018, "corner": "9", "corner_label": "Turn 9 (Copse)",
+             "who": "Grosjean/Sainz collide", "lap": 38, "type": "SC",
+             "point": [837.0, 40.0],
+             "source": "motorsport.com"},
+            {"year": 2018, "corner": "1", "corner_label": "Turn 1 (Abbey)",
+             "who": "Ericsson crashes", "lap": 32, "type": "SC",
+             "point": [540.3, 588.9],
+             "source": "lightsoutblog.com"},
+            {"year": 2016, "corner": "1", "corner_label": "Turn 1 (Abbey)",
+             "who": "Wehrlein aquaplanes", "lap": 7, "type": "VSC",
+             "point": [540.3, 588.9],
+             "source": "skysports.com"},
+            {"year": 2014, "corner": "5", "corner_label": "Turn 5 (Aintree)",
+             "who": "Räikkönen runs wide, crashes, collects Massa", "lap": 1,
+             "type": "REDFLAG", "point": [860.5, 457.2],
+             "source": "racefans.net / bleacherreport.com"},
+        ],
+        "incidents_note": ("This isn't every British GP incident since 2014, "
+                            "only the ones public reporting let us confirm "
+                            "cleanly enough to place at a specific corner. "
+                            "Left off rather than guessed: 2019's Giovinazzi "
+                            "spin (the actual Safety Car trigger that year) "
+                            "came back with sources split between Vale and "
+                            "Club; that same race's well-known Vettel/"
+                            "Verstappen collision happened under green flag "
+                            "after the restart, so it never triggered a "
+                            "caution itself. 2020's three famous late-race "
+                            "tyre failures (Bottas, Sainz, Hamilton) are "
+                            "reported only relative to the pit entrance, "
+                            "never a numbered corner. 2025's Hadjar/Antonelli "
+                            "Safety Car-triggering crash was reported only as "
+                            "happening 'in the spray,' with no corner named."),
+    },
 }
 
 
