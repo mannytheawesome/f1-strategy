@@ -1340,6 +1340,116 @@ CIRCUITS = {
                             "happened in qualifying, not the race, so it "
                             "doesn't belong on this list either."),
     },
+
+    "monza": {
+        "name": "Autodromo Nazionale Monza",
+        "location": "Monza, Italy",
+        "corners": 11,
+        "length_km": 5.793,
+        "view_box": [0, 0, 1000, 1260],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2026 Italian Grand Prix -
+        # Competition Notes - Circuit Map" PDF, gridded and verified
+        # corner-by-corner against actual track-edge pixels, not label
+        # text or the map's separate "FIA LIGHT PANEL" numbering (a
+        # similarly-numbered but distinct sequence on the same map).
+        # Monza is a fast, chicane-based lap, not a crossover layout --
+        # verified 0 crossings.
+        "points": [
+            ("SF", 320.0, 948.9), ("1", 370.3, 431.1), ("2", 392.6, 421.8),
+            ("3", 437.3, 129.4), ("4", 768.9, 69.8), ("5", 793.1, 54.9),
+            ("6", 958.8, 40.0), ("7", 970.0, 187.1), ("8", 489.5, 537.3),
+            ("9", 474.6, 598.7), ("10", 515.6, 628.5), ("11", 362.8, 1209.6),
+        ],
+        "corner_labels": [
+            ["1", 345, 431], ["2", 415, 415], ["3", 408, 132], ["4", 758, 46],
+            ["5", 805, 30], ["6", 968, 18], ["7", 990, 190], ["8", 452, 528],
+            ["9", 438, 605], ["10", 548, 636], ["11", 362, 1236],
+        ],
+        "start_finish": {"x1": 305, "y1": 933, "x2": 335, "y2": 963,
+                          "label_x": 345, "label_y": 948},
+        # Turn 1 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (3 named incidents, 2011/2018/2019).
+        "highlight_point": [370.3, 431.1],
+        "headline": "Turn 1 has triggered a real, named Safety Car or VSC "
+                     "in three separate years — 2011, 2018 and 2019.",
+        "dek": ("Ten real, named incidents since 2000, and the clearest "
+                "repeat is Turn 1, the Variante del Rettifilo — the "
+                "heaviest braking zone on the lap, arriving straight off the "
+                "fastest part of the track, has swallowed cars converging on "
+                "it at the start in 2011 (Liuzzi collects Rosberg and Petrov "
+                "after contact with Kovalainen), 2018 (Hartley pincered by "
+                "Vandoorne and Ericsson) and 2019 (Kvyat's engine fails "
+                "right there, late in the race). The Parabolica has an "
+                "eerier repeat: Charles Leclerc has caused both of Monza's "
+                "only two red flags this century — 2020 and 2026, both "
+                "losing the rear exiting the final corner. The Variante "
+                "della Roggia bookends two very different eras too: the "
+                "marshal-fatality Safety Car of 2000 and Giovinazzi's spin "
+                "there in 2021."),
+        "incidents": [
+            {"year": 2026, "corner": "11", "corner_label": "Turn 11 (Parabolica)",
+             "who": "Leclerc crashes exiting the corner after contact with Hamilton",
+             "lap": 2, "type": "REDFLAG", "point": [362.8, 1209.6],
+             "source": "formula1.com / the-race.com / racefans.net"},
+            {"year": 2022, "corner": "6-7", "corner_label": "Turns 6/7 (between the Lesmos)",
+             "who": "Ricciardo stops trackside, mechanical failure; race finishes under SC",
+             "lap": 48, "type": "SC", "point": [964.4, 113.55],
+             "source": "racefans.net / autosport.com"},
+            {"year": 2021, "corner": "2", "corner_label": "Turn 2 (Rettifilo chicane)",
+             "who": "Verstappen lands on Hamilton after collision", "lap": 26,
+             "type": "SC", "point": [392.6, 421.8],
+             "source": "motorsportmagazine.com / racefans.net / espn.com"},
+            {"year": 2021, "corner": "4-5", "corner_label": "Turns 4/5 (Variante della Roggia)",
+             "who": "Giovinazzi runs across the chicane after a failed pass, clips Sainz",
+             "lap": 1, "type": "VSC", "point": [781.0, 62.35],
+             "source": "motorsport.com"},
+            {"year": 2020, "corner": "11", "corner_label": "Turn 11 (Parabolica)",
+             "who": "Leclerc crashes, Monza's first red flag since 1995", "lap": 23,
+             "type": "REDFLAG", "point": [362.8, 1209.6],
+             "source": "en.wikipedia.org / racefans.net"},
+            {"year": 2019, "corner": "1", "corner_label": "Turn 1",
+             "who": "Kvyat stops, engine failure", "lap": 31, "type": "VSC",
+             "point": [370.3, 431.1],
+             "source": "lightsoutblog.com"},
+            {"year": 2018, "corner": "1", "corner_label": "Turn 1",
+             "who": "Hartley pincered by Vandoorne and Ericsson", "lap": 1,
+             "type": "SC", "point": [370.3, 431.1],
+             "source": "motorsportmagazine.com / talkmotorsport.co.nz"},
+            {"year": 2011, "corner": "1", "corner_label": "Turn 1",
+             "who": "Liuzzi collects Rosberg and Petrov after contact with Kovalainen",
+             "lap": 1, "type": "SC", "point": [370.3, 431.1],
+             "source": "racefans.net / formula1.com / crash.net"},
+            {"year": 2007, "corner": "3", "corner_label": "Turn 3 (Curva Grande)",
+             "who": "Coulthard crashes, car failure", "lap": 2, "type": "SC",
+             "point": [437.3, 129.4],
+             "source": "racefans.net"},
+            {"year": 2000, "corner": "4-5", "corner_label": "Turns 4/5 (Variante della Roggia)",
+             "who": "Frentzen/Trulli/Coulthard/Barrichello incident — marshal "
+                    "Paolo Gislimberti fatally struck by a flying wheel",
+             "lap": 1, "type": "SC", "point": [781.0, 62.35],
+             "source": "grandprix.com / en.wikipedia.org / racefans.net"},
+        ],
+        "incidents_note": ("This isn't every Monza incident since 2000, only "
+                            "the ones public reporting let us confirm cleanly "
+                            "enough to place at a specific corner. Left off "
+                            "rather than guessed: 2019's Sainz VSC (stopped at "
+                            "pit exit, not a numbered corner) and 2020's "
+                            "Magnussen SC (stopped near pit entry); 2022's "
+                            "Vettel VSC (lap 12) was never reported against a "
+                            "specific corner. The 2026 Hamilton/Leclerc contact "
+                            "at Turn 2 was real and heavily covered but "
+                            "triggered no SC/VSC/red flag (stewards took no "
+                            "action), so it doesn't belong on this list. 2025's "
+                            "Italian Grand Prix ran its full distance with no "
+                            "Safety Car, VSC or red flag at all, confirmed "
+                            "across multiple race reports, not a missing data "
+                            "point. Corners before 1972 (when the two "
+                            "chicanes were added to slow the circuit down) "
+                            "aren't used here at all — 1978's Ronnie Peterson "
+                            "fatality and 1961's disaster both predate the "
+                            "Safety Car's own introduction to F1 in 1973."),
+    },
 }
 
 

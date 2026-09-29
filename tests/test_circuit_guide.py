@@ -24,7 +24,7 @@ class TestGetCircuitGuide:
         # best-guess -- the router turns this into a 404, and the frontend
         # shows an explicit "no guide yet" message rather than rendering an
         # empty/fabricated page.
-        assert get_circuit_guide("monza") is None
+        assert get_circuit_guide("some-circuit-not-yet-researched") is None
         assert get_circuit_guide("") is None
         assert get_circuit_guide(None) is None
 
