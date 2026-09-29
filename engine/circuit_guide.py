@@ -1017,6 +1017,132 @@ CIRCUITS = {
                             "varies across sources (19-23 all appear); 21 is "
                             "the most consistently cited and is used here."),
     },
+
+    "monte carlo": {
+        "name": "Circuit de Monaco",
+        "location": "Monte Carlo, Monaco",
+        "corners": 19,
+        "length_km": 3.337,
+        "view_box": [0, 0, 1000, 930],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2025 Monaco Event - Circuit
+        # Map" PDF -- corner-number label positions extracted from the
+        # PDF's own vector text layer (exact, not eyeballed), then each
+        # apex cross-verified against the rendered track curve on a fine
+        # grid to resolve dense clusters (the 6/7/8 hairpin complex, the
+        # 10/11 chicane kink, the 15/16 swimming-pool "Z" kink). Numbering
+        # cross-checked against Formula1.com's own named-corner list
+        # (Sainte Devote=1 ... Antony Noghes=19) and matches exactly.
+        # Verified 0 crossings.
+        "points": [
+            ("SF", 320.0, 617.4), ("1", 362.8, 429.3), ("2", 683.3, 339.8),
+            ("3", 794.3, 291.7), ("4", 759.8, 206.9), ("5", 867.9, 40.0),
+            ("6", 932.1, 123.8), ("7", 917.5, 63.9), ("8", 970.0, 40.7),
+            ("9", 894.2, 304.2), ("10", 656.0, 408.5), ("11", 636.4, 425.6),
+            ("12", 411.6, 440.3), ("13", 370.1, 575.9), ("14", 401.9, 602.8),
+            ("15", 423.4, 712.7), ("16", 410.4, 724.9), ("17", 422.6, 786.0),
+            ("18", 486.2, 866.7), ("19", 401.9, 887.4),
+        ],
+        "corner_labels": [
+            ["1", 369, 405], ["2", 655, 320], ["3", 812, 275], ["4", 715, 195],
+            ["5", 850, 18], ["6", 955, 148], ["7", 878, 58], ["8", 990, 22],
+            ["9", 918, 300], ["10", 660, 386], ["11", 600, 440], ["12", 385, 440],
+            ["13", 335, 572], ["14", 432, 608], ["15", 452, 708], ["16", 378, 732],
+            ["17", 452, 788], ["18", 518, 866], ["19", 365, 902],
+        ],
+        "start_finish": {"x1": 305, "y1": 610, "x2": 335, "y2": 625,
+                          "label_x": 250, "label_y": 617},
+        # Turn 13 (swimming pool entry) is drawn as a highlighted ring --
+        # the repeat flashpoint (4 named incidents across 4 decades).
+        "highlight_point": [370.1, 575.9],
+        "headline": "The swimming pool section has claimed a car in four "
+                     "different decades — 2003, 2008, 2011 and 2022.",
+        "dek": ("Fourteen real, named incidents since 2003, and the clearest "
+                "repeat is the swimming pool chicane: Frentzen (2003), "
+                "Rosberg (2008), a three-car pile-up for Sutil/Alguersuari/"
+                "Petrov (2011) and Mick Schumacher's car-splitting shunt "
+                "(2022) have all ended there. La Rascasse has its own "
+                "pattern too — Trulli mounting Chandhok's car in 2010, "
+                "then Sauber team-mates Nasr and Ericsson colliding in 2016. "
+                "And 2026 alone needed two separate stoppages at the very "
+                "last corner, Anthony Noghes: Stroll's Safety Car crash, "
+                "then Leclerc crashing into the barrier at the restart, "
+                "forcing a red flag for a crumbling track surface."),
+        "incidents": [
+            {"year": 2026, "corner": "19", "corner_label": "Turn 19 (Antony Noghes)",
+             "who": "Leclerc crashes on the SC restart, brake failure", "lap": 66,
+             "type": "REDFLAG", "point": [401.9, 887.4],
+             "source": "formula1.com / crash.net / gpfans.com"},
+            {"year": 2026, "corner": "19", "corner_label": "Turn 19 (Antony Noghes)",
+             "who": "Stroll crashes, engine-braking issue", "lap": 60, "type": "SC",
+             "point": [401.9, 887.4],
+             "source": "formula1.com / motorsport.com / skysports.com"},
+            {"year": 2025, "corner": "8", "corner_label": "Turn 8 (Portier)",
+             "who": "Bortoleto crashes after Antonelli battle", "lap": 1,
+             "type": "VSC", "point": [970.0, 40.7],
+             "source": "racefans.net / gpfans.com / crash.net"},
+            {"year": 2024, "corner": "3", "corner_label": "Turn 3 (Massenet)",
+             "who": "Pérez/Magnussen collide, Hülkenberg collected", "lap": 1,
+             "type": "REDFLAG", "point": [794.3, 291.7],
+             "source": "autosport.com / motorsport.com / racefans.net"},
+            {"year": 2022, "corner": "15", "corner_label": "Turn 15 (Swimming Pool)",
+             "who": "Schumacher crashes, car splits in half", "lap": 26,
+             "type": "REDFLAG", "point": [423.4, 712.7],
+             "source": "planetf1.com / espn.com / autosport.com"},
+            {"year": 2018, "corner": "10", "corner_label": "Turn 10 (Nouvelle Chicane)",
+             "who": "Leclerc's brakes fail, hits Hartley", "lap": 73, "type": "VSC",
+             "point": [656.0, 408.5],
+             "source": "racefans.net / espn.com"},
+            {"year": 2016, "corner": "18", "corner_label": "Turn 18 (La Rascasse)",
+             "who": "Nasr/Ericsson (Sauber team-mates) collide", "lap": 49,
+             "type": "VSC", "point": [486.2, 866.7],
+             "source": "espn.com / motorsport.com"},
+            {"year": 2016, "corner": "3", "corner_label": "Turn 3 (Massenet)",
+             "who": "Verstappen crashes", "lap": 35, "type": "VSC",
+             "point": [794.3, 291.7],
+             "source": "lightsoutblog.com / espn.com"},
+            {"year": 2015, "corner": "1", "corner_label": "Turn 1 (Sainte Devote)",
+             "who": "Verstappen hits Grosjean — first-ever F1 VSC", "lap": 64,
+             "type": "VSC", "point": [362.8, 429.3],
+             "source": "racefans.net / lightsoutblog.com"},
+            {"year": 2013, "corner": "1", "corner_label": "Turn 1 (Sainte Devote)",
+             "who": "Massa crashes, suspension failure", "lap": 30, "type": "SC",
+             "point": [362.8, 429.3],
+             "source": "cnn.com / autocarindia.com"},
+            {"year": 2011, "corner": "13", "corner_label": "Turn 13 (Swimming Pool)",
+             "who": "Sutil/Alguersuari/Petrov crash", "lap": 69, "type": "REDFLAG",
+             "point": [370.1, 575.9],
+             "source": "racefans.net / grandprix.com"},
+            {"year": 2010, "corner": "18", "corner_label": "Turn 18 (La Rascasse)",
+             "who": "Trulli mounts Chandhok's car", "lap": 75, "type": "SC",
+             "point": [486.2, 866.7],
+             "source": "autosport.com / crash.net"},
+            {"year": 2008, "corner": "13", "corner_label": "Turn 13 (Swimming Pool)",
+             "who": "Rosberg crashes hard entering the pool", "lap": 60,
+             "type": "SC", "point": [370.1, 575.9],
+             "source": "racefans.net / rte.ie / motorsportmagazine.com"},
+            {"year": 2003, "corner": "14", "corner_label": "Turn 14 (Swimming Pool)",
+             "who": "Frentzen crashes — Monaco's first-ever Safety Car", "lap": 2,
+             "type": "SC", "point": [401.9, 602.8],
+             "source": "grandprix.com / lightsoutblog.com"},
+        ],
+        "incidents_note": ("This isn't every Monaco incident since 2003, only "
+                            "the ones public reporting let us confirm cleanly "
+                            "enough to place at a specific corner. Left off "
+                            "rather than guessed: the 2004 Schumacher/Montoya "
+                            "tunnel collision happened UNDER an already-running "
+                            "Safety Car (deployed for an earlier incident) "
+                            "rather than triggering one itself; 2017's "
+                            "Button/Wehrlein clash was reported only as "
+                            "'before the tunnel,' not clearly Portier or the "
+                            "tunnel itself; Leclerc's 2021 swimming-pool crash "
+                            "was real and well documented but happened in "
+                            "qualifying, not the race. Ayrton Senna's famous "
+                            "1988 retirement at Portier isn't included for a "
+                            "different reason — it predates the Safety Car's "
+                            "1993 introduction to F1 entirely, so there was no "
+                            "SC/VSC/red flag to record."),
+    },
 }
 
 
