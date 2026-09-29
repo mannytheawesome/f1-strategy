@@ -1143,6 +1143,203 @@ CIRCUITS = {
                             "1993 introduction to F1 entirely, so there was no "
                             "SC/VSC/red flag to record."),
     },
+
+    "zandvoort": {
+        "name": "Circuit Zandvoort",
+        "location": "Zandvoort, Netherlands",
+        "corners": 14,
+        "length_km": 4.259,
+        "view_box": [0, 0, 1000, 620],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2026 Dutch Grand Prix -
+        # Competition Notes - Circuit Map" PDF, gridded and verified
+        # against actual track-fill pixels (not the separate yellow "FIA
+        # light panel" numbering, which shares some digits with the blue
+        # corner numbers but is a different sequence). Turns 3 and 13/14
+        # are genuinely banked in real life (Hugenholtzbocht, Arie
+        # Luyendijkbocht) -- approximated as tight loops in this 2D plan
+        # view. Verified 0 crossings.
+        "points": [
+            ("SF", 402.1, 258.0), ("1", 511.3, 40.0), ("2", 488.3, 235.9),
+            ("3", 421.4, 305.1), ("4", 571.2, 315.7), ("5", 695.7, 292.6),
+            ("6", 806.4, 277.4), ("7", 970.0, 306.2), ("8", 888.4, 487.2),
+            ("9", 778.7, 449.4), ("10", 877.8, 364.1), ("11", 509.0, 397.3),
+            ("12", 465.2, 381.1), ("13", 472.1, 577.1), ("14", 320.0, 544.8),
+        ],
+        "corner_labels": [
+            ["1", 511, 20], ["2", 465, 240], ["3", 395, 308], ["4", 571, 335],
+            ["5", 695, 270], ["6", 806, 255], ["7", 985, 306], ["8", 888, 507],
+            ["9", 745, 449], ["10", 877, 344], ["11", 509, 377], ["12", 430, 381],
+            ["13", 495, 577], ["14", 295, 545],
+        ],
+        "start_finish": {"x1": 384.2, "y1": 249.0, "x2": 420.0, "y2": 267.0,
+                          "label_x": 435, "label_y": 277},
+        # Turn 3 (the banked Hugenholtzbocht) is drawn as a highlighted ring
+        # -- the repeat flashpoint (2 separate Safety Cars in 2025 alone).
+        "highlight_point": [421.4, 305.1],
+        "headline": "Turn 3 — the banked Hugenholtzbocht — triggered two "
+                     "separate Safety Cars in the same 2025 race alone.",
+        "dek": ("Eight real, named incidents since Zandvoort's 2021 return, "
+                "and the clearest repeat is Turn 3: Hamilton crashed there to "
+                "bring out the Safety Car on lap 22 of 2025's race, and that "
+                "same afternoon Antonelli tagged Leclerc into the wall at the "
+                "identical corner on lap 53. The other repeat is Turn 1, off "
+                "the pit straight: Bottas's engine failure stopped there in "
+                "2022, and Zhou's rain crash there in 2023 escalated into the "
+                "circuit's only red flag inside a Grand Prix. 2021 and 2024 "
+                "both ran their full distance with no Safety Car, VSC or red "
+                "flag at all."),
+        "incidents": [
+            {"year": 2026, "corner": "14", "corner_label": "Turn 14 (Arie Luyendijkbocht)",
+             "who": "Verstappen crashes on the opening lap, wet patch on the banking",
+             "lap": 1, "type": "REDFLAG", "point": [320.0, 544.8],
+             "source": "formula1.com / motorsport.com / en.wikipedia.org"},
+            {"year": 2026, "corner": "5", "corner_label": "Turn 5",
+             "who": "Sainz/Albon (Williams teammates) collide, debris", "lap": 70,
+             "type": "VSC", "point": [695.7, 292.6],
+             "source": "en.wikipedia.org"},
+            {"year": 2025, "corner": "8", "corner_label": "Turn 8 (Mastersbocht)",
+             "who": "Norris retires, car emitting smoke", "lap": 65, "type": "SC",
+             "point": [888.4, 487.2],
+             "source": "en.wikipedia.org"},
+            {"year": 2025, "corner": "3", "corner_label": "Turn 3 (Hugenholtzbocht)",
+             "who": "Leclerc crashes after contact from Antonelli", "lap": 53,
+             "type": "SC", "point": [421.4, 305.1],
+             "source": "racingnews365.com / motorsport.com"},
+            {"year": 2025, "corner": "3", "corner_label": "Turn 3 (Hugenholtzbocht)",
+             "who": "Hamilton crashes heavily", "lap": 22, "type": "SC",
+             "point": [421.4, 305.1],
+             "source": "en.wikipedia.org"},
+            {"year": 2023, "corner": "1", "corner_label": "Turn 1 (Tarzanbocht)",
+             "who": "Zhou aquaplanes into the barrier in heavy rain", "lap": 64,
+             "type": "REDFLAG", "point": [511.3, 40.0],
+             "source": "motorsport.com / racefans.net"},
+            {"year": 2023, "corner": "9", "corner_label": "Turn 9",
+             "who": "Sargeant crashes, loses hydraulic/steering assist", "lap": 17,
+             "type": "SC", "point": [778.7, 449.4],
+             "source": "racingnews365.com / gpfans.com"},
+            {"year": 2022, "corner": "1", "corner_label": "Turn 1 (Tarzanbocht)",
+             "who": "Bottas retires, engine failure approaching the corner",
+             "lap": 55, "type": "SC", "point": [511.3, 40.0],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+        ],
+        "incidents_note": ("This is every Dutch GP Safety Car/VSC/red flag "
+                            "since Zandvoort's 2021 return that public "
+                            "reporting let us confirm to a specific corner -- "
+                            "2021 and 2024 both ran clean, full-distance races "
+                            "with no caution at all, a genuine gap rather than "
+                            "a missing data point. Left off rather than "
+                            "guessed: Tsunoda's 2022 VSC-triggering retirement "
+                            "(lap 47) -- sources describe an earlier stop at "
+                            "the exit of Turn 4 but don't name where his "
+                            "final, VSC-triggering stop happened; Ocon's 2026 "
+                            "VSC-triggering retirement (lap 55) -- no source "
+                            "names a corner; and a lap-31 2025 VSC for track "
+                            "debris, where one account ties it to a Sainz/"
+                            "Lawson clash but another separately places that "
+                            "contact at Turn 1 on lap 7 with no caution "
+                            "attached — conflicting enough to leave out "
+                            "rather than guess."),
+    },
+
+    "hungaroring": {
+        "name": "Hungaroring",
+        "location": "Mogyoród, Hungary",
+        "corners": 14,
+        "length_km": 4.381,
+        "view_box": [0, 0, 1000, 850],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2026 Hungarian Grand Prix -
+        # Competition Notes - Circuit Map, Pit Lane Drawing, Emergency
+        # Exits Map and Red Zone" PDF, gridded and verified against real
+        # track-edge pixels (not label text -- corner numbers on this map
+        # are blue; a separate, similar-looking yellow "FIA Light Panel"
+        # sequence and orange marshal-post "M#" labels share the same
+        # digits and were deliberately not used). 1A and 12A are the map's
+        # own sub-labelled kinks within the Turn 1 and Turn 12/13
+        # complexes, included as extra polyline points but not counted in
+        # the corners total (14, matching the map's own numbering).
+        # Verified 0 crossings.
+        "points": [
+            ("SF", 587.6, 700.8), ("1", 320.0, 435.5), ("1A", 434.7, 457.0),
+            ("2", 597.2, 555.0), ("3", 582.9, 428.3), ("4", 688.0, 183.4),
+            ("5", 716.7, 40.0), ("6", 833.8, 159.5), ("7", 826.6, 182.2),
+            ("8", 857.7, 269.4), ("9", 948.5, 301.7), ("10", 922.2, 428.3),
+            ("11", 970.0, 512.0), ("12", 812.3, 705.5), ("12A", 754.9, 660.1),
+            ("13", 683.2, 614.7), ("14", 738.2, 792.8),
+        ],
+        "corner_labels": [
+            ["1", 300, 438], ["1A", 405, 480], ["2", 578, 578], ["3", 556, 422],
+            ["4", 665, 148], ["5", 700, 14], ["6", 850, 132], ["7", 790, 206],
+            ["8", 876, 246], ["9", 972, 286], ["10", 948, 426], ["11", 994, 522],
+            ["12", 820, 734], ["12A", 776, 666], ["13", 655, 606], ["14", 740, 822],
+        ],
+        "start_finish": {"x1": 578, "y1": 712, "x2": 598, "y2": 690,
+                          "label_x": 610, "label_y": 668},
+        # Turn 2 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (2 named incidents in back-to-back years, 2017/2018,
+        # both involving Verstappen).
+        "highlight_point": [597.2, 555.0],
+        "headline": "Turn 2 has caused a real, named Safety Car or VSC in "
+                     "back-to-back years — 2017 and 2018.",
+        "dek": ("Five real, named incidents since 2014, and the tightest "
+                "repeat is Turn 2: Daniel Ricciardo was eliminated there "
+                "after contact with team-mate Max Verstappen in 2017, then "
+                "Verstappen's own engine let go accelerating out of the "
+                "same corner a year later. Turn 1 has its own pattern "
+                "across a longer span — Nico Hülkenberg's front wing "
+                "failure pitched him into the Turn 1 barrier in 2015, and "
+                "Valtteri Bottas triggered a five-car pile-up and red flag "
+                "there in 2021."),
+        "incidents": [
+            {"year": 2021, "corner": "1", "corner_label": "Turn 1",
+             "who": "Bottas triggers a multi-car pile-up (Norris, "
+                    "Verstappen, Pérez, Stroll, Leclerc all collected)",
+             "lap": 1, "type": "REDFLAG", "point": [320.0, 435.5],
+             "source": "racefans.net / en.wikipedia.org"},
+            {"year": 2018, "corner": "2", "corner_label": "Turn 2",
+             "who": "Verstappen retires, MGU-K failure accelerating out of "
+                    "Turn 2", "lap": 6, "type": "VSC", "point": [597.2, 555.0],
+             "source": "motorsportmagazine.com"},
+            {"year": 2017, "corner": "2", "corner_label": "Turn 2",
+             "who": "Ricciardo eliminated after contact with team-mate "
+                    "Verstappen", "lap": 2, "type": "SC",
+             "point": [597.2, 555.0],
+             "source": "en.wikipedia.org / motorsport.com"},
+            {"year": 2015, "corner": "1", "corner_label": "Turn 1",
+             "who": "Hülkenberg's front wing fails, crashes into the "
+                    "tyre barrier", "lap": 42, "type": "SC",
+             "point": [320.0, 435.5],
+             "source": "autosport.com"},
+            {"year": 2014, "corner": "14", "corner_label": "Turn 14 (final corner)",
+             "who": "Pérez crashes into the pit wall exiting the final corner",
+             "lap": 22, "type": "SC", "point": [738.2, 792.8],
+             "source": "racefans.net / bleacherreport.com"},
+        ],
+        "incidents_note": ("This isn't every Hungarian GP incident since "
+                            "2006, only the ones public reporting let us "
+                            "confirm cleanly enough to place at a specific "
+                            "corner. Several real, well-documented cautions "
+                            "were left off rather than guessed: Räikkönen's "
+                            "2006 collision with Liuzzi (Safety Car, no "
+                            "corner given by any source), 2010's Liuzzi "
+                            "front-wing-debris Safety Car, 2018's separate "
+                            "lap-51 Vandoorne VSC, and 2022's two VSCs "
+                            "(lap-1 contact debris, Bottas's late power-unit "
+                            "retirement) all came back with no corner "
+                            "specific enough to plot. 2026's Piastri VSC "
+                            "(gearbox failure) is a genuine, recent example "
+                            "excluded for a real reason, not an oversight: "
+                            "one account places it 'between turns one and "
+                            "two' while another says 'exit of Turn 3' — a "
+                            "real conflict on the exact corner. 2023, 2024, "
+                            "2025, 2020, 2019, 2016 and 2013 each ran their "
+                            "full race distance with no Safety Car, VSC or "
+                            "red flag at all, not missing data points. "
+                            "Tsunoda's much-covered 2024 Turn 5 shunt "
+                            "happened in qualifying, not the race, so it "
+                            "doesn't belong on this list either."),
+    },
 }
 
 
