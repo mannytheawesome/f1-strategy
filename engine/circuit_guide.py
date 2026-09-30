@@ -2289,6 +2289,88 @@ CIRCUITS = {
                             "2025) are excluded, matching the convention "
                             "used elsewhere in this file."),
     },
+
+    "madring": {
+        "name": "Madring",
+        "location": "Madrid, Spain",
+        "corners": 22,
+        "length_km": 5.414,
+        "view_box": [0, 0, 1000, 480],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Madring debuted on the calendar in September 2026 (Spanish GP
+        # moved here from Barcelona-Catalunya) -- no official FIA
+        # circuit-map PDF could be located for it. Geometry instead read
+        # directly off a vector circuit diagram on Wikimedia Commons
+        # (File:Madring_Formula_1_Circuit.svg) that encodes both the track
+        # outline AND a labeled apex marker with exact coordinates for
+        # every numbered corner in the same coordinate space as the
+        # outline -- verified by tracing each apex marker against the
+        # outline path's own point list (not a freehand trace),
+        # corroborated against independent prose (madring.com, Wikipedia):
+        # "La Monumental" banked corner = Turn 12, "El Búnker" = Turn 8,
+        # "Las Enlazadas de Valdebebas" = Turns 14-16, all matching where
+        # those turns land here. Verified 0 self-intersections.
+        "points": [
+            ("SF", 364.6, 377.8), ("1", 338.7, 225.0), ("2", 321.2, 220.7),
+            ("3", 320.0, 176.0), ("4", 529.0, 59.1), ("5", 605.6, 77.5),
+            ("5a", 615.6, 71.7), ("6", 626.2, 76.4), ("7", 728.6, 40.0),
+            ("8", 748.0, 53.7), ("9", 775.5, 41.9), ("10", 835.9, 42.2),
+            ("11", 869.6, 70.0), ("12", 960.0, 95.1), ("13", 792.8, 66.4),
+            ("14", 747.9, 114.9), ("15", 670.0, 133.6), ("16", 660.9, 195.9),
+            ("17", 670.6, 218.8), ("18", 603.8, 263.6), ("19", 596.5, 331.6),
+            ("20", 477.4, 363.4), ("20a", 482.4, 375.4), ("21", 486.6, 415.3),
+            ("22", 382.2, 437.5),
+        ],
+        "corner_labels": [
+            ["1", 358, 217], ["2", 308, 240], ["3", 305, 170], ["4", 529, 30],
+            ["5", 590, 100], ["5a", 616, 46], ["6", 634, 100], ["7", 731, 14],
+            ["8", 747, 78], ["9", 768, 16], ["10", 850, 20], ["11", 875, 92],
+            ["12", 985, 96], ["13", 797, 90], ["14", 756, 140], ["15", 648, 125],
+            ["16", 638, 202], ["17", 692, 226], ["18", 620, 281], ["19", 618, 341],
+            ["20", 455, 358], ["20a", 510, 380], ["21", 508, 429], ["22", 378, 461],
+        ],
+        "start_finish": {"x1": 350, "y1": 363, "x2": 380, "y2": 393,
+                          "label_x": 390, "label_y": 400},
+        # Turn 20 is drawn as a highlighted ring on the page -- Madring's
+        # ONLY named incident so far (one race run to date), not a repeat
+        # pattern.
+        "highlight_point": [477.4, 363.4],
+        "headline": "Madring's debut Grand Prix needed one Virtual Safety "
+                     "Car — too new to show a pattern yet.",
+        "dek": ("Madring hosted its first Grand Prix in September 2026 "
+                "(the Spanish GP's move from Barcelona-Catalunya), and "
+                "exactly one race means there's no repeat-corner story to "
+                "tell yet — just a single data point. That race needed "
+                "one Virtual Safety Car: Lance Stroll's Aston Martin, "
+                "brake failure into the wall at Turn 20, lap 14. Three "
+                "other retirements that same race — Lewis Hamilton's own "
+                "brake failure, a Sainz/Alonso collision at Turn 5, "
+                "Sergio Pérez's water-system issue — didn't trigger any "
+                "caution at all, so they're left off this list rather "
+                "than force-fit in. Check back after a second Madrid GP."),
+        "incidents": [
+            {"year": 2026, "corner": "20", "corner_label": "Turn 20",
+             "who": "Stroll crashes, brake failure", "lap": 14, "type": "VSC",
+             "point": [477.4, 363.4],
+             "source": "formula1.com / espn.com.au"},
+        ],
+        "incidents_note": ("Madring's entire Grand Prix history is one "
+                            "race (September 2026), so this is necessarily "
+                            "a single-incident list, not a curated subset "
+                            "of a longer one — there's nothing else real "
+                            "to add yet, and nothing was padded in to make "
+                            "the page look more populated than it is. "
+                            "Three other real retirements from that same "
+                            "race (Hamilton's brake failure, a Sainz/Alonso "
+                            "collision at Turn 5, Pérez's water-system "
+                            "issue) are excluded because none of them "
+                            "triggered a Safety Car, VSC, or red flag — "
+                            "sources agree the race ran the rest of its "
+                            "distance green. Multiple red flags did occur "
+                            "during practice sessions that weekend, but "
+                            "this dataset (matching every other circuit's "
+                            "convention here) is race-only."),
+    },
 }
 
 
