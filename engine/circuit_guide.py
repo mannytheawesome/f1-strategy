@@ -1824,6 +1824,314 @@ CIRCUITS = {
                             "race could not be confirmed to have had a "
                             "Safety Car at all from available sourcing."),
     },
+
+    "mexico city": {
+        "name": "Autódromo Hermanos Rodríguez",
+        "location": "Mexico City, Mexico",
+        "corners": 17,
+        "length_km": 4.304,
+        "view_box": [0, 0, 1000, 970],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2025 Mexico City Grand Prix -
+        # Event Notes - Circuit Map" PDF, corner-number glyphs (blue)
+        # distinguished from the separate red "Marshal Post" and yellow
+        # "FIA Marshal Light" number sequences that share the same digits
+        # on this map -- each snapped to the nearest actual track-edge
+        # pixel, not the label's own position. The Foro Sol stadium
+        # section (12-17, a tight S-curve into a hairpin) got a dedicated
+        # fine-grid re-read before finalizing. Verified 0 crossings.
+        "points": [
+            ("SF", 320.0, 803.0), ("1", 441.7, 58.6), ("2", 493.2, 70.9),
+            ("3", 509.7, 40.0), ("4", 881.0, 236.9), ("5", 911.8, 202.9),
+            ("6", 960.2, 268.9), ("7", 764.4, 262.7), ("8", 717.9, 311.2),
+            ("9", 670.5, 333.8), ("10", 645.8, 445.2), ("11", 590.1, 465.9),
+            ("12", 513.8, 804.0), ("13", 412.8, 815.3), ("14", 410.7, 846.3),
+            ("15", 408.7, 869.9), ("16", 398.4, 925.6), ("17", 320.0, 872.0),
+        ],
+        "corner_labels": [
+            ["1", 415, 40], ["2", 505, 92], ["3", 520, 18], ["4", 872, 260],
+            ["5", 922, 180], ["6", 980, 275], ["7", 745, 240], ["8", 735, 335],
+            ["9", 645, 340], ["10", 668, 452], ["11", 566, 470], ["12", 530, 782],
+            ["13", 425, 795], ["14", 434, 848], ["15", 432, 878], ["16", 400, 948],
+            ["17", 336, 880],
+        ],
+        "start_finish": {"x1": 306, "y1": 787, "x2": 334, "y2": 819,
+                          "label_x": 344, "label_y": 815},
+        # Turn 1 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint (4 named incidents across 2016/2018/2023/2024).
+        "highlight_point": [441.7, 58.6],
+        "headline": "Turn 1 has triggered a Safety Car or Virtual Safety "
+                     "Car in 4 separate years — 2016, 2018, 2023 and 2024.",
+        "dek": ("Eight real, named incidents since 2015, and the clearest "
+                "repeat is Turn 1 — the very long, heavy-braking zone at "
+                "the end of the pit straight, taken at some of the highest "
+                "approach speeds of the year thanks to the circuit's "
+                "altitude thinning the air. Wehrlein was punted off there "
+                "at the first race back in 2016, Ricciardo's Red Bull went "
+                "up in smoke on the outside of it in 2018, Leclerc's own "
+                "front-wing endplate came off there in 2023, and Tsunoda "
+                "and Albon wiped each other out there on the opening lap "
+                "of 2024. The other repeat offender is Turn 2, right after "
+                "it — Räikkönen and Magnussen's contact there in 2019, "
+                "and Tsunoda beached there in the three-car pile-up (with "
+                "Schumacher and Ocon) that opened 2021."),
+        "incidents": [
+            {"year": 2024, "corner": "1", "corner_label": "Turn 1",
+             "who": "Tsunoda/Albon collide, both retire", "lap": 1, "type": "SC",
+             "point": [441.7, 58.6],
+             "source": "formula1.com / gpfans.com / racingnews365.com"},
+            {"year": 2023, "corner": "9", "corner_label": "Turn 9",
+             "who": "Magnussen crashes heavily, suspension failure", "lap": 33,
+             "type": "REDFLAG", "point": [670.5, 333.8],
+             "source": "en.wikipedia.org"},
+            {"year": 2023, "corner": "1", "corner_label": "Turn 1",
+             "who": "Leclerc's front-wing endplate breaks off", "lap": 5,
+             "type": "VSC", "point": [441.7, 58.6],
+             "source": "en.wikipedia.org"},
+            {"year": 2021, "corner": "2", "corner_label": "Turn 2",
+             "who": "Tsunoda/Schumacher collide (Ocon wedged between them)",
+             "lap": 1, "type": "SC", "point": [493.2, 70.9],
+             "source": "motorsportmagazine.com / espn.com"},
+            {"year": 2019, "corner": "2", "corner_label": "Turn 2",
+             "who": "Räikkönen/Magnussen contact, debris", "lap": 1,
+             "type": "VSC", "point": [493.2, 70.9],
+             "source": "en.wikipedia.org"},
+            {"year": 2018, "corner": "1", "corner_label": "Turn 1",
+             "who": "Ricciardo retires, hydraulic failure and smoke", "lap": 62,
+             "type": "VSC", "point": [441.7, 58.6],
+             "source": "grandprix.com / espn.com / abc.net.au"},
+            {"year": 2016, "corner": "1", "corner_label": "Turn 1",
+             "who": "Wehrlein punted off by a Sauber", "lap": 1, "type": "SC",
+             "point": [441.7, 58.6],
+             "source": "en.wikipedia.org"},
+            {"year": 2015, "corner": "7", "corner_label": "Turn 7",
+             "who": "Vettel spins, hits the barriers", "lap": 53, "type": "SC",
+             "point": [764.4, 262.7],
+             "source": "en.wikipedia.org"},
+        ],
+        "incidents_note": ("This isn't every Mexican GP incident since "
+                            "2015, only the ones public reporting let us "
+                            "confirm cleanly enough to place at a specific "
+                            "corner. Left off rather than guessed: Sainz's "
+                            "2018 retirement (sources disagree on both the "
+                            "lap — 28 or 31 — and give no corroborated "
+                            "corner); Alonso's 2022 retirement (lap number "
+                            "conflicts between sources, no confirmed corner "
+                            "or caution tie-in); Hartley's 2017 VSC (real, "
+                            "but no corner given); Sainz's 2025 VSC "
+                            "(reported only as 'trackside')."),
+    },
+
+    "singapore": {
+        "name": "Marina Bay Street Circuit",
+        "location": "Singapore",
+        "corners": 19,
+        "length_km": 4.927,
+        "view_box": [0, 0, 1000, 718],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Geometry is the CURRENT layout only (raced 2023 onward, post the
+        # reconfiguration that removed the old Turns 16-19 loop around the
+        # Float at Marina Bay in favour of a straight, and renumbered the
+        # old Turns 20-23 to the new Turns 16-19) -- read directly off the
+        # official FIA "2025 Singapore Grand Prix - Event Notes - Circuit
+        # Map" PDF (fia.com), gridded and verified (corner-number labels
+        # isolated by color and cross-checked against a track-pixel mask).
+        # Verified 0 crossings.
+        "points": [
+            ("SF", 916.3, 209.5), ("1", 804.1, 40.0), ("2", 771.2, 73.3),
+            ("3", 723.0, 44.2), ("4", 746.8, 127.4), ("5", 835.2, 218.3),
+            ("6", 641.3, 317.1), ("7", 453.9, 286.1), ("8", 431.2, 387.6),
+            ("9", 356.6, 390.0), ("10", 320.0, 590.2), ("11", 407.8, 598.4),
+            ("12", 421.3, 646.6), ("13", 510.6, 677.6), ("14", 465.9, 399.6),
+            ("15", 574.6, 419.9), ("16", 792.7, 329.9), ("17", 820.1, 350.2),
+            ("18", 922.4, 306.6), ("19", 970.0, 264.7),
+        ],
+        "corner_labels": [
+            ["1", 815, 21], ["2", 781, 54], ["3", 730, 23], ["4", 757, 108],
+            ["5", 854, 207], ["6", 651, 297], ["7", 433, 280], ["8", 410, 393],
+            ["9", 335, 394], ["10", 303, 604], ["11", 393, 615], ["12", 409, 665],
+            ["13", 503, 698], ["14", 445, 407], ["15", 562, 438], ["16", 815, 328],
+            ["17", 842, 351], ["18", 944, 304], ["19", 991, 260],
+        ],
+        "start_finish": {"x1": 934, "y1": 196, "x2": 899, "y2": 223,
+                          "label_x": 903, "label_y": 229},
+        # Turn 1 is drawn as a highlighted ring -- the only corner with
+        # more than one same-corner Safety Car in the modern-numbering era.
+        "highlight_point": [804.1, 40.0],
+        "headline": "Turn 1 has triggered a full Safety Car twice — a "
+                     "first-lap pileup in 2017 and a suspension-breaking "
+                     "clash in 2019 — and it's still the only corner at "
+                     "Marina Bay with more than one Safety Car to its name "
+                     "under the current numbering.",
+        "dek": ("Turn 8 has its own smaller repeat: Grosjean clipped "
+                "Russell into the wall there in 2019, and Albon hit it "
+                "himself in 2022. What's NOT here matters as much as what "
+                "is — Singapore renumbered its whole back section for "
+                "2023, and the circuit's single most notorious corner, the "
+                "old Turn 18 (four separate Safety Car-triggering crashes "
+                "from 2008 to 2013, including Kobayashi and Ricciardo), no "
+                "longer exists on this layout at all, replaced by a "
+                "straight. And the streak that defined this race for a "
+                "generation — a Safety Car in every single Singapore GP "
+                "from 2008 through 2023 — broke in 2024 and stayed broken "
+                "in 2025, both run caution-free."),
+        "incidents": [
+            {"year": 2022, "corner": "10", "corner_label": "Turn 10",
+             "who": "Tsunoda crashes into the barrier", "lap": 36, "type": "SC",
+             "point": [320.0, 590.2],
+             "source": "en.wikipedia.org / racefans.net"},
+            {"year": 2022, "corner": "8", "corner_label": "Turn 8",
+             "who": "Albon hits the wall, loses front wing", "lap": 26,
+             "type": "VSC", "point": [431.2, 387.6],
+             "source": "gpfans.com / en.wikipedia.org"},
+            {"year": 2022, "corner": "4", "corner_label": "Turn 4",
+             "who": "Zhou and Latifi collide, both retire", "lap": 7,
+             "type": "SC", "point": [746.8, 127.4],
+             "source": "lightsoutblog.com / en.wikipedia.org"},
+            {"year": 2019, "corner": "1", "corner_label": "Turn 1",
+             "who": "Kvyat and Räikkönen collide, suspension broken", "lap": 50,
+             "type": "SC", "point": [804.1, 40.0],
+             "source": "en.wikipedia.org"},
+            {"year": 2019, "corner": "8", "corner_label": "Turn 8",
+             "who": "Grosjean clips Russell into the wall", "lap": 34,
+             "type": "SC", "point": [431.2, 387.6],
+             "source": "en.wikipedia.org"},
+            {"year": 2018, "corner": "3", "corner_label": "Turn 3",
+             "who": "Pérez and Ocon collide, Ocon into the wall", "lap": 1,
+             "type": "SC", "point": [723.0, 44.2],
+             "source": "racefans.net / autosport.com"},
+            {"year": 2017, "corner": "1", "corner_label": "Turn 1",
+             "who": "Vettel/Räikkönen/Verstappen chain-reaction pileup "
+                    "(Alonso also collected)", "lap": 1, "type": "SC",
+             "point": [804.1, 40.0],
+             "source": "racefans.net / espn.co.uk / motorsport.com"},
+            {"year": 2009, "corner": "14", "corner_label": "Turn 14",
+             "who": "Sutil and Heidfeld collide, Heidfeld eliminated", "lap": 20,
+             "type": "SC", "point": [465.9, 399.6],
+             "source": "lightsoutblog.com / en.wikipedia.org"},
+        ],
+        "incidents_note": ("Restricted to the current 19-turn layout raced "
+                            "since 2023 — Turns 1-15 are numbered "
+                            "identically before and after that change, but "
+                            "the old Turns 16-19 (which looped around the "
+                            "Float at Marina Bay) were removed outright in "
+                            "favour of a straight, and the old Turns 20-23 "
+                            "were renumbered to the new Turns 16-19. That "
+                            "renumbering excludes some real history from "
+                            "this page rather than guessing it onto new "
+                            "geometry: 2008's 'Crashgate' (Piquet Jr's "
+                            "deliberate crash, old Turn 17, lap 15) and four "
+                            "separate Safety Car-triggering crashes at the "
+                            "old Turn 18 alone (Massa/Sutil 2008, Kobayashi/"
+                            "Senna 2010, Karthikeyan 2012, Ricciardo 2013) "
+                            "all happened on sections of track that no "
+                            "longer exist. No incidents are placed on the "
+                            "new Turns 16-19 (old 20-23) — none turned up "
+                            "in public reporting with a confirmed corner "
+                            "number for that section, before or after the "
+                            "renumbering. Several other real cautions were "
+                            "also left off for lacking a named corner in "
+                            "public reporting rather than being guessed: "
+                            "2010 (Liuzzi), 2011 (Schumacher), 2012 "
+                            "(Schumacher/Vergne), 2014 (Pérez/Sutil), 2015 "
+                            "(Massa/Hülkenberg, plus a track-intruder VSC), "
+                            "2016 (Hülkenberg), 2019 (Pérez's oil leak), "
+                            "2022's two engine-failure VSCs (Alonso, Ocon), "
+                            "and 2023's two VSCs (Sargeant debris, Ocon "
+                            "gearbox failure)."),
+    },
+
+    "las vegas": {
+        "name": "Las Vegas Strip Circuit",
+        "location": "Las Vegas, Nevada, USA",
+        "corners": 17,
+        "length_km": 6.201,
+        "view_box": [0, 0, 1000, 1300],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2023 Las Vegas Grand Prix -
+        # Event Notes - Circuit Map V3" PDF (fia.com), corner numbers
+        # isolated by color (blue "Corner Numbers") -- this map has a
+        # second, similarly placed yellow "FIA Marshal Light No." sequence
+        # that sits right next to several real corners, easy to misread as
+        # a corner number. Verified 0 crossings.
+        "points": [
+            ("SF", 831.7, 1163.0), ("1", 970.0, 1046.3), ("2", 917.7, 1005.6),
+            ("3", 816.7, 1100.8), ("4", 763.7, 1001.9), ("5", 761.2, 484.8),
+            ("6", 901.0, 457.6), ("7", 930.1, 350.5), ("8", 922.8, 316.0),
+            ("9", 951.9, 265.1), ("10", 690.4, 230.6), ("11", 588.7, 81.8),
+            ("12", 438.0, 40.0), ("13", 392.6, 437.6), ("14", 320.0, 1196.6),
+            ("15", 370.8, 1218.4), ("16", 425.3, 1253.0), ("17", 806.6, 1225.6),
+        ],
+        "corner_labels": [
+            ["1", 992, 1040], ["2", 917, 985], ["3", 792, 1108], ["4", 733, 1000],
+            ["5", 733, 484], ["6", 927, 462], ["7–8", 958, 330], ["9", 980, 260],
+            ["10", 686, 206], ["11", 588, 58], ["12", 408, 20], ["13", 364, 437],
+            ["14", 290, 1197], ["15", 368, 1244], ["16", 425, 1279], ["17", 806, 1250],
+        ],
+        "start_finish": {"x1": 820.6, "y1": 1153.0, "x2": 842.8, "y2": 1173.0,
+                          "label_x": 857, "label_y": 1186},
+        # Turn 1 is drawn as a highlighted ring on the page -- the one
+        # real repeat this young circuit has produced (2023 and 2025,
+        # both on the opening lap).
+        "highlight_point": [970.0, 1046.3],
+        "headline": "Turn 1 has triggered a caution in 2 of Las Vegas's "
+                     "first 3 races — both times on the opening lap.",
+        "dek": ("Las Vegas has only run three Grands Prix since its "
+                "chaotic 2023 debut, so this is a thin sample and it "
+                "shows: the clearest thing in it is Turn 1, the tight "
+                "right-hander off the pit straight, where a first-lap "
+                "incident brought out a caution in both 2023 (Alonso "
+                "spins and collects Bottas, Pérez and Sainz all tangle "
+                "in the same bottleneck) and 2025 (Lawson, clipped by a "
+                "moment involving Piastri and Russell, is damaged and "
+                "pits under VSC). 2024 ran clean from start to finish — "
+                "no Safety Car, VSC or red flag at all — the opposite "
+                "extreme in the same tiny sample. The other named incident "
+                "each year has been a green-flag racing collision rather "
+                "than a repeat spot: Norris's heavy solo crash at Turn 11 "
+                "in 2023, Verstappen and Russell colliding at Turn 12 "
+                "fighting for the lead later that same race, and Albon "
+                "clipping Hamilton's Ferrari near Turn 14 in 2025."),
+        "incidents": [
+            {"year": 2025, "corner": "14", "corner_label": "Turn 14",
+             "who": "Albon clips Hamilton, front-wing debris", "lap": 16,
+             "type": "VSC", "point": [320.0, 1196.6],
+             "source": "racefans.net / athlonsports.com"},
+            {"year": 2025, "corner": "1", "corner_label": "Turn 1",
+             "who": "Lawson, damaged in Turn 1 collision with Piastri, pits",
+             "lap": 2, "type": "VSC", "point": [970.0, 1046.3],
+             "source": "en.wikipedia.org / nzherald.co.nz"},
+            {"year": 2023, "corner": "12", "corner_label": "Turn 12",
+             "who": "Verstappen/Russell collide fighting for position",
+             "lap": 26, "type": "SC", "point": [438.0, 40.0],
+             "source": "formula1.com / racefans.net / autosport.com"},
+            {"year": 2023, "corner": "11", "corner_label": "Turn 11",
+             "who": "Norris crashes heavily", "lap": 3, "type": "SC",
+             "point": [588.7, 81.8],
+             "source": "formula1.com / autosport.com"},
+            {"year": 2023, "corner": "1", "corner_label": "Turn 1",
+             "who": "Alonso spins, collects Bottas (Pérez/Sainz also tangle)",
+             "lap": 1, "type": "VSC", "point": [970.0, 1046.3],
+             "source": "gpfans.com / racefans.net"},
+        ],
+        "incidents_note": ("Las Vegas has only run three Grands Prix "
+                            "(2023-2025) — 2026's race hasn't happened yet "
+                            "as of this writing — so this is honestly a "
+                            "thin sample, not a settled pattern. 2024 needed "
+                            "no Safety Car, VSC or red flag at all. Left off "
+                            "rather than guessed or miscategorized: the "
+                            "infamous 2023 loose-drain-cover red flag that "
+                            "wrecked Sainz's car happened in first practice, "
+                            "not the race; a second loose-drain-cover red "
+                            "flag (reported near Turn 17) happened in 2025 "
+                            "qualifying, also not the race. Norris's 2023 "
+                            "Turn 11 crash has minor corner ambiguity in "
+                            "sourcing — every account agrees he lost "
+                            "control at Turn 11, but the car came to rest "
+                            "near Turn 12 after a second impact; Turn 11 is "
+                            "used since that's where every source says "
+                            "control was actually lost."),
+    },
 }
 
 
