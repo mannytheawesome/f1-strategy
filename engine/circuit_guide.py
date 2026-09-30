@@ -2458,6 +2458,95 @@ CIRCUITS = {
                             "Car, VSC or red flag, so it's outside this "
                             "page's scope."),
     },
+
+    "lusail": {
+        "name": "Lusail International Circuit",
+        "location": "Lusail, Qatar",
+        "corners": 16,
+        "length_km": 5.419,
+        "view_box": [0, 0, 1000, 570],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Geometry is the current 16-turn Grand Prix layout raced 2023
+        # onward. No FIA circuit-map PDF could be reached this session
+        # (search tooling failures, not a missing document) -- read
+        # instead off Formula 1's own official media circuit-map image
+        # (media.formula1.com, numbered 1-16, sector-colored), gridded at
+        # 3x zoom per corner cluster, each point snapped to where the
+        # colored centerline itself bends, not the label-bubble text
+        # position. Same underlying source reliability as an FIA map
+        # (F1's own official numbered diagram) but disclosed here as a
+        # substitution, not literally the FIA document. Verified 0
+        # crossings, including a specific re-check of the corner-dense
+        # 4-9 double-apex middle sector.
+        "points": [
+            ("SF", 701.4, 525.2), ("1", 387.7, 528.3), ("2", 458.4, 398.1),
+            ("3", 380.2, 319.1), ("4", 320.0, 131.0), ("5", 396.7, 92.7),
+            ("6", 473.5, 228.8), ("7", 538.2, 40.0), ("8", 572.0, 116.0),
+            ("9", 628.4, 170.2), ("10", 613.4, 283.0), ("11", 731.5, 258.9),
+            ("12", 836.8, 70.8), ("13", 912.1, 68.6), ("14", 953.4, 185.2),
+            ("15", 891.8, 292.8), ("16", 970.0, 514.7),
+        ],
+        "corner_labels": [
+            ["1", 373, 545], ["2", 442, 412], ["3", 359, 325], ["4", 325, 108],
+            ["5", 378, 81], ["6", 452, 226], ["7", 529, 20], ["8", 563, 96],
+            ["9", 627, 148], ["10", 602, 302], ["11", 753, 261], ["12", 853, 56],
+            ["13", 931, 57], ["14", 975, 181], ["15", 913, 297], ["16", 987, 528],
+        ],
+        "start_finish": {"x1": 690, "y1": 518, "x2": 713, "y2": 533,
+                          "label_x": 701, "label_y": 505},
+        # Turn 1 is drawn as a highlighted ring -- the only repeat
+        # flashpoint this circuit's short history has produced (2023 and
+        # 2025).
+        "highlight_point": [387.7, 528.3],
+        "headline": "Turn 1 has triggered a Safety Car in 2 of Lusail's "
+                     "4 Grands Prix so far — both times a collision right "
+                     "at the end of the long back straight.",
+        "dek": ("Only two real Safety Cars are cleanly placeable at "
+                "Lusail since its 2021 debut, and both are the same "
+                "corner: Lewis Hamilton speared into George Russell at "
+                "Turn 1 on the opening lap of 2023, breaking his own "
+                "wheel hub and ending his race in the gravel; two years "
+                "later Pierre Gasly ran into the side of Nico Hülkenberg "
+                "as he tried to pass around the outside of the same "
+                "corner, puncturing Hülkenberg's tyre. 2024 actually "
+                "needed three separate Safety Cars — a lap-1 Hülkenberg/"
+                "Colapinto/Ocon crash, a mirror-debris clearance from "
+                "Albon's car, and a late Hülkenberg/Pérez spin — but no "
+                "source ever named a corner for any of the three, so "
+                "none is plotted here. 2021's debut race ran entirely "
+                "green; its own story was four front-left tyre failures "
+                "under one-stop strategies, not a caution."),
+        "incidents": [
+            {"year": 2025, "corner": "1", "corner_label": "Turn 1",
+             "who": "Gasly runs into the side of Hülkenberg, who is "
+                    "passing around the outside", "lap": 7, "type": "SC",
+             "point": [387.7, 528.3],
+             "source": "en.wikipedia.org"},
+            {"year": 2023, "corner": "1", "corner_label": "Turn 1",
+             "who": "Hamilton turns into Russell, breaks his wheel hub, "
+                    "out on the spot", "lap": 1, "type": "SC",
+             "point": [387.7, 528.3],
+             "source": "en.wikipedia.org"},
+        ],
+        "incidents_note": ("Lusail has only run four real Grands Prix — "
+                            "2022 was skipped from the calendar entirely "
+                            "(not a missing data point), and 2021's debut "
+                            "ran the whole race green (four front-left "
+                            "tyre failures under green-flag one-stop "
+                            "strategies, no Safety Car). 2024 is the real "
+                            "gap: it's the one Lusail race with genuine "
+                            "Safety Car drama (three separate "
+                            "deployments), but no source reachable this "
+                            "session named a specific corner for any of "
+                            "the three incidents — left off rather than "
+                            "guessed onto Turn 1 by pattern-matching "
+                            "against 2023 and 2025. Sourcing on both "
+                            "placed incidents also rests on a single "
+                            "outlet (Wikipedia) rather than this file's "
+                            "usual 2+-source standard, disclosed honestly "
+                            "here rather than presented as equally solid "
+                            "as the rest of this page."),
+    },
 }
 
 
