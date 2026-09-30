@@ -33,7 +33,7 @@ BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
                             "briefings")
 os.makedirs(BRIEFING_DIR, exist_ok=True)
 
-NARRATIVE_MODEL = "claude-opus-4-8"
+NARRATIVE_MODEL = "claude-sonnet-5"
 
 NARRATIVE_SYSTEM = """You are the staff writer for an F1 race-strategy analysis site. \
 You write sharp, data-literate briefings in the style of a strategy engineer's debrief: \
