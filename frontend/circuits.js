@@ -16,9 +16,45 @@
     return e;
   }
 
+  // Straight-line segments between corner points read as an artificial,
+  // faceted polygon no matter how many points are used -- real corners are
+  // curved, not pointed, and stroke-linejoin:round only softens the joint at
+  // a fixed radius scaled to stroke-width, not to the corner's real geometry.
+  // Fit a closed centripetal Catmull-Rom spline through the points instead
+  // (converted to cubic Bezier segments) so the track reads as a continuous
+  // curve. Centripetal (alpha=0.5), not the simpler uniform parametrization,
+  // specifically because point spacing here is wildly uneven -- long gaps on
+  // straights, tightly clustered points through a hairpin -- and uniform
+  // Catmull-Rom is prone to overshoot loops/cusps exactly in that situation.
   function pathFromPoints(points) {
-    const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p[1]},${p[2]}`).join(" ") + " Z";
-    return d;
+    const pts = points.map(p => [p[1], p[2]]);
+    const n = pts.length;
+    if (n < 3) {
+      return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0]},${p[1]}`).join(" ") + " Z";
+    }
+
+    const alpha = 0.5;
+    const at = (i) => pts[((i % n) + n) % n];
+    const dist = (a, b) => Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), 1e-6);
+
+    let d = `M ${pts[0][0]},${pts[0][1]}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      const t1 = Math.pow(dist(p0, p1), alpha);
+      const t2 = t1 + Math.pow(dist(p1, p2), alpha);
+      const t3 = t2 + Math.pow(dist(p2, p3), alpha);
+
+      const m1x = (t2 - t1) * ((p1[0] - p0[0]) / t1 - (p2[0] - p0[0]) / t2 + (p2[0] - p1[0]) / (t2 - t1));
+      const m1y = (t2 - t1) * ((p1[1] - p0[1]) / t1 - (p2[1] - p0[1]) / t2 + (p2[1] - p1[1]) / (t2 - t1));
+      const m2x = (t2 - t1) * ((p2[0] - p1[0]) / (t2 - t1) - (p3[0] - p1[0]) / (t3 - t1) + (p3[0] - p2[0]) / (t3 - t2));
+      const m2y = (t2 - t1) * ((p2[1] - p1[1]) / (t2 - t1) - (p3[1] - p1[1]) / (t3 - t1) + (p3[1] - p2[1]) / (t3 - t2));
+
+      const c1x = p1[0] + m1x / 3, c1y = p1[1] + m1y / 3;
+      const c2x = p2[0] - m2x / 3, c2y = p2[1] - m2y / 3;
+
+      d += ` C ${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p2[0]},${p2[1]}`;
+    }
+    return d + " Z";
   }
 
   function buildMap(svg, guide) {
