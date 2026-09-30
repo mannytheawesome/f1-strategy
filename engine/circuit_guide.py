@@ -2132,6 +2132,163 @@ CIRCUITS = {
                             "used since that's where every source says "
                             "control was actually lost."),
     },
+
+    "interlagos": {
+        "name": "Autódromo José Carlos Pace",
+        "location": "São Paulo, Brazil",
+        "corners": 15,
+        "length_km": 4.309,
+        "view_box": [0, 0, 1000, 1100],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2022 Brazilian Grand Prix -
+        # Event Notes - Circuit Map, Pit Lane Drawing and Red Zone" PDF
+        # (fia.com), gridded and read corner-by-corner off the actual
+        # track-edge pixels. The map's blue corner numbers (1-15) were
+        # kept carefully separate from its yellow "FIA Marshal Light
+        # Number" boxes (a different, unrelated sequence). Verified 0
+        # crossings.
+        "points": [
+            ("SF", 364.4, 724.4), ("1", 458.7, 1056.9), ("2", 558.2, 1001.7),
+            ("3", 650.7, 1046.2), ("4", 960.0, 338.7), ("5", 824.9, 292.4),
+            ("6", 540.4, 648.0), ("7", 417.8, 576.9), ("8", 355.6, 424.0),
+            ("9", 504.9, 463.1), ("10", 419.6, 192.9), ("11", 576.0, 278.2),
+            ("12", 736.0, 96.9), ("13", 636.4, 40.0), ("14", 398.2, 93.3),
+            ("15", 320.0, 530.7),
+        ],
+        "corner_labels": [
+            ["1", 468, 1076], ["2", 520, 965], ["3", 672, 1078],
+            ["4", 978, 313], ["5", 845, 258], ["6", 520, 690],
+            ["7", 388, 600], ["8", 322, 438], ["9", 530, 490],
+            ["10", 398, 163], ["11", 606, 300], ["12", 762, 73],
+            ["13", 636, 14], ["14", 383, 58], ["15", 288, 555],
+        ],
+        "start_finish": {"x1": 345, "y1": 719, "x2": 384, "y2": 730,
+                          "label_x": 400, "label_y": 735},
+        # Turn 1 (Senna S) is drawn as a highlighted ring -- the repeat
+        # flashpoint (5 named incidents across 3 of the last 5 years,
+        # twice needing two separate cautions in the very same race).
+        "highlight_point": [458.7, 1056.9],
+        "headline": "Turn 1 (Senna S) has caused a Safety Car, VSC or Red "
+                     "Flag in 3 of the last 5 São Paulo Grands Prix — and "
+                     "twice, in 2021 and again in 2025, it happened not "
+                     "once but twice in the same race.",
+        "dek": ("Twenty real, named incidents across Interlagos' rain-"
+                "soaked history, and Turn 1 is the clearest repeat: "
+                "Tsunoda/Stroll then Schumacher/Räikkönen both in 2021, "
+                "Albon/Magnussen/Hülkenberg's lap-1 pileup in 2023, then "
+                "Bortoleto/Stroll and Piastri/Antonelli/Leclerc both in "
+                "2025. Turn 2, the Senna S exit, has its own spread across "
+                "eras (2008, 2010, 2017). Curva do Sol (Turn 3) triggered "
+                "two separate Safety Cars in the same 2003 race, and Turn 8 "
+                "(Bico de Pato/Pinheirinho) has caught out a Ferrari or an "
+                "Alpine-family car twice in three years — Ricciardo/"
+                "Magnussen in 2022, Sainz in 2024. The pit straight itself "
+                "is the other repeat offender, mostly in the rain: 1993 "
+                "(one of the first Safety Cars of F1's modern era), 2003, "
+                "2012 and three separate times in 2016's chaos-soaked "
+                "restart-after-restart race."),
+        "incidents": [
+            {"year": 2025, "corner": "1", "corner_label": "Turn 1 (Senna S)",
+             "who": "Piastri hits Antonelli, who ricochets into Leclerc",
+             "lap": 8, "type": "VSC", "point": [458.7, 1056.9],
+             "source": "formula1.com"},
+            {"year": 2025, "corner": "1", "corner_label": "Turn 1 (Senna S)",
+             "who": "Bortoleto crashes after contact with Stroll", "lap": 4,
+             "type": "SC", "point": [458.7, 1056.9],
+             "source": "formula1.com / en.wikipedia.org"},
+            {"year": 2024, "corner": "8", "corner_label": "Turn 8",
+             "who": "Sainz spins into the wall, aquaplaning", "lap": 39,
+             "type": "SC", "point": [355.6, 424.0],
+             "source": "motorsportweek.com"},
+            {"year": 2024, "corner": "1", "corner_label": "Turn 1",
+             "who": "Hülkenberg spins", "lap": 28, "type": "VSC",
+             "point": [458.7, 1056.9], "source": "en.wikipedia.org"},
+            {"year": 2023, "corner": "1", "corner_label": "Turn 1",
+             "who": "Albon, Magnussen and Hülkenberg collide, tyre barrier "
+                    "damaged", "lap": 1, "type": "REDFLAG",
+             "point": [458.7, 1056.9],
+             "source": "formula1.com / motorsport.com"},
+            {"year": 2022, "corner": "8", "corner_label": "Turn 8",
+             "who": "Ricciardo tips Magnussen into a spin, both retire",
+             "lap": 1, "type": "SC", "point": [355.6, 424.0],
+             "source": "formula1.com"},
+            {"year": 2021, "corner": "1", "corner_label": "Turn 1",
+             "who": "Schumacher hits Räikkönen's rear tyre on the restart",
+             "lap": 12, "type": "VSC", "point": [458.7, 1056.9],
+             "source": "formula1.com"},
+            {"year": 2021, "corner": "1", "corner_label": "Turn 1",
+             "who": "Tsunoda and Stroll collide, debris SC", "lap": 6,
+             "type": "SC", "point": [458.7, 1056.9], "source": "formula1.com"},
+            {"year": 2019, "corner": "straight",
+             "corner_label": "Back straight (Reta Oposta)",
+             "who": "Leclerc and Vettel, Ferrari teammates, collide fighting "
+                    "each other", "lap": 66, "type": "SC",
+             "point": [774.4, 763.2], "source": "en.wikipedia.org"},
+            {"year": 2017, "corner": "2", "corner_label": "Turn 2 (Senna S)",
+             "who": "Vandoorne hits Ricciardo; Grosjean and Ocon also "
+                    "collide", "lap": 1, "type": "SC",
+             "point": [558.2, 1001.7], "source": "gtplanet.net"},
+            {"year": 2016, "corner": "straight", "corner_label": "Pit straight",
+             "who": "Massa crashes near the pit entry", "lap": 49,
+             "type": "SC", "point": [364.4, 724.4],
+             "source": "en.wikipedia.org / lightsoutblog.com"},
+            {"year": 2016, "corner": "straight", "corner_label": "Pit straight",
+             "who": "Räikkönen spins and hits the wall in the rain",
+             "lap": 19, "type": "REDFLAG", "point": [364.4, 724.4],
+             "source": "en.wikipedia.org"},
+            {"year": 2016, "corner": "straight", "corner_label": "Pit straight",
+             "who": "Ericsson crashes", "lap": 13, "type": "SC",
+             "point": [364.4, 724.4], "source": "en.wikipedia.org"},
+            {"year": 2012, "corner": "straight",
+             "corner_label": "Start/finish straight",
+             "who": "di Resta crashes; race finishes behind the Safety Car",
+             "lap": 68, "type": "SC", "point": [364.4, 724.4],
+             "source": "en.wikipedia.org"},
+            {"year": 2010, "corner": "2", "corner_label": "Turn 2 (Senna S)",
+             "who": "Liuzzi's suspension fails, hits the barrier", "lap": 51,
+             "type": "SC", "point": [558.2, 1001.7],
+             "source": "en.wikipedia.org"},
+            {"year": 2008, "corner": "2", "corner_label": "Turn 2 (Senna S)",
+             "who": "Rosberg hits Coulthard into Nakajima; Piquet crashes at "
+                    "the next corner", "lap": 1, "type": "SC",
+             "point": [558.2, 1001.7], "source": "en.wikipedia.org"},
+            {"year": 2003, "corner": "3", "corner_label": "Turn 3 (Curva do Sol)",
+             "who": "Button crashes heavily into the barrier", "lap": 33,
+             "type": "SC", "point": [650.7, 1046.2],
+             "source": "en.wikipedia.org"},
+            {"year": 2003, "corner": "3", "corner_label": "Turn 3 (Curva do Sol)",
+             "who": "Schumacher aquaplanes, narrowly avoiding the recovery "
+                    "crane", "lap": 27, "type": "SC",
+             "point": [650.7, 1046.2], "source": "en.wikipedia.org"},
+            {"year": 2003, "corner": "straight",
+             "corner_label": "Start/finish straight",
+             "who": "Firman's suspension fails, collects Panis at ~190mph",
+             "lap": 18, "type": "SC", "point": [364.4, 724.4],
+             "source": "en.wikipedia.org"},
+            {"year": 1993, "corner": "straight",
+             "corner_label": "Start/finish straight",
+             "who": "Katayama and Suzuki crash in the rain -- one of the "
+                    "first Safety Car deployments of F1's modern era",
+             "lap": 27, "type": "SC", "point": [364.4, 724.4],
+             "source": "en.wikipedia.org"},
+        ],
+        "incidents_note": ("This isn't every Brazilian/São Paulo GP caution "
+                            "on record, only the ones public reporting let "
+                            "us confirm at a specific corner. Left off "
+                            "rather than guessed: 2024's Colapinto red-flag "
+                            "crash, where one source says turns 13-14 but "
+                            "every other outlet describes it as happening "
+                            "climbing the hill onto the start-finish "
+                            "straight (Turn 15) — a real conflict, not "
+                            "just vagueness. Also excluded for lacking a "
+                            "corner in any source: 2021's lap-30 Stroll "
+                            "VSC, 2019's lap-52 Bottas SC, 2012's lap-23 "
+                            "debris SC, and 2022's lap-53 Norris VSC/SC "
+                            "(one source says Turn 10, nothing else "
+                            "corroborates it). Sprint-only incidents (2024, "
+                            "2025) are excluded, matching the convention "
+                            "used elsewhere in this file."),
+    },
 }
 
 
