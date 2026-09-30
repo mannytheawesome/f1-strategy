@@ -2371,6 +2371,93 @@ CIRCUITS = {
                             "this dataset (matching every other circuit's "
                             "convention here) is race-only."),
     },
+
+    "yas marina circuit": {
+        "name": "Yas Marina Circuit",
+        "location": "Abu Dhabi, United Arab Emirates",
+        "corners": 16,
+        "length_km": 5.281,
+        "view_box": [0, 0, 1000, 1401],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Geometry is the CURRENT layout only (raced 2021 onward, post the
+        # reconfiguration that merged the old Turns 4-6 into a single Turn
+        # 5 hairpin, replaced the old Turns 11-14 marina/hotel section
+        # with a sweeping banked curve, and opened up the old Turns
+        # 18-20) -- read directly off the official FIA "2025 Abu Dhabi
+        # Grand Prix - Event Notes - Circuit Map" PDF, using the PDF's own
+        # vector text coordinates for each corner-number label (not a
+        # pixel-grid guess), cross-checked against a gridded high-res
+        # render. Verified 0 crossings.
+        "points": [
+            ("SF", 547.5, 765.1), ("1", 851.1, 751.0), ("2", 842.1, 555.2),
+            ("3", 706.4, 467.0), ("4", 697.0, 319.1), ("5", 662.4, 40.0),
+            ("6", 320.0, 929.2), ("7", 399.1, 910.8), ("8", 463.1, 1066.8),
+            ("9", 960.0, 1361.0), ("10", 763.8, 1244.4), ("11", 678.3, 1186.8),
+            ("12", 660.2, 1114.6), ("13", 713.3, 1061.6), ("14", 723.5, 964.2),
+            ("15", 511.8, 972.7), ("16", 405.9, 823.1),
+        ],
+        "corner_labels": [
+            ["1", 874, 739], ["2", 857, 534], ["3", 711, 441], ["4", 700, 293],
+            ["5", 663, 14], ["6", 295, 935], ["7", 374, 917], ["8", 446, 1087],
+            ["9", 974, 1383], ["10", 772, 1269], ["11", 681, 1213],
+            ["12", 662, 1141], ["13", 722, 1086], ["14", 739, 985],
+            ["15", 493, 990], ["16", 380, 820],
+        ],
+        "start_finish": {"x1": 544, "y1": 745, "x2": 551, "y2": 785,
+                          "label_x": 558, "label_y": 792},
+        # No highlight_point -- there's no genuine repeat-corner pattern in
+        # the verified data (only one placeable race incident exists on
+        # the current layout). Forcing a highlight ring on a single-
+        # incident corner would overstate the pattern.
+        "headline": "In five seasons on the current layout, Yas Marina "
+                     "has produced exactly one Safety Car — and it's the "
+                     "most consequential one in F1 history.",
+        "dek": ("The 2021 reconfiguration remade the second half of the "
+                "lap and, on the record since, also made this one of the "
+                "hardest places on the calendar to bring out a Safety "
+                "Car: 2022, 2023, 2024 and 2025 all ran start-to-finish "
+                "without one. The exception is Turn 14, lap 53 of 2021 — "
+                "Nicholas Latifi, fighting Mick Schumacher for 15th "
+                "place, crashed there with dirty tyres after already "
+                "running wide at Turn 9. The Safety Car that followed set "
+                "up the late restart and Max Verstappen's title-deciding "
+                "pass on Lewis Hamilton on the final lap. No other corner "
+                "at Yas Marina has a second name attached to it since the "
+                "layout changed."),
+        "incidents": [
+            {"year": 2021, "corner": "14", "corner_label": "Turn 14",
+             "who": "Latifi crashes fighting Schumacher for 15th, dirty "
+                    "tyres after running wide at Turn 9", "lap": 53,
+             "type": "SC", "point": [723.5, 964.2],
+             "source": "en.wikipedia.org"},
+        ],
+        "incidents_note": ("Restricted to the current 16-turn layout "
+                            "raced since 2021 — the old 21-turn Yas "
+                            "Marina (a separate Turns 4/5/6 sequence "
+                            "merged into today's single Turn 5 hairpin, "
+                            "and an entirely different marina/hotel "
+                            "section in place of today's Turns 11-14) "
+                            "doesn't map onto this geometry, so no "
+                            "earlier incidents are placed here. Every "
+                            "other 2021-2025 Abu Dhabi GP race (2022, "
+                            "2023, 2024, 2025) ran completely "
+                            "caution-free — checked directly against "
+                            "each year's race report, not assumed. Three "
+                            "other real, named incidents were left off: "
+                            "Carlos Sainz's heavy Turn 3 crash red-flagged "
+                            "FP2 in 2023 and Lewis Hamilton's Turn 9 crash "
+                            "red-flagged FP3 in 2025 both happened in "
+                            "practice, not the race; Antonio Giovinazzi's "
+                            "VSC-triggering retirement on lap 35 of 2021 "
+                            "is real but reporting only places it "
+                            "'alongside the track' with no corner given, "
+                            "so it was left off rather than guessed. Kimi "
+                            "Räikkönen's career-ending crash at Turn 6 "
+                            "(lap 26, 2021) is also real and corner-"
+                            "specific but didn't itself trigger a Safety "
+                            "Car, VSC or red flag, so it's outside this "
+                            "page's scope."),
+    },
 }
 
 
