@@ -1727,6 +1727,103 @@ CIRCUITS = {
                             "Safety Car-triggering crash was reported only as "
                             "happening 'in the spray,' with no corner named."),
     },
+
+    "austin": {
+        "name": "Circuit of the Americas",
+        "location": "Austin, Texas, United States",
+        "corners": 20,
+        "length_km": 5.513,
+        "view_box": [0, 0, 1000, 1000],
+        # (label, x, y) -- "SF" is start/finish, others are corner numbers.
+        # Read directly off the official FIA "2022 United States Grand Prix
+        # - Event Notes - Circuit Map v2" PDF, gridded and verified against
+        # actual track-fill pixels, not label text -- this map's yellow
+        # boxes are a separate "FIA Marshal Light No." sequence that
+        # reuses the same digits as the real (blue) corner numbers and
+        # sits right next to them in several places. The Turn 13-18
+        # "snake" (a tight, alternating-direction complex distinct from
+        # the Turn 3-9 esses) was traced pixel-by-pixel along the track
+        # fill itself for exactly this reason. Verified 0 crossings.
+        "points": [
+            ("SF", 412.5, 941.5), ("1", 822.8, 929.9), ("2", 701.4, 836.0),
+            ("3", 726.0, 688.7), ("4", 700.0, 633.8), ("5", 728.8, 570.2),
+            ("6", 695.6, 509.5), ("7", 822.8, 454.6), ("8", 834.3, 344.8),
+            ("9", 889.2, 353.5), ("10", 949.9, 261.0), ("11", 960.0, 40.0),
+            ("12", 525.1, 547.1), ("13", 614.7, 613.5), ("14", 568.5, 645.3),
+            ("15", 490.5, 633.8), ("16", 585.8, 685.8), ("17", 608.9, 740.7),
+            ("18", 539.6, 807.1), ("19", 405.2, 784.0), ("20", 320.0, 931.4),
+        ],
+        "corner_labels": [
+            ["1", 835, 945], ["2", 670, 846], ["3", 742, 688], ["4", 668, 634],
+            ["5", 746, 570], ["6", 663, 505], ["7", 840, 450], ["8", 826, 325],
+            ["9", 905, 358], ["10", 966, 258], ["11", 975, 30], ["12", 494, 545],
+            ["13", 632, 600], ["14", 572, 622], ["15", 458, 633], ["16", 604, 690],
+            ["17", 626, 745], ["18", 515, 822], ["19", 372, 780], ["20", 288, 918],
+        ],
+        "start_finish": {"x1": 397, "y1": 923, "x2": 428, "y2": 960,
+                          "label_x": 433, "label_y": 968},
+        # Turn 15 is drawn as a highlighted ring on the page -- the repeat
+        # flashpoint spanning over a decade (2014, 2025).
+        "highlight_point": [490.5, 633.8],
+        "headline": "Turn 15 has caused a real, named Safety Car or VSC "
+                     "eleven years apart — 2014 and 2025.",
+        "dek": ("Six real, named incidents since COTA's 2013 sophomore "
+                "race, and the clearest repeat is Turn 15 — both times a "
+                "driver misjudging a pass into the tightening left-hander: "
+                "Sergio Pérez hit the back of Räikkönen and speared into "
+                "Sutil there on the opening lap of 2014, and Carlos Sainz "
+                "collided with Antonelli lunging for the same corner in "
+                "2025. The other repeat is Turn 19, the fast downhill left "
+                "before the final corner — Bottas (2022) and Hamilton "
+                "(2024) were both beached in the gravel there by the same "
+                "reported cause, a sudden gust of wind. 2022 is also the "
+                "only USGP to need two separate Safety Cars in one race: "
+                "Bottas's spin at Turn 19, then Alonso launched airborne "
+                "into Stroll at Turn 12 four laps later."),
+        "incidents": [
+            {"year": 2025, "corner": "15", "corner_label": "Turn 15",
+             "who": "Sainz collides with Antonelli", "lap": 7, "type": "VSC",
+             "point": [490.5, 633.8],
+             "source": "motorsport.com / racingnews365.com"},
+            {"year": 2024, "corner": "19", "corner_label": "Turn 19",
+             "who": "Hamilton spins into the gravel (wind gust)", "lap": 2,
+             "type": "SC", "point": [405.2, 784.0],
+             "source": "planetf1.com / racefans.net"},
+            {"year": 2022, "corner": "19", "corner_label": "Turn 19",
+             "who": "Bottas spins into the gravel (wind gust)", "lap": 18,
+             "type": "SC", "point": [405.2, 784.0],
+             "source": "thecheckeredflag.co.uk / racefans.net"},
+            {"year": 2022, "corner": "12", "corner_label": "Turn 12",
+             "who": "Alonso launched airborne into Stroll", "lap": 22,
+             "type": "SC", "point": [525.1, 547.1],
+             "source": "planetf1.com / motorsportmagazine.com"},
+            {"year": 2014, "corner": "15", "corner_label": "Turn 15",
+             "who": "Pérez hits Räikkönen, collects Sutil", "lap": 1,
+             "type": "SC", "point": [490.5, 633.8],
+             "source": "motorsportweek.com"},
+            {"year": 2013, "corner": "straight", "corner_label": "Back straight",
+             "who": "Sutil/Maldonado collide", "lap": 1, "type": "SC",
+             "point": [742.5, 293.6],
+             "source": "formula1.com / crash.net"},
+        ],
+        "incidents_note": ("Restricted to the Grand Prix itself -- the "
+                            "2023-2025 Sprint races' own Safety Cars are a "
+                            "separate session and excluded, the same "
+                            "convention this file uses elsewhere. Also left "
+                            "off rather than guessed: 2015's Ericsson "
+                            "stoppage is real but sources conflict on the "
+                            "exact corner ('after Turn 10' vs 'after Turn "
+                            "11'); 2016's Verstappen and 2018's Ricciardo "
+                            "retirements each triggered a VSC but were "
+                            "reported only as 'trackside' with no corner "
+                            "given; a 2021 VSC for track debris named "
+                            "neither a driver nor a corner; Vettel's 2019 "
+                            "Turn 9 suspension failure is well documented "
+                            "but did not itself trigger a Safety Car or VSC "
+                            "— he coasted off safely. The 2012 inaugural "
+                            "race could not be confirmed to have had a "
+                            "Safety Car at all from available sourcing."),
+    },
 }
 
 
