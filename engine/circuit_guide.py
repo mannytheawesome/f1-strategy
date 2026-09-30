@@ -2550,9 +2550,18 @@ CIRCUITS = {
 }
 
 
+# OpenF1 mislabels the second 2026 "Bahrain Grand Prix" (round 18) with
+# circuit_short_name "Kuala Lumpur" -- it's the same real Sakhir circuit,
+# not a distinct venue (see engine/predictor.py's SC_RATE_CIRCUIT comment),
+# so it resolves to the existing "sakhir" entry rather than getting its own.
+ALIASES = {"kuala lumpur": "sakhir"}
+
+
 def get_circuit_guide(circuit: str) -> dict | None:
     """Static guide data for a circuit, or None if we don't have one yet.
     Deliberately a lookup, not a fallback/best-guess -- a circuit not in
     CIRCUITS means nobody has done the (manual, source-checked) research
     for it yet, not that it should render with placeholder data."""
-    return CIRCUITS.get((circuit or "").lower())
+    key = (circuit or "").lower()
+    key = ALIASES.get(key, key)
+    return CIRCUITS.get(key)

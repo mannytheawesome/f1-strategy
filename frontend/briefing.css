@@ -286,6 +286,14 @@
       transition: background 0.15s ease;
     }
     .btnrow button:hover { background: #333; }
+    .btnrow a.btn-link {
+      background: #222; color: var(--text); border: 1px solid var(--border);
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      padding: 6px 14px; border-radius: 5px; cursor: pointer;
+      text-decoration: none; display: inline-flex; align-items: center;
+      transition: background 0.15s ease;
+    }
+    .btnrow a.btn-link:hover { background: #333; }
     #whatif-result { margin-top: 12px; }
     .verdict { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
     .cmp-table td, .cmp-table th { padding: 3px 10px; font-size: 11px; text-align: left; }

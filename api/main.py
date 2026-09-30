@@ -126,9 +126,9 @@ def admin_html_page():
 
 @app.get("/circuits.html")
 def circuits_page():
-    # Not linked from the site's own nav yet -- standalone, reachable by
-    # direct URL only (e.g. /circuits.html?circuit=baku), while the
-    # per-circuit dataset in engine/circuit_guide.py is still just Baku.
+    # Not linked from the site's own nav -- reachable via a "Circuit Guide"
+    # link on each pre-race briefing (frontend/briefing.js) and by direct
+    # URL (e.g. /circuits.html?circuit=baku).
     return _serve_page("circuits.html")
 
 

@@ -745,7 +745,10 @@
       <div class="meta-row"><span>built from: ${d.sources.map(s => s.name).join(' · ')}</span></div>
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
       ${toggleHTML('prerace')}
-      <div class="btnrow" style="margin-top:8px"><button id="btn-customize">⚙ CUSTOMIZE LAYOUT</button></div>`;
+      <div class="btnrow" style="margin-top:8px">
+        <button id="btn-customize">⚙ CUSTOMIZE LAYOUT</button>
+        <a class="btn-link" href="/circuits.html?circuit=${encodeURIComponent((m.circuit || '').toLowerCase())}" target="_blank" rel="noopener">🏁 CIRCUIT GUIDE</a>
+      </div>`;
     root.appendChild(head);
     wireToggle(head);
     head.querySelector('#btn-customize').onclick = () => {
