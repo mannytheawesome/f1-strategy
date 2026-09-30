@@ -16,6 +16,67 @@
     return e;
   }
 
+  // A true hairpin (Monaco's Fairmont/Grand Hotel hairpin is the extreme
+  // case, but every circuit has at least one tight corner) reverses
+  // direction by upwards of 150 degrees in a small physical space. Fed
+  // straight into the Catmull-Rom spline below, a single sparse vertex at
+  // that kind of angle renders as a narrow pointed "V" wedge, not a rounded
+  // loop -- there simply isn't enough point density there for the spline to
+  // show the real curvature, no matter how the tangents are fit. Detour
+  // sharp vertices (deflection angle past ANGLE_THRESHOLD_DEG) through a
+  // real circular arc, tangent to both adjacent edges, and feed the spline
+  // several sampled points along that arc instead of the one sharp vertex --
+  // this is the standard "rounded polygon corner" construction (the same
+  // idea as a rounded-rect corner), just applied per-vertex at whatever
+  // angle that vertex actually turns through. Gentle corners (most of any
+  // track) are far under the threshold and pass through untouched.
+  function roundSharpCorners(points) {
+    const ANGLE_THRESHOLD_DEG = 100;
+    const EDGE_FRACTION = 0.35; // cap tangent distance to this fraction of the shorter adjacent edge
+    const ARC_SAMPLES = 3;
+    const n = points.length;
+    const result = [];
+    for (let i = 0; i < n; i++) {
+      const prev = points[(i - 1 + n) % n], curr = points[i], next = points[(i + 1) % n];
+      const ax = prev[1], ay = prev[2], bx = curr[1], by = curr[2], cx = next[1], cy = next[2];
+      const v1x = bx - ax, v1y = by - ay, v2x = cx - bx, v2y = cy - by;
+      const len1 = Math.hypot(v1x, v1y), len2 = Math.hypot(v2x, v2y);
+      const dot = (v1x * v2x + v1y * v2y) / (len1 * len2 || 1);
+      const deflectionDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI;
+      if (deflectionDeg < ANGLE_THRESHOLD_DEG) { result.push(curr); continue; }
+
+      // interior angle at the vertex, between (vertex->prev) and (vertex->next)
+      const uax = ax - bx, uay = ay - by, wcx = cx - bx, wcy = cy - by;
+      const ulen = Math.hypot(uax, uay), wlen = Math.hypot(wcx, wcy);
+      const cosPhi = (uax * wcx + uay * wcy) / (ulen * wlen || 1);
+      const phi = Math.acos(Math.max(-1, Math.min(1, cosPhi)));
+      if (phi < 1e-3) { result.push(curr); continue; } // degenerate (near-180 straight-back), leave as-is
+
+      const t = EDGE_FRACTION * Math.min(len1, len2);
+      const r = t * Math.tan(phi / 2);
+      const uax_n = uax / ulen, uay_n = uay / ulen, wcx_n = wcx / wlen, wcy_n = wcy / wlen;
+      const T1x = bx + uax_n * t, T1y = by + uay_n * t;
+      const T2x = bx + wcx_n * t, T2y = by + wcy_n * t;
+      let bisx = uax_n + wcx_n, bisy = uay_n + wcy_n;
+      const bisLen = Math.hypot(bisx, bisy) || 1;
+      bisx /= bisLen; bisy /= bisLen;
+      const centerDist = r / Math.sin(phi / 2);
+      const Ox = bx + bisx * centerDist, Oy = by + bisy * centerDist;
+      const a1 = Math.atan2(T1y - Oy, T1x - Ox), a2 = Math.atan2(T2y - Oy, T2x - Ox);
+      let delta = a2 - a1;
+      while (delta > Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+
+      result.push([curr[0], T1x, T1y]);
+      for (let s = 1; s <= ARC_SAMPLES; s++) {
+        const a = a1 + delta * (s / (ARC_SAMPLES + 1));
+        result.push([curr[0], Ox + r * Math.cos(a), Oy + r * Math.sin(a)]);
+      }
+      result.push([curr[0], T2x, T2y]);
+    }
+    return result;
+  }
+
   // Straight-line segments between corner points read as an artificial,
   // faceted polygon no matter how many points are used -- real corners are
   // curved, not pointed, and stroke-linejoin:round only softens the joint at
@@ -26,12 +87,13 @@
   // specifically because point spacing here is wildly uneven -- long gaps on
   // straights, tightly clustered points through a hairpin -- and uniform
   // Catmull-Rom is prone to overshoot loops/cusps exactly in that situation.
-  function pathFromPoints(points) {
+  function pathFromPoints(rawPoints) {
+    if (rawPoints.length < 3) {
+      return rawPoints.map((p, i) => `${i === 0 ? "M" : "L"} ${p[1]},${p[2]}`).join(" ") + " Z";
+    }
+    const points = roundSharpCorners(rawPoints);
     const pts = points.map(p => [p[1], p[2]]);
     const n = pts.length;
-    if (n < 3) {
-      return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0]},${p[1]}`).join(" ") + " Z";
-    }
 
     const alpha = 0.5;
     const at = (i) => pts[((i % n) + n) % n];
