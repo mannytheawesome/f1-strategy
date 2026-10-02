@@ -2615,6 +2615,38 @@ it.
   regression, and the keyboard-activation behavior itself was verified for
   real in-browser as described above, not just asserted.
 
+### Qualifying simulation pace chart, 2026-10-02
+User request (inspired by a similar chart seen elsewhere): added "Qualifying
+simulation pace — by team" alongside the existing "Race simulation pace —
+by team" card on the pre-race briefing. New `engine.prerace._quali_sim_pace()`
+mirrors `_long_run_pace`'s shape (both feed the same `_team_pace` helper) but
+reads FP **hotlap** stints (1-2 timed laps, `fp_analysis.FPStint.
+classification == "HOTLAP"`) instead of 6+-lap long runs, and takes each
+driver's single best lap across practice sessions rather than a weighted
+median — qualifying is about your fastest lap, not an average pace level.
+Built from practice sessions only, same as `_long_run_pace` — deliberately
+never reads the real Qualifying session, so it's a genuine pre-qualifying
+prediction, checkable against the real result once it happens, not a
+readout of it. New pack fields `quali_sim_pace`/`quali_team_pace`/
+`quali_sim_data_incomplete`. `PACK_VERSION` 34 -> 35. `frontend/briefing.js`'s
+`teamPaceCard()` now takes a `'race'|'quali'` preset instead of hardcoding
+race-pace copy, so both charts share one renderer.
+
+Backtested immediately (`backtest_quali_sim_pace.py`, ground truth is
+`pack["grid"]`, already built from the real Qualifying session for any
+completed weekend — no separate fetch needed). Across 14 evaluable 2026
+qualifying sessions (3 skipped — 2 with no FP hotlap data that weekend, 1
+OpenF1 429): pole-team hit rate 43% (6/14), pole-driver hit rate 29%
+(4/14), but team-level rank correlation (Spearman) averaged 0.806 and
+driver-level 0.714 — the model is much better at ordering the whole field
+correctly than at calling the exact fastest team/driver. Checked the misses
+before concluding anything, since the first read looked like a specific
+blind spot: Mercedes took real pole in 11 of the 14 races this season (a
+genuinely dominant qualifying run), and the model does lean Mercedes most
+often too (predicted 8/14), correctly catching 6 of Mercedes' 11 real poles
+— not a team-specific miss, just the expected difficulty of picking an
+exact winner from FP-only data when one team is this dominant.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
