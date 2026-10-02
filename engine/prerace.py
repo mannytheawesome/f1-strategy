@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 34   # 34: deg-curve baseline enforces SOFT<=MEDIUM<=HARD ordering, not just tolerance
+PACK_VERSION = 35   # 35: adds quali_sim_pace/quali_team_pace -- FP-hotlap-based qualifying pace prediction
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -233,6 +233,74 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
              "race_pace_only": not any(sess.lower().startswith("practice")
                                        for sess in used_sessions.get(n, ()))}
             for n, m in medians.items()]
+    rows.sort(key=lambda r: r["pace_delta"])
+    for i, r in enumerate(rows, 1):
+        r["pace_rank"] = i
+    return rows
+
+
+def _quali_sim_pace(source_sessions: list[dict],
+                    grid_acronyms: set[str] | None = None,
+                    fetch_failures: list[str] | None = None) -> list[dict]:
+    """Best-lap ('qualifying simulation') pace per driver from FP hotlap
+    stints (1-2 timed laps -- fp_analysis.FPStint.classification == "HOTLAP"),
+    the practice signal closest to a genuine qualifying effort. Mirrors
+    _long_run_pace's output shape (both feed the same _team_pace helper) but
+    reads hotlaps instead of 6+-lap long runs, and takes each driver's single
+    BEST lap across all practice sessions rather than a weighted median --
+    qualifying is about your fastest lap, not an average pace level, so
+    _long_run_pace's median-of-corrected-laps approach doesn't transfer here.
+
+    Deliberately built from practice sessions only, same as _long_run_pace --
+    this is meant to be a genuine pre-qualifying PREDICTION, checkable
+    against the real session once it happens, not a readout of the real
+    result. No fuel/age correction either: hotlaps are already low-fuel,
+    first-flying-lap efforts, so the correction _long_run_pace needs for a
+    6+-lap stint doesn't apply to a 1-2 lap one."""
+    from engine.fp_analysis import analyse_fp
+
+    best_by_driver: dict[int, float] = {}
+    attempts_by_driver: dict[int, int] = {}
+    names: dict[int, str] = {}
+    for s in source_sessions:
+        stype = s.get("session_type", "").lower()
+        name = s.get("session_name", "")
+        if stype != "practice":
+            continue
+        try:
+            laps = get_laps(s["session_key"], HIST_TTL)
+            stints = get_stints(s["session_key"], HIST_TTL)
+            drivers = get_drivers(s["session_key"], HIST_TTL)
+        except Exception:
+            if fetch_failures is not None:
+                fetch_failures.append(name or str(s.get("session_key")))
+            continue
+        for summary in analyse_fp(laps, stints, drivers, session_name=name):
+            hotlap_times = [cs.best_hotlap for cs in summary.compound_summaries
+                            if cs.best_hotlap]
+            if not hotlap_times:
+                continue
+            best = min(hotlap_times)
+            n = summary.driver_number
+            if n not in best_by_driver or best < best_by_driver[n]:
+                best_by_driver[n] = best
+            attempts_by_driver[n] = attempts_by_driver.get(n, 0) + sum(
+                len(cs.hotlaps) for cs in summary.compound_summaries)
+            names[n] = summary.acronym
+
+    eligible = {n: t for n, t in best_by_driver.items()
+                if grid_acronyms is None or names.get(n) in grid_acronyms}
+    if not eligible:
+        return []
+    field = statistics.median(eligible.values())
+    rows = [{"driver_number": n, "acronym": names.get(n, str(n)),
+             "pace_delta": round(t - field, 3), "best_lap": round(t, 3),
+             "attempts": attempts_by_driver.get(n, 0),
+             # a single hotlap attempt has nothing to cross-check against --
+             # one bad lap (traffic, a yellow, an early lift) is the whole
+             # sample.
+             "low_confidence": attempts_by_driver.get(n, 0) < 2}
+            for n, t in eligible.items()]
     rows.sort(key=lambda r: r["pace_delta"])
     for i, r in enumerate(rows, 1):
         r["pace_rank"] = i
@@ -1468,6 +1536,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     pace_rows = _long_run_pace(sources, curves,
                                grid_acronyms={g["acronym"] for g in grid},
                                fetch_failures=pace_fetch_failures)
+    quali_sim_fetch_failures: list[str] = []
+    quali_sim_rows = _quali_sim_pace(sources,
+                                     grid_acronyms={g["acronym"] for g in grid},
+                                     fetch_failures=quali_sim_fetch_failures)
+    quali_sim_field_baseline = (statistics.median(r["best_lap"] for r in quali_sim_rows)
+                                if quali_sim_rows else 0.0)
     grid_pos_by_acr = {g["acronym"]: g["position"] for g in grid}
     for r in pace_rows:
         gp = grid_pos_by_acr.get(r["acronym"])
@@ -1532,6 +1606,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         # difference from a clean one. None when nothing failed.
         "pace_data_incomplete": pace_fetch_failures or None,
         "team_pace": _team_pace(pace_rows, grid, field_baseline),
+        "quali_sim_pace": quali_sim_rows,
+        # Same transparency pattern as pace_data_incomplete above, kept as a
+        # separate field since quali-sim pace reads a different set of
+        # sessions/stints (hotlaps, not long runs) and can fail independently.
+        "quali_sim_data_incomplete": quali_sim_fetch_failures or None,
+        "quali_team_pace": _team_pace(quali_sim_rows, grid, quali_sim_field_baseline),
         "long_run_tables": _long_run_tables(sources),
         "quali_sectors": sectors,
         "projection": projection,

@@ -564,12 +564,34 @@
     return `<div class="stintbar">${inner}</div>`;
   }
 
-  // ── race simulation pace — by team ───────────────────────────────────────
-  function teamPaceCard(teamPace) {
+  // ── team pace charts — race simulation (long runs) and qualifying
+  // simulation (FP hotlaps) share this renderer; only the wording and the
+  // meaning of the low_confidence/race_pace_only flags differ between them.
+  const TEAM_PACE_PRESETS = {
+    race: {
+      title: 'Race simulation pace — by team',
+      subtitle: "fuel- &amp; age-corrected long-run pace, quicker of each team's two cars · gap to the fastest team · ⚠ = low-confidence sample, hover for why",
+      emptyMessage: 'Not enough long-run data yet.',
+      noDataLabel: 'no long-run data yet',
+      lowConfidenceTitle: 'Thin sample — a couple of outlier laps could swing this several seconds',
+      secondaryWarnTitle: 'No clean FP long run for either driver — built entirely from Sprint Race laps (traffic/strategy, not a pure pace read)',
+    },
+    quali: {
+      title: 'Qualifying simulation pace — by team',
+      subtitle: "best FP hotlap (1-2 timed laps), quicker of each team's two cars · gap to the fastest team · a pre-qualifying prediction, not the real result · ⚠ = low-confidence sample, hover for why",
+      emptyMessage: 'Not enough hotlap data yet.',
+      noDataLabel: 'no hotlap data yet',
+      lowConfidenceTitle: 'Only one hotlap attempt on record — a single lap (traffic, a yellow flag, an early lift) could swing this several tenths',
+      secondaryWarnTitle: '',
+    },
+  };
+
+  function teamPaceCard(teamPace, kind) {
+    const preset = TEAM_PACE_PRESETS[kind] || TEAM_PACE_PRESETS.race;
     const c = document.createElement('div');
     c.className = 'card';
     if (!teamPace || !teamPace.length) {
-      c.innerHTML = '<h2>Race simulation pace — by team</h2><div class="notice">Not enough long-run data yet.</div>';
+      c.innerHTML = `<h2>${preset.title}</h2><div class="notice">${preset.emptyMessage}</div>`;
       return c;
     }
     const MAX_BAR_PX = 420;
@@ -579,16 +601,14 @@
       if (t.no_data) {
         return `<div class="pace-row">
           <span class="pace-team">${t.team}</span>
-          <div class="pace-track"><span class="pace-label" style="color:var(--muted)">no long-run data yet</span></div>
+          <div class="pace-track"><span class="pace-label" style="color:var(--muted)">${preset.noDataLabel}</span></div>
         </div>`;
       }
       const w = Math.round(t.gap_s / maxGap * MAX_BAR_PX);
       const label = `+${t.gap_s.toFixed(2)}s (${t.gap_pct.toFixed(2)}%)`;
       const warnTitle = t.low_confidence
-        ? 'Thin sample — a couple of outlier laps could swing this several seconds'
-        : t.race_pace_only
-        ? 'No clean FP long run for either driver — built entirely from Sprint Race laps (traffic/strategy, not a pure pace read)'
-        : '';
+        ? preset.lowConfidenceTitle
+        : (t.race_pace_only && preset.secondaryWarnTitle) || '';
       const warn = warnTitle ? ` <span title="${warnTitle}" style="color:var(--muted)">⚠</span>` : '';
       return `<div class="pace-row">
         <span class="pace-team">${t.team}${warn}</span>
@@ -598,8 +618,8 @@
         </div>
       </div>`;
     }).join('');
-    c.innerHTML = `<h2>Race simulation pace — by team</h2>
-      <div class="meta-row"><span>fuel- &amp; age-corrected long-run pace, quicker of each team's two cars · gap to the fastest team · ⚠ = low-confidence sample, hover for why</span></div>
+    c.innerHTML = `<h2>${preset.title}</h2>
+      <div class="meta-row"><span>${preset.subtitle}</span></div>
       <div class="pace-chart">${rows}</div>`;
     return c;
   }
@@ -801,9 +821,14 @@
       sections.push({ id: 'pace-order', title: 'The real pace order', node: pCard });
     }
 
+    if (d.quali_team_pace && d.quali_team_pace.length) {
+      sections.push({ id: 'quali-team-pace', title: 'Qualifying simulation pace — by team',
+                     node: teamPaceCard(d.quali_team_pace, 'quali') });
+    }
+
     if (d.team_pace && d.team_pace.length) {
       sections.push({ id: 'team-pace', title: 'Race simulation pace — by team',
-                     node: teamPaceCard(d.team_pace) });
+                     node: teamPaceCard(d.team_pace, 'race') });
     }
 
     // long-run boards — one per practice/sprint session, grouped as one

@@ -14,7 +14,7 @@ import engine.prerace as prerace
 from engine.predictor import DegCurve
 from engine.prerace import (
     PIT_WINDOW_MARGIN_S, PIT_WINDOW_MAX_SHIFT, _pit_window, _team_pace,
-    _long_run_pace, _shift_medium_start_earlier,
+    _long_run_pace, _quali_sim_pace, _shift_medium_start_earlier,
 )
 from engine.predictor import MIN_STINT, optimize_strategy
 from engine.undercut_shift import CIRCUIT_UNDERCUT_SHIFT, DEFAULT_UNDERCUT_SHIFT, undercut_shift_for
@@ -489,6 +489,126 @@ class TestLongRunPaceSessionWeighting:
         assert unweighted == 92.5
 
 
+class TestQualiSimPace:
+    """_quali_sim_pace mirrors _long_run_pace's row shape (both feed the
+    same _team_pace helper) but reads FP hotlap stints (1-2 timed laps)
+    instead of 6+-lap long runs, taking each driver's single best lap
+    rather than a weighted median -- qualifying is about your fastest lap,
+    not an average pace level."""
+
+    @staticmethod
+    def _hotlap_stint(driver, stint_number, lap_start, hot_lap_time, compound="SOFT"):
+        # out-lap (excluded, is_pit_out_lap) + one timed lap -> 1 timed lap -> HOTLAP
+        laps = [
+            {"driver_number": driver, "lap_number": lap_start,
+             "lap_duration": hot_lap_time + 20, "is_pit_out_lap": True},
+            {"driver_number": driver, "lap_number": lap_start + 1,
+             "lap_duration": hot_lap_time, "is_pit_out_lap": False},
+        ]
+        stint = {"driver_number": driver, "compound": compound,
+                 "lap_start": lap_start, "lap_end": lap_start + 1,
+                 "tyre_age_at_start": 0, "stint_number": stint_number}
+        return laps, stint
+
+    def _patch(self, monkeypatch, laps, stints, drivers):
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers", lambda *a, **k: drivers)
+
+    def test_best_hotlap_wins_over_a_slower_one(self, monkeypatch):
+        laps1, stint1 = self._hotlap_stint(1, 1, 1, 80.0)
+        laps2, stint2 = self._hotlap_stint(1, 2, 10, 79.0)  # faster second attempt
+        drivers = {1: {"name_acronym": "VER", "team_name": "Red Bull", "team_colour": "4781D7"}}
+        self._patch(monkeypatch, laps1 + laps2, [stint1, stint2], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources)
+        assert len(rows) == 1
+        assert rows[0]["best_lap"] == 79.0
+        assert rows[0]["attempts"] == 2
+
+    def test_single_attempt_flagged_low_confidence(self, monkeypatch):
+        laps, stint = self._hotlap_stint(1, 1, 1, 80.0)
+        drivers = {1: {"name_acronym": "VER"}}
+        self._patch(monkeypatch, laps, [stint], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources)
+        assert rows[0]["low_confidence"] is True
+
+    def test_two_attempts_not_flagged(self, monkeypatch):
+        laps1, stint1 = self._hotlap_stint(1, 1, 1, 80.0)
+        laps2, stint2 = self._hotlap_stint(1, 2, 10, 79.5)
+        drivers = {1: {"name_acronym": "VER"}}
+        self._patch(monkeypatch, laps1 + laps2, [stint1, stint2], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources)
+        assert rows[0]["low_confidence"] is False
+
+    def test_long_run_stints_are_ignored_not_counted_as_hotlaps(self, monkeypatch):
+        # A 6-timed-lap stint is a LONG run (race-pace simulation), not a
+        # qualifying effort -- must not leak into the hotlap pace read even
+        # if one of its laps happens to be fast.
+        long_laps = [{"driver_number": 1, "lap_number": i, "lap_duration": 85.0,
+                      "is_pit_out_lap": (i == 1)} for i in range(1, 8)]  # 1 out-lap + 6 timed
+        long_stint = {"driver_number": 1, "compound": "MEDIUM",
+                      "lap_start": 1, "lap_end": 7, "tyre_age_at_start": 0,
+                      "stint_number": 1}
+        drivers = {1: {"name_acronym": "VER"}}
+        self._patch(monkeypatch, long_laps, [long_stint], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources)
+        assert rows == []
+
+    def test_qualifying_session_itself_is_excluded(self, monkeypatch):
+        # This must stay a pre-qualifying PREDICTION -- it is never allowed
+        # to read the real Qualifying session, even if that session's data
+        # happens to be available by the time this runs.
+        laps, stint = self._hotlap_stint(1, 1, 1, 70.0)  # implausibly fast if it leaked in
+        drivers = {1: {"name_acronym": "VER"}}
+        self._patch(monkeypatch, laps, [stint], drivers)
+        sources = [{"session_key": 1, "session_type": "Qualifying", "session_name": "Qualifying"}]
+        rows = _quali_sim_pace(sources)
+        assert rows == []
+
+    def test_grid_acronyms_filters_non_grid_drivers(self, monkeypatch):
+        # Same reserve-driver guard as _long_run_pace (e.g. a mandatory FP1
+        # rookie outing must not pollute the field baseline or appear ranked
+        # ahead of a real qualifier).
+        laps1, stint1 = self._hotlap_stint(1, 1, 1, 80.0)
+        laps2, stint2 = self._hotlap_stint(2, 1, 1, 75.0)
+        drivers = {1: {"name_acronym": "VER"}, 2: {"name_acronym": "ROOKIE"}}
+        self._patch(monkeypatch, laps1 + laps2, [stint1, stint2], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources, grid_acronyms={"VER"})
+        assert len(rows) == 1
+        assert rows[0]["acronym"] == "VER"
+
+    def test_fetch_failure_recorded(self, monkeypatch):
+        def raise_error(*a, **k):
+            raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(prerace, "get_laps", raise_error)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        failures = []
+        rows = _quali_sim_pace(sources, fetch_failures=failures)
+        assert rows == []
+        assert failures == ["Practice 1"]
+
+    def test_feeds_into_team_pace_cleanly(self, monkeypatch):
+        # The whole point of mirroring _long_run_pace's row shape: the
+        # existing _team_pace helper must work unchanged on quali-sim rows.
+        laps1, stint1 = self._hotlap_stint(1, 1, 1, 79.0)
+        laps2, stint2 = self._hotlap_stint(2, 1, 1, 80.0)
+        drivers = {1: {"name_acronym": "VER"}, 2: {"name_acronym": "HAM"}}
+        self._patch(monkeypatch, laps1 + laps2, [stint1, stint2], drivers)
+        sources = [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 1"}]
+        rows = _quali_sim_pace(sources)
+        grid = [{"acronym": "VER", "team": "Red Bull", "team_colour": "4781D7"},
+                {"acronym": "HAM", "team": "Ferrari", "team_colour": "ED1131"}]
+        baseline = sum(r["best_lap"] for r in rows) / len(rows)
+        team_rows = _team_pace(rows, grid, baseline)
+        fastest = next(r for r in team_rows if r["team"] == "Red Bull")
+        assert fastest["gap_s"] == 0.0
+
+
 @pytest.mark.integration
 class TestRealMeetingIntegration:
     """Hits the real OpenF1 API against cached 2026 meetings. Run with
@@ -514,6 +634,17 @@ class TestRealMeetingIntegration:
         pack = build_prerace_data(self.HUNGARY_2026)
         teams = {t["team"] for t in pack["team_pace"]}
         assert "Cadillac" in teams
+
+    def test_quali_sim_pace_produces_real_rows_from_real_hotlap_data(self):
+        from engine.prerace import build_prerace_data
+        pack = build_prerace_data(self.HUNGARY_2026)
+        assert pack["quali_sim_pace"], "expected at least one driver with a real FP hotlap"
+        for r in pack["quali_sim_pace"]:
+            assert r["best_lap"] > 0
+            assert isinstance(r["low_confidence"], bool)
+        teams = {t["team"] for t in pack["quali_team_pace"]}
+        # every grid team must appear (no_data or not), same guarantee as team_pace
+        assert teams == {g["team"] for g in pack["grid"] if g.get("team")}
 
     def test_strategies_structurally_valid(self):
         from engine.prerace import build_prerace_data
