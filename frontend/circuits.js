@@ -34,6 +34,22 @@
     const ANGLE_THRESHOLD_DEG = 100;
     const EDGE_FRACTION = 0.35; // cap tangent distance to this fraction of the shorter adjacent edge
     const ARC_SAMPLES = 3;
+    // Found on Shanghai's turn 13, right before its ~718-unit back straight
+    // (by far the longest segment on that track): rounding a sharp vertex
+    // whose two adjacent segments are this imbalanced backfires. The arc
+    // insertion packs several new points into a tiny span (short side), and
+    // that short internal spacing paired with the one genuinely long
+    // neighbor distorts the spline's tangent there enough to pull the curve
+    // back through the track's own entry path a few corners earlier --
+    // measured directly (closest approach of non-adjacent track points went
+    // from a safe 19.4 units on the raw straight-line polygon to 7.5 units,
+    // under half the rendered stroke width, after rounding). Leaving a
+    // vertex like this as a single sharp point and letting the natural
+    // (unrounded) spline handle it measured consistently better: 21.2 units
+    // for Shanghai, plus real improvements on Suzuka and Miami's own most
+    // imbalanced vertices, with no regression on any of the other 24
+    // circuits checked the same way.
+    const RATIO_SUPPRESS = 0.12;
     const n = points.length;
     const result = [];
     for (let i = 0; i < n; i++) {
@@ -43,7 +59,10 @@
       const len1 = Math.hypot(v1x, v1y), len2 = Math.hypot(v2x, v2y);
       const dot = (v1x * v2x + v1y * v2y) / (len1 * len2 || 1);
       const deflectionDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI;
-      if (deflectionDeg < ANGLE_THRESHOLD_DEG) { result.push(curr); continue; }
+      const segmentRatio = Math.min(len1, len2) / (Math.max(len1, len2) || 1);
+      if (deflectionDeg < ANGLE_THRESHOLD_DEG || segmentRatio < RATIO_SUPPRESS) {
+        result.push(curr); continue;
+      }
 
       // interior angle at the vertex, between (vertex->prev) and (vertex->next)
       const uax = ax - bx, uay = ay - by, wcx = cx - bx, wcy = cy - by;
