@@ -2777,6 +2777,69 @@ rejection -- now returns a real 200 with a full simulated field. 6 new
 backend tests (`tests/test_whatif_intermediate.py`); full suite 227/227
 passing.
 
+### `stints` was missing real pit stops entirely, confirmed against Pirelli's own graphic, 2026-10-05
+Same-day follow-up, same race (meeting 1308): user compared the debrief's
+own stint-bar chart against Pirelli's official published pit-stop graphic
+for this race and the shapes didn't match -- several drivers' bars showed
+one long, uninterrupted stint where Pirelli showed 2-3 separate ones.
+
+Root-caused directly, not guessed: OpenF1's `stints` endpoint has **no row
+at all** for some of this race's real, same-compound pit stops -- confirmed
+independently via OpenF1's own separate `pit` endpoint (the real pit-lane
+timing log, a completely different data source) and Pirelli's graphic, both
+agreeing. The race winner's real laps-33 and laps-43 stops are completely
+absent from his `stints` rows, which show one unbroken 46-lap stint from
+lap 10 to the flag; `stints` alone silently undercounted `stops` by 2 for
+him and by 1 for at least three other drivers checked (LEC's lap-28 stop,
+HAD's lap-31, LAW's lap-30, HAM's lap-31 -- all confirmed the same way).
+
+Added `get_pit_stops()` (`data/live.py`, same caching pattern as every other
+historical endpoint) and `_split_stints_on_missing_pit_stops()`, now wired
+into `get_stints()` itself so every consumer (the debrief, the live board,
+prerace tyre inventory, what-if) benefits uniformly: for each driver, any
+real pit lap that falls strictly inside an existing stint's span with no
+boundary already reflecting it gets a new split inserted there (same
+compound either side -- `stints` gave us no information about what was
+actually fitted, and the real pit visit is itself strong evidence of a new
+physical set, so `tyre_age_at_start` resets to 0 for the new second half).
+
+**First version over-corrected and had to be walked back.** A blunt
+exact-match check (did a new stint start at exactly `pit_lap + 1`?)
+inserted redundant, spurious splits for pit stops that were ALREADY
+correctly reflected but by a boundary landing a lap or two later than the
+naive check expected -- found by comparing the whole field's total stop
+count against the real pit log's own total (73) and Pirelli's stated total
+(72): the first version produced 96, clearly over-splitting. Traced to one
+specific driver's real lap-33 stop already being captured by an existing
+boundary at lap 35, not 34 -- the exact-match check saw "34 is not a known
+boundary" and fragmented a real stint into a genuine piece plus a
+nonsensical 1-lap sliver. Fixed with `PIT_BOUNDARY_TOLERANCE_LAPS = 2`: a
+pit lap within 2 laps of the stint's own start or end it falls inside is
+treated as already accounted for, not genuinely missing.
+
+**A second, separate, NOT-yet-resolved pattern was found during this
+investigation, and is being reported honestly rather than papered over:**
+after the tolerance fix, the field's total stop count still read 95
+against the real pit log's 73 -- a near-universal "+1" per driver. Traced
+to 20 of this race's 22 classified/retired drivers all showing an
+artificial-looking exactly-1-lap "first stint" before their real starting
+compound takes over, with **zero corresponding entry in the real pit log
+for any of them** -- a 1-lap pit stop is not physically possible, so this
+is not a genuine pit visit. The pattern is too uniform across the field to
+be 22 independent real events; the leading hypothesis is that `stints`
+initially reports some kind of pre-race-declared/placeholder compound for
+exactly lap 1 before self-correcting from lap 2 once real telemetry
+confirms the actual tyre, but this is NOT confirmed -- deliberately not
+"fixed" by guessing, since silently deleting a real first lap's data would
+be worse than leaving a known-uncertain artifact visible. Left as an open
+item for a future session: it inflates every affected driver's `stops` by
+exactly 1 and shows as a near-invisible one-lap colour sliver at the very
+start of every stint bar.
+
+9 new tests (`tests/test_stint_pit_reconciliation.py`, including a direct
+regression test reproducing the over-correction bug); full suite 236/236
+passing (unit), 6/6 passing (integration).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

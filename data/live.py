@@ -419,6 +419,94 @@ def get_drivers(session_key: int, ttl: float = HIST_TTL) -> dict[int, dict]:
     return {r["driver_number"]: r for r in rows}
 
 
+PIT_BOUNDARY_TOLERANCE_LAPS = 2
+
+def get_pit_stops(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
+    """Real pit-lane visits -- OpenF1's own `pit` endpoint, a completely
+    separate record from `stints` (timed off the pit-lane loop, not
+    inferred from tyre/compound reporting). Used by get_stints to catch a
+    real gap found 2026-10-05: on a race with heavy, SC-clustered pit
+    activity (the 2026 Bahrain GP), `stints` simply has no row at all for
+    some genuine same-compound pit stops -- e.g. the real winner's actual
+    laps-33 and laps-43 stops (both confirmed here, and in Pirelli's own
+    published pit-stop graphic) are completely absent from his `stints`
+    rows, which show one unbroken 46-lap stint from lap 10 to the flag.
+    Confirmed on 4 of the race's 20 drivers checked by hand; `stints` alone
+    silently under-counts `stops` and renders one artificially long stint
+    bar instead of the real 2-3 separate ones for every driver it affects."""
+    return _cached_get(f"pit:{session_key}", "pit", ttl, session_key=session_key)
+
+
+def _split_stints_on_missing_pit_stops(stints: list[dict], pits: list[dict]) -> list[dict]:
+    """Insert a stint boundary for any real pit-lane visit (get_pit_stops)
+    that `stints` has no row boundary for at all -- see get_pit_stops'
+    docstring. A real pit lap already reflected as some stint's own
+    lap_start-1 (a genuine compound-change row exists) is left untouched;
+    only a pit lap that falls strictly inside an existing stint's span
+    triggers a split, at that lap, keeping the same compound either side
+    (the only reasonable default -- `stints` gave us no compound for
+    whatever was actually fitted) and resetting tyre_age_at_start to 0 for
+    the new second half, since a real pit visit is strong evidence a
+    different physical set went on even when the compound reads the same."""
+    if not pits:
+        return stints
+    pit_laps_by_driver: dict[int, set[int]] = {}
+    for p in pits:
+        lap = p.get("lap_number")
+        num = p.get("driver_number")
+        if lap is not None and num is not None:
+            pit_laps_by_driver.setdefault(num, set()).add(lap)
+
+    by_driver: dict[int, list[dict]] = {}
+    for s in stints:
+        by_driver.setdefault(s.get("driver_number"), []).append(s)
+
+    out: list[dict] = []
+    for num, driver_stints in by_driver.items():
+        driver_stints = sorted(driver_stints, key=lambda s: s["lap_start"])
+        known_boundaries = {s["lap_start"] for s in driver_stints}
+        real_pit_laps = pit_laps_by_driver.get(num, set())
+
+        result = []
+        for s in driver_stints:
+            # A pit on lap L means the driver is back out on lap L+1 -- that's
+            # the boundary to check for, not the pit lap itself. But some of
+            # this race's own stint rows land that boundary a lap or two late
+            # (found directly: a real, Pirelli-confirmed lap-33 stop already
+            # correctly reflected by an existing stint ending at lap 34, one
+            # lap later than the naive L+1=34 check expected) -- an exact-
+            # match check treated that as still "missing" and inserted a
+            # redundant split, fragmenting one real stint into a genuine
+            # piece plus a nonsensical 1-lap sliver. A pit lap within
+            # PIT_BOUNDARY_TOLERANCE_LAPS of this stint's own start or end is
+            # therefore treated as already accounted for by that nearby
+            # boundary, not genuinely missing.
+            missing = sorted(
+                L for L in real_pit_laps
+                if s["lap_end"] is not None and s["lap_start"] < L < s["lap_end"]
+                and (L + 1) not in known_boundaries
+                and abs(L - s["lap_start"]) > PIT_BOUNDARY_TOLERANCE_LAPS
+                and abs(s["lap_end"] - L) > PIT_BOUNDARY_TOLERANCE_LAPS
+            )
+            if not missing:
+                result.append(s)
+                continue
+            cursor = s["lap_start"]
+            age_at_cursor = s.get("tyre_age_at_start") or 0
+            remaining = dict(s)
+            for L in missing:
+                piece = {**remaining, "lap_start": cursor, "lap_end": L,
+                         "tyre_age_at_start": age_at_cursor}
+                result.append(piece)
+                age_at_cursor = 0   # new physical set after a real pit visit
+                cursor = L + 1
+            remaining = {**remaining, "lap_start": cursor, "lap_end": s["lap_end"],
+                        "tyre_age_at_start": age_at_cursor}
+            result.append(remaining)
+        out.extend(result)
+    return out
+
+
 def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
     """Stint rows, sanitised: live sessions emit rows with null fields
     (tyre_age_at_start, lap_start, compound) before OpenF1 backfills them,
@@ -438,7 +526,12 @@ def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
                  "stint_number": s.get("stint_number") or 0,
                  "compound": s.get("compound") or "UNKNOWN"}
         out.append(s)
-    return _merge_stint_fragments(out)
+    merged = _merge_stint_fragments(out)
+    try:
+        pits = get_pit_stops(session_key, ttl)
+    except Exception:
+        pits = []
+    return _split_stints_on_missing_pit_stops(merged, pits)
 
 
 def _merge_stint_fragments(rows: list[dict]) -> list[dict]:
