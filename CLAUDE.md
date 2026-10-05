@@ -2840,6 +2840,39 @@ start of every stint bar.
 regression test reproducing the over-correction bug); full suite 236/236
 passing (unit), 6/6 passing (integration).
 
+**Follow-up, same day: the "1-lap phantom first stint" mystery above was
+explained, but deliberately NOT fixed.** User supplied the missing context
+directly: the formation lap was red-flagged (`race_control`'s own
+"STARTING PROCEDURE SUSPENDED" event, 48 minutes before "SESSION STARTED").
+A red-flagged start lets teams change tyres on the grid, not through the
+pit lane -- which is exactly why `pit` has zero record of it, and why the
+pattern is near-universal (most of the field took the free tyre change).
+
+Proposed fix: trust the first stint's compound through to the first REAL
+(pit-log-confirmed) stop, discarding whatever short compound reading sits
+between them. Checked this against two drivers' real Pirelli data before
+building it, and found the pattern is NOT uniform: the race winner's
+Pirelli row shows ONE continuous colour to his first real stop (lap 9) --
+his "Soft, laps 2-9" reading is a genuine mislabelling, and the fix is
+correct for him. But Leclerc's Pirelli row shows TWO colours before his
+own first real stop (lap 3) -- a genuine Soft-then-Intermediate sequence
+from the grid during the same suspension, and the identical-looking
+"short stint, different compound, no pit-log entry" shape in our raw data
+is, for him, completely real. The two cases are indistinguishable from
+`stints`/`pit`/`race_control` alone; telling them apart required reading
+Pirelli's own published graphic by eye, which isn't available
+programmatically for the other ~18 drivers.
+
+Applying the fix uniformly would correctly repair the winner's data while
+silently erasing Leclerc's genuine Intermediate stint and replacing it
+with a wrong compound -- a worse error than the one being fixed. Decided,
+with the user, to leave this alone rather than ship a correction that's
+right for some drivers and wrong for others with no way to tell which is
+which. Revisit only if a reliable per-driver signal turns up (team radio,
+a different OpenF1 field, or anything else that can confirm the true
+compound independently of `stints` itself) -- don't re-attempt the blanket
+"trust the first entry" rule without one.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
