@@ -2647,6 +2647,74 @@ often too (predicted 8/14), correctly catching 6 of Mercedes' 11 real poles
 — not a team-specific miss, just the expected difficulty of picking an
 exact winner from FP-only data when one team is this dominant.
 
+### Real weather forecast (not just a retrospective rain read), 2026-10-05
+User-reported: the Bahrain GP (meeting 1308) started genuinely wet, overriding
+the entire dry paper-strategy table, while `weather_outlook` had said "low"
+risk pre-race. Not a bug in the old logic -- `_weather_outlook`'s own
+docstring already said "a rain PRIOR, not a forecast (OpenF1 only exposes
+observed weather)": it could only ever look backward at FP1-3 (which really
+were dry) and at historical wet-proneness (Bahrain isn't on that list). There
+was no signal that looked forward to the race itself, because none existed.
+
+Added `engine/weather_forecast.py`: a real forecast via Open-Meteo (free, no
+API key for non-commercial use), with a `CIRCUIT_COORDS` lat/lon table for
+every circuit (same key convention as `CIRCUIT_LAPS`) and a short-TTL
+(30 min) in-memory cache. `get_rain_forecast(circuit, race_datetime_iso)`
+returns the hourly forecast slot closest to the race's own start time, or
+`None` on any failure (unknown circuit, API error, past date with no
+forecast data) -- same graceful-degrade convention as `get_weather_summary`.
+Uses `requests`, not raw `urllib` -- this surfaced a real local-environment
+gap (this machine's python.org build has no system CA bundle wired into
+urllib's default SSL context, so `backtest_full.py`'s own urllib-based
+`fetch()` fails on any live call here with `CERTIFICATE_VERIFY_FAILED`;
+`requests` bundles `certifi` and isn't affected). Not fixed in
+`backtest_full.py` itself -- out of scope for this change, flagged here in
+case it resurfaces.
+
+`_weather_outlook` (`engine/prerace.py`) now takes an optional
+`race_datetime` and blends the forecast in: `rain_risk` is the max of the
+forecast signal and the old practice/history signal (a confident low
+forecast doesn't erase a wet-prone circuit's own known volatility --
+Spa's microclimate is notoriously unpredictable -- but a strong forecast
+DOES elevate risk even at a normally-dry circuit with bone-dry practice
+sessions, the actual Bahrain case). Thresholds: >=50% forecast -> "high",
+>=20% -> "elevated", below that treated as noise against the model's own
+baseline uncertainty. `note`/`strategy_caveat` now cite the real forecast
+percentage when it's driving the risk level, not just a generic sentence.
+
+Fed the forecast into `run_monte_carlo` too (`engine/predictor.py`), via a
+new `rain_probability` parameter (every existing caller defaults to 0.0 --
+today's unchanged dry behaviour) that blends `sc_rate` toward a measured wet
+rate. Measured first, not guessed (`measure_wet_weather_rates.py`, kept at
+the repo root as a reusable script, same pattern as `stop_count_correlation.
+py`): 67 dry + 19 wet races from the 2023-2026 cache, "wet" = any weather
+sample flagged `rainfall=True` during the race. Real result: SC/VSC events
+per race 0.76 dry vs 1.26 wet, a genuine 1.66x (`WET_SC_RATE_MULTIPLIER`).
+Also checked a DNF-rate multiplier on the same split, since wet racing
+*feels* like it should cause more mechanical/crash retirements -- the
+measured rate came back flat (0.133 dry vs 0.131 wet, 0.98x), so no DNF
+adjustment was added. Counterintuitive, but trusted over the intuition --
+same discipline as the per-circuit DNF table rejected earlier in this file
+for fitting noise instead of a real effect.
+
+`build_prerace_data` fetches the forecast once (race's own `date_start`)
+and threads `rain_probability` through `_project_race` -> `_run_projection`
+-> `simulate_race` -> `run_monte_carlo`; `_weather_outlook` fetches it
+independently for the same reason `_pit_window` and `_team_pace` already
+don't share a single source of truth across every pack field -- different
+consumers (simulation vs a display caption), same cached function
+underneath so in practice they agree. `PACK_VERSION` 35 -> 36.
+
+Verified end-to-end against real data: Bahrain (now in the past) correctly
+returns a graceful near-zero-signal result (Open-Meteo has no forecast for
+a date that's already gone); Singapore (4 days out at the time, real
+upcoming race) returned a genuine 77% rain probability, correctly elevating
+`weather_outlook` to "high" with a specific percentage-citing caveat, even
+though no FP session exists for that weekend yet to have seen rain. 20 new
+tests (`tests/test_weather_forecast.py`, `tests/test_weather_caveat.py`'s
+new `TestForwardLookingForecast`, `tests/test_rain_probability.py`); full
+suite 221/221 passing.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

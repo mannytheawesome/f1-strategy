@@ -51,7 +51,9 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 35   # 35: adds quali_sim_pace/quali_team_pace -- FP-hotlap-based qualifying pace prediction
+PACK_VERSION = 36   # 36: real weather forecast (engine.weather_forecast) feeds weather_outlook
+                    # and the Monte Carlo rain_probability blend, replacing the old
+                    # practice-only retrospective rain read
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -669,7 +671,8 @@ def _blend_pace_delta(raw_delta: float, r_w: float, quali_delta: float,
 
 def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                     strategies: list[dict], total_laps: int, pit_loss: float,
-                    circuit: str, inventory: dict | None = None) -> list:
+                    circuit: str, inventory: dict | None = None,
+                    rain_probability: float = 0.0) -> list:
     """Run the race model from lap 0 for a given grid order and return the full
     field of DriverForecast objects (Monte Carlo already applied). The grid is
     spread at GRID_SPREAD_S per slot to give the track-position anchor something
@@ -727,20 +730,24 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
     return simulate_race(serialised, 0, total_laps, curves, pace_model, [],
                          pit_loss=pit_loss,
                          track_position_weight=track_position_weight(circuit),
-                         inventory=inv_left, circuit=circuit)
+                         inventory=inv_left, circuit=circuit,
+                         rain_probability=rain_probability)
 
 
 def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
                   strategies: list[dict], total_laps: int, pit_loss: float,
-                  circuit: str, inventory: dict | None = None) -> dict | None:
+                  circuit: str, inventory: dict | None = None,
+                  rain_probability: float = 0.0) -> dict | None:
     """Lap-0 projection for the display: top-10 forecasts with win/podium odds."""
     forecasts = _run_projection(grid, pace_rows, curves, strategies,
-                                total_laps, pit_loss, circuit, inventory)
+                                total_laps, pit_loss, circuit, inventory,
+                                rain_probability=rain_probability)
     if not forecasts:
         return None
     return {
         "grid_spread_assumption_s": GRID_SPREAD_S,
         "start_compound_assumption": strategies[0]["start_compound"],
+        "rain_probability": rain_probability,
         "forecasts": [forecast_to_dict(f) for f in forecasts[:10]],
     }
 
@@ -957,12 +964,24 @@ def _recovery_prior(circuit: str, meeting_key, max_races: int = 3) -> dict | Non
     }
 
 
-def _weather_outlook(sources: list[dict], circuit: str) -> dict:
-    """A rain PRIOR, not a forecast (OpenF1 only exposes observed weather). Flags
-    a wet-prone circuit and whether any practice/quali session actually saw rain,
-    and spells out what a wet race does to the door economics — it compresses the
-    field and collapses the pace edge needed to overtake, so grid position matters
-    far less and a setup gamble from the back gets cheaper."""
+def _weather_outlook(sources: list[dict], circuit: str,
+                     race_datetime: str | None = None) -> dict:
+    """Blends a rain PRIOR (OpenF1 only exposes observed weather, so practice
+    conditions and historical wet-proneness are all this could ever say about
+    the race itself) with an actual forward-looking forecast (Open-Meteo, via
+    engine.weather_forecast) for the race's own start time, when available.
+
+    Found 2026-10-04: a race predicted "low" rain risk (no rain anywhere in
+    FP1-3, not a historically wet-prone circuit) and the real race started
+    properly wet, overriding the entire dry paper strategy table. That wasn't
+    a forecasting bug -- there was no forecast, only a retrospective reading
+    of practice, which genuinely had no signal for rain that fell hours
+    later. This is the fix: a real forecast that can see forward to the
+    race, not just backward to practice.
+
+    Spells out what a wet race does to the door economics — it compresses the
+    field and collapses the pace edge needed to overtake, so grid position
+    matters far less and a setup gamble from the back gets cheaper."""
     cl = circuit.lower()
     wet_prone = any(w in cl for w in WET_PRONE_CIRCUITS)
     rain_in_practice = False
@@ -978,18 +997,64 @@ def _weather_outlook(sources: list[dict], circuit: str) -> dict:
             rain_in_practice = True
         if w.get("track_temp_avg"):
             temps.append(w["track_temp_avg"])
-    risk = "high" if rain_in_practice else "elevated" if wet_prone else "low"
+
+    forecast = None
+    if race_datetime:
+        try:
+            from engine.weather_forecast import get_rain_forecast
+            forecast = get_rain_forecast(circuit, race_datetime)
+        except Exception:
+            forecast = None
+    forecast_rain_p = forecast["rain_probability"] if forecast else None
+
+    # Forecast takes precedence when it exists and says something -- it's
+    # the only signal here that actually looks forward to the race itself.
+    # Thresholds match the qualitative bands already used elsewhere in this
+    # pack (e.g. _undercut_power's "net_undercut_s" framing): a forecast
+    # under 20% is treated as noise (every race carries some baseline
+    # model uncertainty), 20-50% as a real but not dominant risk, above
+    # that as a genuine expectation of rain.
+    if forecast_rain_p is not None and forecast_rain_p >= 0.5:
+        risk = "high"
+    elif forecast_rain_p is not None and forecast_rain_p >= 0.2:
+        risk = "elevated"
+    elif rain_in_practice:
+        risk = "high"
+    elif wet_prone:
+        risk = "elevated"
+    else:
+        risk = "low"
+
+    if forecast_rain_p is not None and forecast_rain_p >= 0.2:
+        note = (f"Forecast gives a {forecast_rain_p*100:.0f}% chance of rain "
+                f"at race time — treat the dry-run pace order as provisional.")
+    elif rain_in_practice:
+        note = "Rain already fell this weekend — treat the dry-run pace order as provisional."
+    elif wet_prone:
+        note = f"{circuit} has a high historical wet-race rate; keep rain live as a risk."
+    else:
+        note = "No wet signal — dry running expected."
+
+    if forecast_rain_p is not None and forecast_rain_p >= 0.2:
+        strategy_caveat = (f"Forecast gives a {forecast_rain_p*100:.0f}% chance of rain at "
+                          "race time — these are dry-race paper strategies; a wet or mixed "
+                          "race will override the whole table.")
+    elif rain_in_practice:
+        strategy_caveat = ("Rain has already fallen this weekend — these are dry-race paper "
+                          "strategies; a wet or mixed race will override the whole table.")
+    elif wet_prone:
+        strategy_caveat = (f"{circuit} has a history of rain — these are dry-race paper "
+                          "strategies; keep an eye on the sky.")
+    else:
+        strategy_caveat = None
+
     return {
         "rain_risk": risk,
         "rain_seen_in_practice": rain_in_practice,
         "wet_prone_circuit": wet_prone,
+        "forecast": forecast,  # None if unavailable -- raw {rain_probability, temp_c, ...}
         "track_temp_range_c": [round(min(temps), 1), round(max(temps), 1)] if temps else None,
-        "note": (
-            "Rain already fell this weekend — treat the dry-run pace order as provisional."
-            if rain_in_practice else
-            f"{circuit} has a high historical wet-race rate; keep rain live as a risk."
-            if wet_prone else
-            "No wet signal — dry running expected."),
+        "note": note,
         "implication": (
             "A wet race compresses the field and collapses the pace edge needed to "
             "overtake, so grid position matters far less and a gamble from the back "
@@ -1006,14 +1071,7 @@ def _weather_outlook(sources: list[dict], circuit: str) -> dict:
         # choice made for circuits.resurfacing_caveat: the honest answer
         # to "what should teams do in the wet" isn't a deterministic
         # timing table, it's "expect this to be overridden".
-        "strategy_caveat": (
-            "Rain has already fallen this weekend — these are dry-race paper "
-            "strategies; a wet or mixed race will override the whole table."
-            if rain_in_practice else
-            f"{circuit} has a history of rain — these are dry-race paper "
-            "strategies; keep an eye on the sky."
-            if wet_prone else
-            None),
+        "strategy_caveat": strategy_caveat,
     }
 
 
@@ -1551,11 +1609,29 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sectors = _quali_speed_sectors(grid_source["session_key"]) \
         if quali else []
 
+    # Forward-looking rain forecast for the Monte Carlo blend (see
+    # engine.weather_forecast / predictor.run_monte_carlo) -- deliberately
+    # the race's own forecast, not whatever _weather_outlook independently
+    # fetches for display, so a forecast-fetch failure here can't silently
+    # desync the two (both end up calling the same cached function, so in
+    # practice they agree; kept as two call sites because they serve
+    # different consumers -- one feeds the simulation, one feeds a caption).
+    rain_probability = 0.0
+    if race and race.get("date_start"):
+        try:
+            from engine.weather_forecast import get_rain_forecast
+            forecast = get_rain_forecast(circuit, race["date_start"])
+            if forecast:
+                rain_probability = forecast["rain_probability"]
+        except Exception:
+            pass
+
     projection = None
     try:
         projection = _project_race(grid, pace_rows, curves, strategies,
                                    total_laps, pit_loss, circuit,
-                                   inventory=driver_stock)
+                                   inventory=driver_stock,
+                                   rain_probability=rain_probability)
     except Exception:
         pass
 
@@ -1617,7 +1693,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "projection": projection,
         "doors": doors,
         "overtaking": overtaking,
-        "weather_outlook": _weather_outlook(sources, circuit),
+        "weather_outlook": _weather_outlook(sources, circuit,
+                                            race_datetime=race.get("date_start") if race else None),
         "recovery_prior": recovery_prior,
         "weather_latest": get_weather_summary(sources[-1]["session_key"], HIST_TTL),
         "inventory": inventory_summary,

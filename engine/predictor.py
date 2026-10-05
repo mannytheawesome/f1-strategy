@@ -181,6 +181,19 @@ SC_OPENING_WINDOW_FRAC = 0.05    # first ~2-4 laps depending on race distance
 SC_OPENING_MULT        = 5.2     # hazard multiplier inside the opening window
 SC_REST_MULT = (1 - SC_OPENING_WINDOW_FRAC * SC_OPENING_MULT) / (1 - SC_OPENING_WINDOW_FRAC)
 
+# Measured 2026-10-05 (measure_wet_weather_rates.py, 67 dry + 19 wet races,
+# 2023-2026 cache, "wet" = any weather sample flagged rainfall=True during
+# the race): mean SC/VSC events per race 0.76 dry vs 1.26 wet -- a genuine
+# 1.66x. Checked a DNF multiplier too, on the same split: 0.133 dry vs 0.131
+# wet mean DNF rate, essentially flat (0.98x) -- contradicts the intuitive
+# assumption that wet racing causes more mechanical/crash retirements, but
+# the measured field-wide rate just doesn't show it, so no DNF rain
+# adjustment is applied (same discipline as the per-circuit DNF table
+# rejected elsewhere in this file: don't force a split the data doesn't
+# support). Only run_monte_carlo's SC rate is blended by rain_probability;
+# DNF rate is deliberately left untouched by it.
+WET_SC_RATE_MULTIPLIER = 1.66
+
 
 def _sc_p_no(rate: float, current_lap: int, total_laps: int,
              window_end: Optional[int] = None) -> float:
@@ -1341,6 +1354,7 @@ def simulate_race(
     prescribed_strategies: dict[int, list[PitPlan]] | None = None,
     inventory: dict[int, dict[str, int]] | None = None,  # per-driver sets left
     circuit:        str = "",   # feeds the Monte Carlo SC/DNF rate lookups
+    rain_probability: float = 0.0,  # 0-1, feeds the Monte Carlo wet/dry SC+DNF blend
 ) -> list[DriverForecast]:
     """
     track_position_weight: how much current position (gap) influences the
@@ -1360,6 +1374,11 @@ def simulate_race(
     up the per-circuit SC rate (SC_RATE_CIRCUIT). Optional and separate from
     track_position_weight/pit_loss, which callers already pre-resolve from
     circuit themselves.
+
+    rain_probability: forward-looking forecast (engine.weather_forecast),
+    not an observed condition -- see run_monte_carlo for how it blends the
+    measured wet/dry SC and DNF rates. Defaults to 0.0 (pure dry model,
+    today's behaviour) for every caller that doesn't pass it explicitly.
     """
     if total_laps <= current_lap:
         return []
@@ -1469,7 +1488,8 @@ def simulate_race(
 
     # Monte Carlo pass adds probability distributions
     run_monte_carlo(forecasts, scored, current_lap, total_laps,
-                    sc_events, field_baseline, pit_loss, circuit=circuit)
+                    sc_events, field_baseline, pit_loss, circuit=circuit,
+                    rain_probability=rain_probability)
 
     return forecasts
 
@@ -1486,6 +1506,7 @@ def run_monte_carlo(
     pit_loss:       float,
     n_runs:         int = 500,
     circuit:        str = "",
+    rain_probability: float = 0.0,
 ) -> None:
     """
     Perturb each driver's deterministic finish time with:
@@ -1500,7 +1521,9 @@ def run_monte_carlo(
                              (fc.pace_bias_std_s_per_lap)
       3. SC lottery        — if a random SC falls in the remaining laps,
                              drivers who haven't pitted yet gain ~half the
-                             pit loss (cheap stop), others lose nothing
+                             pit loss (cheap stop), others lose nothing.
+                             sc_rate itself is blended toward the measured
+                             wet rate in proportion to rain_probability.
       4. Minor incident      — flat ~2% chance per driver of a smaller time
                              loss (traffic, slow stop, light damage)
       5. DNF                — chance from the measured field-wide rate
@@ -1519,6 +1542,12 @@ def run_monte_carlo(
     remaining = total_laps - current_lap
     sc_rate  = (SC_RATE_STREET if is_street_circuit(circuit)
                else _circuit_rate(SC_RATE_CIRCUIT, SC_RATE_DEFAULT, circuit))
+    # Linear blend toward the measured wet rate, proportional to forecast
+    # confidence -- rain_probability=0 (the default for every caller that
+    # doesn't pass it) reduces to the unchanged dry rate. No DNF adjustment:
+    # see WET_SC_RATE_MULTIPLIER's comment for why that one measured flat.
+    rain_probability = max(0.0, min(1.0, rain_probability))
+    sc_rate *= 1 + rain_probability * (WET_SC_RATE_MULTIPLIER - 1)
     dnf_rate = DNF_RATE_DEFAULT
     p_sc     = 1 - _sc_p_no(sc_rate, current_lap, total_laps)
     # dnf_rate is measured as a whole-race probability; scale it down by how
