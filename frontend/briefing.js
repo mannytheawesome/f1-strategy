@@ -48,6 +48,23 @@
   }
 
   const COMPOUNDS = ["SOFT", "MEDIUM", "HARD"];
+  // Dry compounds plus Intermediate -- used wherever a user can CYCLE a
+  // stint's compound (the what-if editor). Not WET: the backend has no
+  // fitted WET degradation curve (not enough real long-run data, same
+  // reasoning as engine/predictor.py's own documented stance), so letting
+  // someone dial a stint to WET here would simulate a guess, not a model.
+  // COMPOUNDS itself stays dry-only -- it's also used for things that
+  // genuinely only track dry compounds, like the tyre-set inventory
+  // display (engine.tyre_inventory never allocates Intermediate/Wet sets).
+  const WHATIF_COMPOUNDS = ["SOFT", "MEDIUM", "HARD", "INTERMEDIATE"];
+  // Single source of truth for compound colours -- previously redefined
+  // (incompletely: dry-only, missing Intermediate/Wet) in three separate
+  // places across this file, which is how a real wet race's Intermediate
+  // stints ended up rendering with no colour at all in some charts but not
+  // others. Real F1 compound colours: Soft=red, Medium=yellow, Hard=white,
+  // Inter=green, Wet=blue.
+  const COMPOUND_COLOUR = { SOFT: '#e8002d', MEDIUM: '#ffd700', HARD: '#ffffff',
+                            INTERMEDIATE: '#43b02a', WET: '#0067ad', UNKNOWN: '#888' };
   let currentBriefing = null;
   let editorState = null;   // { driver_number, acronym, stints: [{compound, lap_start, lap_end}], totalLaps }
   let whatifTimer = null;
@@ -1094,7 +1111,12 @@
     c.appendChild(cv);
     const ctx = cv.getContext('2d');
     const maxAge = 30, pad = 40;
-    const entries = COMPOUNDS.map(k => [k, curves[k]]).filter(([, v]) => v && v.baseline > 0);
+    // Every compound the backend might return a fitted curve for, not just
+    // the dry 3 -- a wet-affected race fits a real INTERMEDIATE curve (see
+    // engine/predictor.py's INTERMEDIATE_MIN_DEG) and this chart was
+    // silently dropping it.
+    const entries = ["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"]
+      .map(k => [k, curves[k]]).filter(([, v]) => v && v.baseline > 0);
     if (!entries.length) return c;
     const times = entries.flatMap(([, v]) => [v.baseline, v.baseline + v.deg_rate * maxAge]);
     const tMin = Math.min(...times) - 0.3, tMax = Math.max(...times) + 0.3;
@@ -1106,17 +1128,16 @@
       ctx.fillText(a, x(a) - 4, cv.height - 10);
     }
     ctx.fillText('tyre age (laps)', cv.width / 2 - 40, cv.height - 0.5);
-    const colour = { SOFT: '#e8002d', MEDIUM: '#ffd700', HARD: '#ffffff' };
     for (const [k, v] of entries) {
-      ctx.strokeStyle = colour[k]; ctx.lineWidth = 2;
+      ctx.strokeStyle = COMPOUND_COLOUR[k] || COMPOUND_COLOUR.UNKNOWN; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(x(0), y(v.baseline)); ctx.lineTo(x(maxAge), y(v.baseline + v.deg_rate * maxAge)); ctx.stroke();
     }
     // fixed legend stack — never collides, whatever the curves do
     let ly = 22;
     for (const [k, v] of entries) {
-      ctx.strokeStyle = colour[k]; ctx.lineWidth = 3;
+      ctx.strokeStyle = COMPOUND_COLOUR[k] || COMPOUND_COLOUR.UNKNOWN; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(pad + 4, ly - 3); ctx.lineTo(pad + 22, ly - 3); ctx.stroke();
-      ctx.fillStyle = colour[k];
+      ctx.fillStyle = COMPOUND_COLOUR[k] || COMPOUND_COLOUR.UNKNOWN;
       ctx.fillText(`${k} ${v.baseline.toFixed(1)}s +${v.deg_rate.toFixed(3)}/lap (${v.confidence})`,
                    pad + 28, ly);
       ly += 14;
@@ -1189,7 +1210,7 @@
       seg.innerHTML = `<span class="seg-label">${st.compound[0]} ${st.lap_end - st.lap_start + 1}${isUsed ? ' (U' + st.tyre_age + ')' : ''}</span>
         <span class="seg-age" title="toggle new/used set" style="position:absolute;top:1px;right:3px;font-size:9px;padding:0 3px;border:1px solid rgba(0,0,0,.35);border-radius:2px;cursor:pointer;background:rgba(255,255,255,.25)">${isUsed ? 'U' : 'N'}</span>`;
       seg.onclick = () => {
-        st.compound = COMPOUNDS[(COMPOUNDS.indexOf(st.compound) + 1) % COMPOUNDS.length];
+        st.compound = WHATIF_COMPOUNDS[(WHATIF_COMPOUNDS.indexOf(st.compound) + 1) % WHATIF_COMPOUNDS.length];
         renderEditor();
         scheduleWhatif();
       };

@@ -2715,6 +2715,68 @@ tests (`tests/test_weather_forecast.py`, `tests/test_weather_caveat.py`'s
 new `TestForwardLookingForecast`, `tests/test_rain_probability.py`); full
 suite 221/221 passing.
 
+### Intermediate tyre support was incomplete end-to-end, 2026-10-05
+User-reported on the Bahrain GP debrief (meeting 1308, the same race whose
+real rain this session's weather-forecast fix was built around): stints
+rendered wrong, Intermediates weren't showing, and the what-if editor
+wouldn't allow them. Three separate, real bugs, not one:
+
+1. **Backend validation rejected Intermediate outright.**
+   `engine/whatif.py`'s `_validate_edited` treated any non-DRY compound as
+   unsupported -- so even VER's own real, unedited stints (Intermediate for
+   1 lap, then Soft to the flag) failed the moment the what-if editor
+   auto-loaded them, before any edit. The actual simulation math
+   (`engine.predictor._lap_t`/`_stint_time`) was already compound-agnostic
+   and a real INTERMEDIATE degradation curve was already being fitted --
+   only this gate was blocking it. Fixed to accept INTERMEDIATE (still
+   rejecting WET -- no fitted curve exists for it, not enough real data,
+   same stance as `engine/predictor.py`'s own documented position). Also
+   fixed the "at least two different dry compounds" rule to correctly waive
+   itself when wet-weather tyres were used at all (the real regulation,
+   and exactly VER's case: only one dry compound, Soft, used all race). Also
+   fixed the tyre-inventory check, which only ever tracks the FIA's dry
+   allocation (`engine.tyre_inventory`) and has no Intermediate/Wet key at
+   all -- it was defaulting to 0 available and rejecting every Intermediate
+   stint with a false "not enough tyres" error; now skipped for non-dry
+   compounds, which have nothing meaningful to check there.
+2. **No CSS for Intermediate/Wet stint-bar segments.** `.c-SOFT`/`.c-MEDIUM`/
+   `.c-HARD` existed; `.c-INTERMEDIATE`/`.c-WET` didn't, so any stint-bar
+   segment (the debrief's results table, the what-if editor's drag track --
+   both build their class name as `c-${compound}`) with a wet compound
+   rendered with no background at all, invisible against the card. Added
+   `--inter`/`--wet` CSS variables (real F1 colours: green/blue) and the
+   matching classes.
+3. **Three separate hardcoded SOFT/MEDIUM/HARD-only colour maps in
+   `briefing.js`**, each an incomplete copy of a FOURTH one
+   (`CHART_COMP`, used by the RSS-style per-race charts) that already had
+   the correct Intermediate/Wet colours -- a real, longstanding
+   inconsistency within the same file, not something this race newly
+   broke. Consolidated into one shared `COMPOUND_COLOUR` constant.
+   Also fixed the degradation-curve chart, which iterated a dry-only
+   `COMPOUNDS` list and silently dropped a real fitted INTERMEDIATE curve
+   from the plot entirely.
+
+Separately, the what-if editor's click-to-cycle-compound logic
+(`COMPOUNDS[(COMPOUNDS.indexOf(c)+1) % COMPOUNDS.length]`, two call sites)
+used the same dry-only list -- cycling a stint could never reach
+Intermediate, and worse, clicking an EXISTING Intermediate stint (`indexOf`
+returns -1) silently snapped it to Soft on the very first click. Added a
+separate `WHATIF_COMPOUNDS = [...DRY, "INTERMEDIATE"]` for the two places a
+user can cycle an existing stint's compound. Deliberately NOT used for the
+"+ add stop" button's own default-next-compound logic (a different call
+site, same original array) -- auto-suggesting Intermediate as a new
+addition when splitting a stint would be a surprising default; a user who
+wants an added stint on Intermediates can still get there by adding a dry
+stop first, then cycling it.
+
+Verified end-to-end: the real production debrief data for this race now
+renders every driver's genuine Intermediate stint with the correct green
+segment, and POSTing VER's actual unmodified real-race stints (Intermediate
+1 lap -> Soft -> Soft) to `/api/whatif` -- previously an immediate
+rejection -- now returns a real 200 with a full simulated field. 6 new
+backend tests (`tests/test_whatif_intermediate.py`); full suite 227/227
+passing.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

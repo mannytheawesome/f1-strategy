@@ -120,9 +120,23 @@ def _validate_edited(stints: list[dict], total_laps: int,
     if ordered[0]["lap_start"] != 1:
         return "first stint must start at lap 1"
     prev_end = 0
+    used_wet = False
     for s in ordered:
-        if s.get("compound") not in DRY:
-            return f"unsupported compound: {s.get('compound')}"
+        compound = s.get("compound")
+        # INTERMEDIATE is simulatable (engine.predictor._lap_t/_stint_time are
+        # already compound-agnostic, and build_deg_curves fits a real
+        # INTERMEDIATE curve from race laps -- see engine/predictor.py's
+        # INTERMEDIATE_MIN_DEG). A wet-affected real race's own stints (e.g.
+        # an Intermediate-then-dry-to-the-flag start) were being rejected by
+        # this gate the moment the what-if editor loaded them unmodified,
+        # before the user even made an edit. WET is deliberately still
+        # rejected -- no fitted curve exists for it (not enough real long-run
+        # data, see predictor.py's history), so simulating one would be
+        # guessing, not modelling.
+        if compound not in DRY and compound != "INTERMEDIATE":
+            return f"unsupported compound: {compound}"
+        if compound == "INTERMEDIATE":
+            used_wet = True
         if s["lap_start"] != prev_end + 1:
             return f"stints not contiguous at lap {s['lap_start']}"
         if s["lap_end"] < s["lap_start"]:
@@ -130,13 +144,27 @@ def _validate_edited(stints: list[dict], total_laps: int,
         prev_end = s["lap_end"]
     if prev_end != total_laps:
         return f"plan covers {prev_end} laps, race is {total_laps}"
-    if len({s["compound"] for s in ordered}) < 2:
+    # Real rule: at least two different DRY compounds, UNLESS wet-weather
+    # tyres were used at any point (then the dry-compound-count rule is
+    # waived entirely -- a driver who started on Intermediates and ran one
+    # dry compound the rest of the way, like this project's own 2026-10-04
+    # Bahrain race, is legal).
+    dry_compounds_used = {s["compound"] for s in ordered if s["compound"] in DRY}
+    if not used_wet and len(dry_compounds_used) < 2:
         return "F1 rules require at least two different dry compounds"
 
-    # Tyre inventory: the plan can only fit sets the driver actually had
+    # Tyre inventory: the plan can only fit sets the driver actually had.
+    # Dry compounds only -- sets_available is built from the FIA's limited
+    # weekend dry allocation (engine.tyre_inventory), which doesn't cover
+    # Intermediate/Wet at all (a materially different, much less restrictive
+    # real allocation this project has no data for), so an Intermediate
+    # stint has nothing meaningful to check here and would otherwise be
+    # rejected with a false "0 available" every time.
     if sets_available:
         need: dict[tuple, int] = {}
         for s in ordered:
+            if s["compound"] not in DRY:
+                continue
             is_new = (s.get("tyre_age") or 0) == 0
             need[(s["compound"], is_new)] = need.get((s["compound"], is_new), 0) + 1
         for (compound, is_new), count in need.items():

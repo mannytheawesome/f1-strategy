@@ -19,6 +19,8 @@
       --soft: #e8002d;
       --medium: #ffd700;
       --hard: #ffffff;
+      --inter: #43b02a;
+      --wet: #0067ad;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Visible outline for anything focused via keyboard (mouse clicks don't
@@ -257,6 +259,8 @@
     .c-SOFT { background: var(--soft); }
     .c-MEDIUM { background: var(--medium); }
     .c-HARD { background: var(--hard); }
+    .c-INTERMEDIATE { background: var(--inter); }
+    .c-WET { background: var(--wet); }
 
     /* what-if editor */
     #editor-track {
