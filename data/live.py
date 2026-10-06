@@ -437,6 +437,94 @@ def get_pit_stops(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
     return _cached_get(f"pit:{session_key}", "pit", ttl, session_key=session_key)
 
 
+def _merge_stints_without_matching_pit_stop(stints: list[dict], pits: list[dict]) -> list[dict]:
+    """The inverse of _split_stints_on_missing_pit_stops: collapse a stint
+    boundary that `stints` reports but no real pit-lane visit backs at all.
+
+    Confirmed 2026-10-06 against Pirelli's own pit-stop graphic for the 2026
+    Bahrain GP (meeting 1308): this race's formation lap was red-flagged
+    ("STARTING PROCEDURE SUSPENDED" -> "SESSION STARTED", ~48 minutes apart,
+    both logged at lap 1 in race_control), and teams freely swapped tyres on
+    the grid during the stoppage -- no pit lane involved, so none of it
+    appears in `pit`. `stints` records each grid-side swap as its own row
+    anyway, inflating a driver's real stop count (e.g. a user-reported case,
+    HAM: SOFT(1)+MEDIUM(2-31) in `stints`, but no pit-lane visit anywhere
+    near lap 2 -- Pirelli and `pit` both show a single continuous 31-lap SOFT
+    stint). Checked field-wide: 20 of 22 drivers in this race had at least
+    one such phantom boundary; merging them all with this rule brought the
+    field's total stop count to exactly 73 -- an exact match for `pit`'s own
+    independent total, not just a rough improvement.
+
+    A boundary is real if some real pit lap falls within
+    PIT_BOUNDARY_TOLERANCE_LAPS of it; otherwise the two stints either side
+    are merged into one, keeping the EARLIER stint's compound and
+    tyre_age_at_start (validated against VER, HAM, COL -- each merges down to
+    exactly the single compound Pirelli shows for that opening stint).
+
+    Matching is a one-to-one nearest assignment, not "any boundary within
+    tolerance": with stints this short (several drivers had three
+    sub-3-lap stints back to back before the race proper began), a single
+    real pit lap sitting between two raw boundaries could otherwise
+    "confirm" both of them and leave a genuine phantom boundary standing.
+    LEC's SOFT(1)-INTERMEDIATE(2-3) boundary at lap 1 and its real lap-3 pit
+    stop are only 2 laps apart (within tolerance), but that pit lap belongs
+    to the lap-3 boundary, not the lap-1 one -- a loose "within tolerance"
+    check confirmed both and left the phantom lap-1 split in place; the
+    nearest-match assignment (closest pairs claimed first, each pit lap and
+    each boundary used at most once) correctly leaves only the lap-1
+    boundary unconfirmed and merges it, while keeping LEC's genuine lap-3
+    stop (and his real second compound) untouched.
+
+    This only ever merges a boundary nothing confirms; it never relabels a
+    compound on a stint whose boundary IS pit-confirmed, so it can't repeat
+    the mistake of the earlier (rejected) "trust the first entry" fix -- it
+    doesn't guess at compound identity, only at whether a boundary is real."""
+    if not pits:
+        return stints
+    pit_laps_by_driver: dict[int, set[int]] = {}
+    for p in pits:
+        lap = p.get("lap_number")
+        num = p.get("driver_number")
+        if lap is not None and num is not None:
+            pit_laps_by_driver.setdefault(num, set()).add(lap)
+
+    by_driver: dict[int, list[dict]] = {}
+    for s in stints:
+        by_driver.setdefault(s.get("driver_number"), []).append(s)
+
+    out: list[dict] = []
+    for num, driver_stints in by_driver.items():
+        driver_stints = sorted(driver_stints, key=lambda s: s["lap_start"])
+        if len(driver_stints) < 2:
+            out.extend(driver_stints)
+            continue
+        real_pit_laps = pit_laps_by_driver.get(num, set())
+        boundaries = [s["lap_end"] for s in driver_stints[:-1]]
+
+        candidates = sorted(
+            (abs(b - L), bi, L)
+            for bi, b in enumerate(boundaries)
+            for L in real_pit_laps
+            if abs(b - L) <= PIT_BOUNDARY_TOLERANCE_LAPS
+        )
+        confirmed_boundaries: set[int] = set()
+        claimed_pit_laps: set[int] = set()
+        for _, bi, L in candidates:
+            if bi in confirmed_boundaries or L in claimed_pit_laps:
+                continue
+            confirmed_boundaries.add(bi)
+            claimed_pit_laps.add(L)
+
+        merged = [dict(driver_stints[0])]
+        for i, s in enumerate(driver_stints[1:]):
+            if i in confirmed_boundaries:
+                merged.append(dict(s))
+            else:
+                merged[-1]["lap_end"] = s["lap_end"]
+        out.extend(merged)
+    return out
+
+
 def _split_stints_on_missing_pit_stops(stints: list[dict], pits: list[dict]) -> list[dict]:
     """Insert a stint boundary for any real pit-lane visit (get_pit_stops)
     that `stints` has no row boundary for at all -- see get_pit_stops'
@@ -531,7 +619,13 @@ def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
         pits = get_pit_stops(session_key, ttl)
     except Exception:
         pits = []
-    return _split_stints_on_missing_pit_stops(merged, pits)
+    # Order matters: a real pit stop can be hidden *inside* an over-long raw
+    # stint (get_pit_stops' docstring case) -- split those out first, so the
+    # phantom-boundary merge below only ever collapses a boundary that truly
+    # has no real stop anywhere near it, not one that merely hasn't been
+    # revealed yet.
+    split = _split_stints_on_missing_pit_stops(merged, pits)
+    return _merge_stints_without_matching_pit_stop(split, pits)
 
 
 def _merge_stint_fragments(rows: list[dict]) -> list[dict]:

@@ -2938,6 +2938,72 @@ Scope note: this redesign only touched the post-race debrief
 different narrative-adjacent fields and was out of scope here -- revisit
 only if asked to extend the same treatment there.
 
+### Phantom grid-side stint boundaries from the red-flagged start, resolved via a full-field Pirelli cross-check, 2026-10-06
+Follow-up to the "stints was missing real pit stops" entry above, same race
+(2026 Bahrain GP, meeting 1308). User-reported: Hamilton's debrief showed his
+real 31-lap opening SOFT stint as SOFT(1)+MEDIUM(2-31) -- a phantom compound
+change with no real pit-lane visit anywhere near it (his real stops were laps
+31 and 43). The earlier entry had deliberately left this *class* of problem
+alone because the one check available then (VER vs LEC) showed the identical
+local shape -- a short, pit-log-unconfirmed stint before a longer one -- could
+be either a genuine compound (LEC) or a mislabel (VER), with no way to tell
+which from `stints`/`pit`/`race_control` alone.
+
+The user then supplied Pirelli's official pit-stop graphic for the *entire*
+field (not one driver), which made the general fix possible: cross-referencing
+every driver's real pit-lane log (`data.live.get_pit_stops`, independent of
+`stints`) against Pirelli's chart confirmed `pit`'s lap numbers match Pirelli
+exactly for every driver -- i.e. `pit` *is* reliable ground truth here, and
+the missing piece was never a lack of ground truth, just a fix that only
+worked in one direction. The existing `_split_stints_on_missing_pit_stops`
+(2026-10-05) only adds a boundary for a confirmed-real stop `stints` is
+missing; nothing undid the opposite error -- a boundary `stints` reports that
+no real pit-lane visit backs at all (this race's suspended formation lap let
+every team swap tyres on the grid, which `stints` logs as its own row despite
+no pit-lane transit ever happening). 20 of 22 drivers had at least one such
+phantom boundary.
+
+Added `data.live._merge_stints_without_matching_pit_stop`: collapses a stint
+boundary with no real pit lap within `PIT_BOUNDARY_TOLERANCE_LAPS`, keeping
+the earlier stint's compound and tyre age. Runs in `get_stints` *after*
+`_split_stints_on_missing_pit_stops` (split first, so a real stop hidden
+inside an over-long raw stint -- get_pit_stops' documented case -- is revealed
+before the merge pass decides which remaining boundaries are phantom; got
+this backwards on the first pass, which let the merge swallow Hamilton's real
+lap-31 stop into one 42-lap SOFT stint before the split had a chance to carve
+it out). Matching is a one-to-one nearest assignment, not "any boundary
+within tolerance" -- with stints this short, a single real pit lap can sit
+within tolerance of two adjacent boundaries at once (Leclerc's lap-1 and
+lap-3 boundaries are both within 2 laps of his real lap-3 stop; a loose check
+confirmed both and left his genuine phantom lap-1 split standing instead of
+merging it). Verified field-wide against Pirelli's graphic: every driver's
+stop count now matches exactly, and the field's total collapsed from a
+previously-reported 95 down to 73 -- an exact match for `pit`'s own
+independent total, not just a rough improvement.
+
+This does not re-attempt the rejected "trust the first entry" compound-
+identity fix: it never relabels a compound on a boundary a real pit stop
+*does* confirm (Leclerc's genuine lap-3 stop and his real second compound are
+untouched), so it can't repeat that fix's mistake of guessing identity where
+the data doesn't resolve it -- it only ever decides whether a boundary nothing
+confirms should exist at all.
+
+**Found but NOT fixed, a separate bug**: cross-checking the same Pirelli
+graphic surfaced a second, different problem this change doesn't touch --
+a wrong compound label on a stint whose boundary IS pit-log-confirmed (so the
+boundary-merge logic correctly leaves it alone, since it only ever touches
+unconfirmed boundaries). Confirmed cases: LEC's laps 4-9 read SOFT in
+`stints` but Pirelli shows INTERMEDIATE for that exact pit-log-confirmed
+window; PIA's laps 3-9 read HARD but Pirelli shows INTERMEDIATE; GAS's laps
+~10-25 read SOFT but Pirelli shows MEDIUM. All three are the stint
+*immediately following* the chaotic red-flag opening, suggesting the same
+root incident corrupts the compound sensor/reporting for a few laps after
+the restart, not just during the stoppage itself -- but this is a distinct
+failure mode from the boundary problem above, and needs its own
+investigation (same "verify field-wide against Pirelli" approach would
+likely work, just not done yet) before attempting a fix. `PACK_VERSION`
+12 -> 13 to force cached debriefs to rebuild against the corrected stints.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

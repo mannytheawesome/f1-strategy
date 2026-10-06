@@ -27,7 +27,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 12  # 12: narrative schema redesigned to short interleaved beats
+PACK_VERSION = 13  # 13: data.live reconciles phantom (grid-side, red-flag) stint boundaries
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
