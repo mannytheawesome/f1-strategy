@@ -595,6 +595,28 @@ def _split_stints_on_missing_pit_stops(stints: list[dict], pits: list[dict]) -> 
     return out
 
 
+# A stint whose `compound` OpenF1 never reported at all (raw value is
+# null, not just slow to backfill) and that this project has independently
+# verified against Pirelli's own published pit-stop graphic. Keyed by
+# (session_key, driver_number, stint_number) so it can only ever fill a
+# specific, confirmed-missing value -- never override a compound OpenF1
+# DID report (that risk, and why it's not an automatic rule, is the same
+# reasoning documented in CLAUDE.md for the suspended-start compound
+# mislabeling that was deliberately left unfixed).
+KNOWN_COMPOUND_GAPS: dict[tuple[int, int, int], str] = {
+    # 2026 Australian GP (meeting 1279, session 11234): 6 drivers' opening
+    # stint has compound=null with tyre_age_at_start=2 (a used/scrubbed
+    # set, not a live-session backfill gap) -- Pirelli's graphic confirms
+    # MEDIUM for every one of them.
+    (11234, 10, 1): "MEDIUM",   # GAS
+    (11234, 11, 1): "MEDIUM",   # PER
+    (11234, 23, 1): "MEDIUM",   # ALB
+    (11234, 30, 1): "MEDIUM",   # LAW
+    (11234, 31, 1): "MEDIUM",   # OCO
+    (11234, 63, 1): "MEDIUM",   # RUS
+}
+
+
 def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
     """Stint rows, sanitised: live sessions emit rows with null fields
     (tyre_age_at_start, lap_start, compound) before OpenF1 backfills them,
@@ -609,10 +631,11 @@ def get_stints(session_key: int, ttl: float = HIST_TTL) -> list[dict]:
             continue   # inverted bounds — a corrupt row, not a stint
         if (s.get("tyre_age_at_start") is None or s.get("stint_number") is None
                 or s.get("compound") is None):
+            gap_key = (session_key, s.get("driver_number"), s.get("stint_number"))
             s = {**s,
                  "tyre_age_at_start": s.get("tyre_age_at_start") or 0,
                  "stint_number": s.get("stint_number") or 0,
-                 "compound": s.get("compound") or "UNKNOWN"}
+                 "compound": s.get("compound") or KNOWN_COMPOUND_GAPS.get(gap_key) or "UNKNOWN"}
         out.append(s)
     merged = _merge_stint_fragments(out)
     try:

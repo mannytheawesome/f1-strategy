@@ -3004,6 +3004,45 @@ investigation (same "verify field-wide against Pirelli" approach would
 likely work, just not done yet) before attempting a fix. `PACK_VERSION`
 12 -> 13 to force cached debriefs to rebuild against the corrected stints.
 
+### Opening-stint compound gaps filled for a second race, two false alarms ruled out, 2026-10-06
+User asked to check the 2026 Australian GP (meeting 1279, session 11234) for
+the same kind of issue. Two leads investigated and ruled out as real bugs
+before finding the one that was:
+
+- Field-wide stop count (34 ours vs 36 real `pit` visits) initially looked
+  like under-counting for ALO and STR, the mirror image of the Bahrain bug.
+  Both were false alarms: ALO's apparent second stop (lap 13) has
+  `stop_duration: None` and a 972-second `lane_duration` against a ~20-30s
+  field norm -- not a tyre change, and his own tyre-age telemetry (age 2 at
+  lap 13 exactly matches a set fitted at lap 11) proves it's the same
+  physical tyre carried through; the existing age-continuity merge in
+  `_merge_stint_fragments` already handles this correctly. STR's "missing"
+  lap-46 stop is explained by his own lap-by-lap timing data (a third,
+  independent endpoint) stopping dead at lap 43 -- `58 total laps - 15 laps
+  behind = 43` exactly, meaning his race effectively ended there (same
+  incident as his own 1081-second pit-lane anomaly) and he was classified
+  under the percentage-of-distance rule, not a stint-data gap. A real fix
+  was drafted and tested for this (gate `_merge_stint_fragments`'s
+  short-sliver heuristic on the real pit log) before realising the premise
+  was wrong, and was reverted rather than shipped on unproven risk.
+- The real bug: 6 drivers' (RUS, GAS, OCO, ALB, LAW, PER) opening stint has
+  `compound: null` in OpenF1's raw `stints` response -- confirmed via the
+  raw API response, not just the sanitiser's "UNKNOWN" fallback -- each with
+  `tyre_age_at_start: 2` (a used/scrubbed set, not a live-backfill gap).
+  Pirelli's graphic (user-supplied) confirms MEDIUM for all six. Added
+  `KNOWN_COMPOUND_GAPS` in `data/live.py`: a verified-ground-truth table
+  keyed by `(session_key, driver_number, stint_number)`, consulted only
+  when `compound` is null -- it can never override a compound OpenF1
+  actually reported, so it carries none of the risk the rejected "trust the
+  first entry" fix had. `PACK_VERSION` 13 -> 14.
+
+Lesson for next time this pattern shows up: a `pit`-endpoint entry is not
+always a real tyre-changing stop (`stop_duration` vs `lane_duration` vs an
+abnormal duration matters), and a driver's own `laps` data is worth checking
+independently before concluding a stint-data gap is a bug rather than the
+race's own result (retirement, lapped-and-classified, a penalty) explaining
+it.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
