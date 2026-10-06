@@ -77,9 +77,7 @@ NARRATIVE_SCHEMA = {
         "lede":     {"type": "string", "description": "ONE sentence, max 30 words: the single thesis of how this race was won and lost"},
         "beats": {
             "type": "array",
-            "minItems": 4,
-            "maxItems": 7,
-            "description": "4-7 short, data-anchored moments, most decisive first. Each is a caption, not a paragraph.",
+            "description": "EXACTLY 4 to 7 short, data-anchored moments, most decisive first. Each is a caption, not a paragraph. (Anthropic's structured-output schema cannot enforce this count -- the model must self-limit to 4-7 items.)",
             "items": {
                 "type": "object",
                 "properties": {
