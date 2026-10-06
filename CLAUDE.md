@@ -2873,6 +2873,71 @@ a different OpenF1 field, or anything else that can confirm the true
 compound independently of `stints` itself) -- don't re-attempt the blanket
 "trust the first entry" rule without one.
 
+### Debrief narrative redesigned: interleaved beats, not 6 separate prose blocks, 2026-10-06
+User-reported: the debrief narrative was "just a big blob of text" and asked
+for it to be "more engaging" -- then, when offered a choice between visual
+polish, restructuring into scannable beats, or a full redesign interleaving
+narrative with data, explicitly picked the most ambitious option: weave each
+narrative piece directly into the data section it describes rather than
+clustering prose blocks elsewhere on the page.
+
+Old `NARRATIVE_SCHEMA` (`engine/briefing.py`) had 6 free-form string fields
+(`race_story` 250-400 words, `tyre_story`, `the_stops`, `strategy_verdicts`,
+`prior_check`) rendered as standalone `proseCard`s, each sitting right after
+a real, already-well-structured table (`stops_graded`, `prerace_scorecard`)
+that it mostly just re-narrated in paragraph form -- redundant with the table
+and with each other (a driver's stop would get mentioned in `race_story`,
+`the_stops`, *and* `strategy_verdicts` across three different paragraphs).
+
+New schema: `headline` (unchanged) + `lede` (one-sentence hook, shown under
+the headline) + `beats` (4-7 short objects, each `{acronym, tag, stat, text}`
+pinned to one driver and one real number -- a stop's `gain_s`, a `pace_delta`,
+a grid-to-finish swing; `tag` is one of stop/drive/tyres/strategy/crash_out)
++ three short (<=60-word) intro fields -- `tyre_verdict`, `stops_verdict`,
+`prior_check` -- that render as a single paragraph directly above the
+degradation chart / stops-graded table / prerace-scorecard table respectively,
+instead of a disconnected block. `race_story` and `strategy_verdicts` are
+gone entirely: that content now lives in `beats`, which folds what were two
+overlapping narrated lists (the race's key moments and the best/worst
+strategy calls) into one ranked, driver-tagged feed, cutting the duplication
+rather than just reformatting it.
+
+`frontend/briefing.js`: new `beatsCard()` renders the beats feed as a "Key
+moments" card (pushed first in the customizable `sections` array, right
+after the fixed results table/what-if editor); `degCurveCard()` gained an
+optional third `verdict` param rendered as a `.verdict-intro` paragraph; the
+stops-graded and prior-check cards each gained the same inline intro
+paragraph above their table. The five old standalone narrative sections
+(`race-story`, `tyre-story`, `stops-story`, `strategy-verdicts`,
+`prior-check-story`) were removed outright, not hidden -- `applyLayout`
+already drops any saved layout id that no longer matches a current section,
+so no migration was needed for existing visitors' saved layouts.
+
+Gotcha caught before shipping: `validate_tyre_claims` (the hallucination
+guardrail that confirms every tyre-sequence claim like "HARD-HARD-HARD"
+against a real driver's `compound_sequence`) only joined the narrative's
+*top-level string* values into one blob to scan. `beats` is a list of dicts,
+so a hallucination buried in a beat's `text` would have been invisible to
+the checker with no error or warning -- a real regression, not hypothetical.
+Fixed by adding `_all_strings()`, which recurses through dicts/lists to
+collect every string leaf, and using that instead. Covered by
+`tests/test_narrative_validation.py` (a hallucination inside a beat is
+caught; a real compound sequence inside a beat is not falsely flagged).
+
+`PACK_VERSION` 11 -> 12 (schema shape changed, so cached narratives need
+regenerating). Verified end-to-end locally: built a real data pack via
+`build_briefing_data` against cached session 11731 (no Anthropic key
+available in the local shell, so narrative content was hand-written to the
+real schema shape rather than LLM-generated), served it through the actual
+FastAPI + frontend stack, and screenshotted the rendered page -- the lede,
+key-moments feed, and all three inline verdicts rendered in their intended
+positions with no leftover standalone prose cards.
+
+Scope note: this redesign only touched the post-race debrief
+(`renderBriefing`). The pre-race briefing (`renderPrerace`) has its own,
+different narrative-adjacent fields and was out of scope here -- revisit
+only if asked to extend the same treatment there.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

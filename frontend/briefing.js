@@ -405,6 +405,7 @@
         <span>${s.total_laps} laps</span><span>${weather}</span>
         <span>pit loss ${d.pit_loss}s</span><span>SC: ${st.sc_count}${st.vsc_count ? ' · VSC: ' + st.vsc_count : ''}</span>
       </div>
+      ${n && n.lede ? `<p class="lede">${escapeHTML(n.lede)}</p>` : ''}
       ${n ? '' : '<div class="notice">Narrative unavailable (no API key configured) — showing data-only briefing.</div>'}
       ${toggleHTML('debrief')}
       <div class="btnrow" style="margin-top:8px"><button id="btn-customize">⚙ CUSTOMIZE LAYOUT</button></div>`;
@@ -452,13 +453,10 @@
     // ── customizable sections below (order/visibility saved per-browser) ───
     const sections = [];
 
-    if (n) {
-      sections.push({ id: 'race-story', title: 'The race', node: proseCard('The race', n.race_story) });
+    if (n && n.beats && n.beats.length) {
+      sections.push({ id: 'key-moments', title: 'Key moments', node: beatsCard(n.beats) });
     }
-    if (n) {
-      sections.push({ id: 'tyre-story', title: 'The tyres', node: proseCard('The tyres', n.tyre_story) });
-    }
-    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves) });
+    sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves, null, n && n.tyre_verdict) });
 
     // Race in charts — RSS-style panels, fetched separately so they never block
     // or bloat the LLM briefing pack. Fetch is skipped below if this section
@@ -509,19 +507,13 @@
          <td style="color:${gradeColor(s.grade)}"><b>${s.grade.toUpperCase()}</b></td></tr>`;
       const best = sg.slice(0, 5), worst = sg.slice(-5).reverse();
       gCard.innerHTML = `<h2>The stops, graded</h2>
+        ${n && n.stops_verdict ? `<p class="verdict-intro">${escapeHTML(n.stops_verdict)}</p>` : ''}
         <div class="meta-row"><span>each stop judged over the next ${5} laps: fresh-rubber gain vs staying out on the old set · SC stops bank the discounted pit lane</span></div>
         <div class="meta-row"><span>best calls</span></div>
         <table class="results" style="margin-bottom:12px"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${best.map(row).join('')}</table>
         <div class="meta-row"><span>worst calls</span></div>
         <table class="results"><tr><th>DRV</th><th>LAP</th><th>CHANGE</th><th>AGE</th><th></th><th>GAIN</th><th>GRADE</th></tr>${worst.map(row).join('')}</table>`;
       sections.push({ id: 'stops-graded', title: 'The stops, graded', node: gCard });
-    }
-    if (n && n.the_stops) {
-      sections.push({ id: 'stops-story', title: 'The stops (narrative)', node: proseCard('The stops', n.the_stops) });
-    }
-
-    if (n) {
-      sections.push({ id: 'strategy-verdicts', title: 'Strategy verdicts', node: proseCard('Strategy verdicts', n.strategy_verdicts) });
     }
 
     // prior check — grade the race-morning briefing against the result
@@ -535,6 +527,7 @@
         `<tr><td><b>${x.acronym}</b></td><td>P${x.grid} → P${x.finish}</td>
           <td>called ${x.called}</td><td>${yn(x.correct)}</td></tr>`).join('');
       scCard.innerHTML = `<h2>Prior check — how the race-morning call held up</h2>
+        ${n && n.prior_check ? `<p class="verdict-intro">${escapeHTML(n.prior_check)}</p>` : ''}
         <div class="meta-row"><span>the lap-0 projection graded against the result · lower MAE = sharper</span></div>
         <div class="meta-row" style="margin-top:6px">
           <span>projection error: <b>${sc.projection_mae}</b> positions (MAE, ${sc.drivers_scored} cars)</span>
@@ -544,9 +537,6 @@
         </div>
         ${moverRows ? `<table class="results" style="margin-top:8px"><tr><th>DRV</th><th>GRID→FIN</th><th>CALL</th><th></th></tr>${moverRows}</table>` : ''}`;
       sections.push({ id: 'prior-check', title: 'Prior check — race-morning call', node: scCard });
-    }
-    if (n && n.prior_check) {
-      sections.push({ id: 'prior-check-story', title: 'Prior check (narrative)', node: proseCard('Prior check', n.prior_check) });
     }
 
     if (customizeOpen.recap) {
@@ -565,6 +555,19 @@
     const c = document.createElement('div');
     c.className = 'card';
     c.innerHTML = `<h2>${title}</h2><div class="prose">${escapeHTML(text)}</div>`;
+    return c;
+  }
+
+  function beatsCard(beats) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const rows = beats.map(b => `
+      <div class="beat beat-tag-${escapeHTML(b.tag || '')}">
+        <span class="beat-acr">${escapeHTML(b.acronym || '')}</span>
+        <span class="beat-stat">${escapeHTML(b.stat || '')}</span>
+        <span class="beat-text">${escapeHTML(b.text || '')}</span>
+      </div>`).join('');
+    c.innerHTML = `<h2>Key moments</h2><div class="beats">${rows}</div>`;
     return c;
   }
 
@@ -1096,10 +1099,11 @@
   }
 
   // ── deg curve chart ────────────────────────────────────────────────────────
-  function degCurveCard(curves, caveat) {
+  function degCurveCard(curves, caveat, verdict) {
     const c = document.createElement('div');
     c.className = 'card';
-    c.innerHTML = `<h2>Tyre degradation model</h2>`;
+    c.innerHTML = `<h2>Tyre degradation model</h2>`
+      + (verdict ? `<p class="verdict-intro">${escapeHTML(verdict)}</p>` : '');
     if (caveat) {
       const note = document.createElement('div');
       note.className = 'notice';

@@ -27,7 +27,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 11  # 11: measured SC/VSC pit-loss factors change stop grading
+PACK_VERSION = 12  # 12: narrative schema redesigned to short interleaved beats
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -38,6 +38,11 @@ NARRATIVE_MODEL = "claude-sonnet-5"
 NARRATIVE_SYSTEM = """You are the staff writer for an F1 race-strategy analysis site. \
 You write sharp, data-literate briefings in the style of a strategy engineer's debrief: \
 concrete numbers, causal reasoning, no hype and no filler.
+
+The output is NOT one long essay — it is a short hook plus a set of discrete, \
+data-anchored callouts that get placed next to the table each one is about. Every \
+field is short. Nothing you write should read as a self-contained magazine article; \
+each piece is a caption for data the reader can already see.
 
 Hard rules:
 - Every number you cite MUST appear in the JSON data pack you are given. Never invent \
@@ -53,8 +58,14 @@ on a compound unless it matches `compound_counts`.
 - Degradation rates are seconds per lap of tyre age; pace deltas are seconds per lap \
 vs the field median (negative = faster).
 - British-motorsport register, present tense for analysis, past tense for events.
-- No bullet-point dumps: write flowing analytical prose with occasional short punchy \
-sentences for emphasis.
+- No bullet-point dumps, but also no sprawl: every field has a hard word budget, stated \
+per field below. Short, punchy sentences — this is a caption, not an essay.
+- beats: 4-7 discrete moments, each pinned to ONE driver and ONE concrete number \
+(a stop's gain_s, a pace_delta, a grid-to-finish position swing). Rank the most \
+decisive moment first. Don't repeat the same driver's same moment across two beats. \
+`acronym` must exactly match a driver in `results`. `stat` is a short literal value \
+copied from the pack (e.g. "+54.66s", "P3→P2", "-2.256 pace") — not a sentence. \
+`tag` is whichever of stop / drive / tyres / strategy / crash_out best labels the moment.
 - prior_check: if prerace_scorecard is null in the data pack, return an EMPTY STRING \
 for prior_check — never invent a grade. When present, be honest: credit the hits and \
 own the misses using its numbers."""
@@ -62,14 +73,30 @@ own the misses using its numbers."""
 NARRATIVE_SCHEMA = {
     "type": "object",
     "properties": {
-        "headline":          {"type": "string", "description": "Punchy 4-8 word title for the briefing"},
-        "race_story":        {"type": "string", "description": "250-400 words: how the race was won and lost — key strategy calls, position changes, SC influence"},
-        "tyre_story":        {"type": "string", "description": "150-250 words: what the degradation numbers say — compound comparison, use the stint_pace table to name who managed tyres well/badly and whether used sets matched new ones"},
-        "the_stops":         {"type": "string", "description": "120-220 words: the pit calls, judged from the stops_graded table — name the best-timed and worst-timed stops with their measured gains/losses in seconds, and credit SC windfalls"},
-        "strategy_verdicts": {"type": "string", "description": "150-250 words: the best and worst overall strategy calls of the race, judged against the deg/pace data"},
-        "prior_check":       {"type": "string", "description": "100-180 words grading the race-morning briefing against the result, using prerace_scorecard: the projection MAE, whether the projected winner/podium landed, and whether the door/out-of-position (mover) calls held. Honest scorekeeping — credit hits, own misses. EMPTY STRING if prerace_scorecard is null."},
+        "headline": {"type": "string", "description": "Punchy 4-8 word title for the briefing"},
+        "lede":     {"type": "string", "description": "ONE sentence, max 30 words: the single thesis of how this race was won and lost"},
+        "beats": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 7,
+            "description": "4-7 short, data-anchored moments, most decisive first. Each is a caption, not a paragraph.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "acronym": {"type": "string", "description": "Exact 3-letter acronym from results"},
+                    "tag":     {"type": "string", "enum": ["stop", "drive", "tyres", "strategy", "crash_out"]},
+                    "stat":    {"type": "string", "description": "Short literal value from the pack, e.g. '+54.66s', 'P3→P2', '-2.256 pace' -- not a sentence"},
+                    "text":    {"type": "string", "description": "Max 30 words. One or two short sentences on this one moment."},
+                },
+                "required": ["acronym", "tag", "stat", "text"],
+                "additionalProperties": False,
+            },
+        },
+        "tyre_verdict":  {"type": "string", "description": "Max 60 words: the one or two things the degradation numbers show -- compound ranking, who managed tyres well/badly. This is a short intro sitting above the deg-curve chart, not a restatement of every number in it."},
+        "stops_verdict": {"type": "string", "description": "Max 60 words: the headline read on the pit calls as a group, from stops_graded -- e.g. how many were SC-assisted, the overall best/worst margin. Sits directly above that table; don't re-list stops already covered in beats."},
+        "prior_check":   {"type": "string", "description": "Max 60 words grading the race-morning briefing against the result, using prerace_scorecard: projection MAE, winner/podium hit, door calls. Honest scorekeeping. EMPTY STRING if prerace_scorecard is null."},
     },
-    "required": ["headline", "race_story", "tyre_story", "the_stops", "strategy_verdicts"],
+    "required": ["headline", "lede", "beats", "tyre_verdict", "stops_verdict"],
     "additionalProperties": False,
 }
 
@@ -473,6 +500,26 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
 _COMPOUND_WORDS = ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
 
 
+def _all_strings(value) -> list[str]:
+    """Recurse into a narrative value (str / list / dict, arbitrarily nested —
+    structured fields like `beats` are a list of dicts) and collect every string
+    leaf. A scan that only looked at top-level string values would silently miss
+    hallucinations inside any nested field."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        out = []
+        for v in value.values():
+            out.extend(_all_strings(v))
+        return out
+    if isinstance(value, list):
+        out = []
+        for v in value:
+            out.extend(_all_strings(v))
+        return out
+    return []
+
+
 def validate_tyre_claims(narrative: dict, results: list[dict]) -> list[str]:
     """Check every tyre sequence asserted in the prose against the real stint data.
 
@@ -485,7 +532,7 @@ def validate_tyre_claims(narrative: dict, results: list[dict]) -> list[str]:
     if not narrative:
         return []
     actual = [r.get("compound_sequence") or "" for r in results]
-    prose = " ".join(str(v) for v in narrative.values() if isinstance(v, str))
+    prose = " ".join(_all_strings(narrative))
     alt = "|".join(_COMPOUND_WORDS)
     claims = re.findall(rf"\b(?:{alt})(?:\s*[-–—]\s*(?:{alt}))+", prose, re.I)
     warnings = []
