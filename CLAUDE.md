@@ -3157,6 +3157,20 @@ every "success" test quietly returned `None` and still looked like it might
 pass by accident if asserted loosely. Fixed the fixtures, not the exception
 handling (the broad catch is correct behaviour; the fixture was wrong).
 
+**Production regression caught immediately after deploy**: the pre-race
+narrative started failing outright (`narrative: null`) for every request.
+Railway logs showed `json.loads` raising "Unterminated string" -- the
+model's JSON output was truncated mid-field, not a refusal or an API error.
+`generate_structured_narrative`'s `max_tokens=8000` is shared by adaptive
+thinking and the actual output; the pre-race schema's 8 long fields were
+already close to that ceiling, and `race_shape`'s new win-rate instruction
+was enough extra prompt complexity to tip it over. Fixed by raising
+`max_tokens` to 16000 (free -- billed on tokens actually used, not the
+ceiling) and added an explicit `stop_reason == "max_tokens"` check so the
+next truncation logs plainly instead of surfacing only as a cryptic
+`json.loads` error. Shared by both briefing generators, so the debrief
+narrative gets the same headroom even though it wasn't the one that broke.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

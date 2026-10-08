@@ -643,7 +643,14 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
         client = anthropic.Anthropic()
         response = client.messages.create(
             model=NARRATIVE_MODEL,
-            max_tokens=8000,
+            # The pre-race schema's 8 fields (up to ~300 words each) and
+            # adaptive thinking compete for the same budget -- 8000 was cut
+            # too fine and truncated mid-JSON in production the moment the
+            # prompt grew by even one more instruction (confirmed via
+            # json.loads' "Unterminated string" error, not a refusal or an
+            # API failure). Generous headroom costs nothing extra (billed on
+            # actual tokens used, not this ceiling).
+            max_tokens=16000,
             thinking={"type": "adaptive"},
             system=system,
             output_config={"format": {"type": "json_schema", "schema": schema}},
@@ -654,6 +661,9 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
             }],
         )
         if response.stop_reason == "refusal":
+            return None
+        if response.stop_reason == "max_tokens":
+            print("[briefing] narrative generation hit max_tokens -- truncated, discarding")
             return None
         text = next((b.text for b in response.content if b.type == "text"), None)
         return json.loads(text) if text else None
