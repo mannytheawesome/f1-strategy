@@ -3171,6 +3171,83 @@ next truncation logs plainly instead of surfacing only as a cryptic
 `json.loads` error. Shared by both briefing generators, so the debrief
 narrative gets the same headroom even though it wasn't the one that broke.
 
+### Phase 3: corner-by-corner wet/dry grip sensitivity via FastF1, 2026-10-08
+Third and final phase of the narrative-depth/graphics request (Buscombe's
+"canary vs liar corners" -- which corners show a grip change earliest/most
+clearly vs which stay deceptively quick and mislead a strategist reading
+them). OpenF1 (this project's data source everywhere else) has no
+telemetry or corner-level data at all; FastF1 (github.com/theOehrly/
+Fast-F1) reads the same official live-timing feed but exposes full car
+telemetry and an official per-circuit corner map. New dependency, added
+deliberately (not casually): `fastf1==3.8.3`. Cost-checked before building
+anything -- see the conversation that led here: no Anthropic API cost (it
+never calls Claude), free data access (no key, no subscription, unlike
+OpenF1 live), and on this project's actual Railway Hobby plan (8GB RAM/8
+vCPU/100GB disk, usage barely above $0 this period) the ~330MB of new
+installed packages and ~75-100MB/race cache are both non-issues.
+
+New `engine/corner_sensitivity.py`: for every corner, compares median apex
+(minimum) speed across the race's own clean dry-compound laps against its
+clean wet-compound laps -- an IN-RACE comparison (not cross-race), so track
+evolution/temperature can't confound it. Session identity: FastF1 is keyed
+by (year, event name, session type), not OpenF1's session_key; (year,
+country_name, "R") passed straight from the already-built pack resolves
+correctly via FastF1's own fuzzy matching (confirmed against several real
+2026 sessions) -- deliberately NOT round_number, which was confirmed to
+disagree between the two data sources for the same races (FastF1 counts
+sprint/non-championship sessions differently; Bahrain is round 18 in this
+project's own numbering but round 16 in FastF1's). Gated in
+`build_briefing_data` on the race actually having wet-compound running at
+all (cheap: just scans `compound_sequence` already in the pack) -- a
+bone-dry race would otherwise pay a ~15-25s FastF1 session load for a
+guaranteed `None`. Deliberately post-race only, never called from the
+pre-race briefing (FastF1 has nothing to serve until a session is
+archived). New pack field `corner_sensitivity`, new narrative field
+`corner_verdict` (empty string if null, same pattern as the other optional
+fields), new frontend chart (reuses the `.pace-row`/`.pace-bar` styling
+`teamPaceCard`/`strategyWinRateCard` already established). `PACK_VERSION`
+15 -> 16.
+
+**A real methodological bug found and fixed before shipping, not a
+hypothetical**: the first version windowed on FastF1's 1D `Distance`
+channel (how far along the lap a telemetry point is) around each corner's
+reference distance marker. Tested against real data (2026 Canada, the
+first race found with both a working circuit map and genuine wet-compound
+laps -- the one race most discussed this whole session, the mislabeled
+2026 Bahrain GP, has wet running but no working circuit map at all, see
+below) and got a physically impossible result: several corners showed the
+"wet" apex speed FASTER than the "dry" one, and the size of that
+impossible gap grew the further into the lap the corner fell (corner 1:
+-45%, corner 10: -151%) -- the exact signature of **distance drift
+accumulating along the lap** (a lap's own total `Distance` isn't perfectly
+consistent lap-to-lap; different racing lines cover slightly different
+ground), not noise. Fixed by switching to straight-line X/Y proximity to
+each corner's reference position (also provided by FastF1's circuit map),
+which has no such drift since it's a real spatial position regardless of
+how any given lap's own distance accounting reads. Re-verified against the
+same real data: every corner came back with a physically sensible,
+coherent 3-34% wet-vs-dry loss, cleanly ranked.
+
+**Confirmed real, not hypothetical, gap**: the 2026 Bahrain GP (meeting
+1308) -- the single most-investigated race this whole session, whose
+`stints` data mislabeling is documented at length above -- has no FastF1
+circuit map at all. `get_circuit_info()` fails internally because FastF1
+keys the track map by the session's own official Location field, which
+for this race reads "Kuala Lumpur" -- the exact same upstream data oddity
+already causing problems for OpenF1, just manifesting differently here
+(session/lap data loads fine; only the circuit MAP lookup fails). This
+isn't a bug to fix -- it degrades to `None` like any other FastF1 failure,
+and there's no reliable fallback circuit map to substitute (same
+"don't guess" principle as every other optional field in this file).
+
+**Local dev-environment-only issue, not a code bug**: local testing hit a
+scipy binary load failure (`_propack` dlopen error) specific to this
+machine's existing numpy/scipy installation on Apple Silicon -- confirmed
+unrelated to this module's correctness by running the exact same code
+through a freshly-created venv (clean dependency resolution), where it
+worked without issue. Not expected to affect Railway's Linux deploy, which
+resolves its own wheels independently per requirements.txt.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

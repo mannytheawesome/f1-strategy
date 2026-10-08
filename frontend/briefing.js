@@ -458,6 +458,11 @@
     }
     sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves, null, n && n.tyre_verdict) });
 
+    if (d.corner_sensitivity && d.corner_sensitivity.corners.length) {
+      sections.push({ id: 'corner-sensitivity', title: 'Which corners told you first',
+                     node: cornerSensitivityCard(d.corner_sensitivity, n) });
+    }
+
     // Race in charts — RSS-style panels, fetched separately so they never block
     // or bloat the LLM briefing pack. Fetch is skipped below if this section
     // ends up hidden — no point pulling chart data nobody will see.
@@ -592,6 +597,38 @@
       <div style="margin:10px 0">${whatifTraceSVG(scenario.trace)}</div>
       <div class="meta-row" style="font-size:10px"><span>re-simulated full race, same real strategy for every other driver · <b style="color:#2f6fed">blue</b> = ${escapeHTML(scenario.acronym)}'s real strategy · <b>grey</b> = the field · gold bands = SC/VSC · lower = faster</span></div>
       <div class="notice" style="font-size:10px">Only the stop lap changed — same compounds, same number of stops. This is a real model re-run, not an estimate.</div>`;
+    return c;
+  }
+
+  // ── corner sensitivity: median apex speed, dry vs wet, by corner (FastF1
+  // telemetry) — canary corners (biggest loss) lead, liar corners (smallest,
+  // a misleading tell) trail. Same bar styling as teamPaceCard/strategyWinRateCard.
+  function cornerSensitivityCard(cs, narrative) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const corners = cs.corners;
+    const MAX_BAR_PX = 420;
+    const maxLoss = Math.max(...corners.map(x => Math.abs(x.loss_pct)), 0.01);
+    const canarySet = new Set(cs.canary_corners);
+    const liarSet = new Set(cs.liar_corners);
+    const rows = corners.map(x => {
+      const w = Math.max(2, Math.abs(x.loss_pct) / maxLoss * MAX_BAR_PX);
+      const isCanary = canarySet.has(x.corner);
+      const isLiar = liarSet.has(x.corner);
+      const color = isCanary ? 'var(--red)' : (isLiar ? 'var(--muted)' : 'var(--medium)');
+      const tag = isCanary ? ' <span style="color:var(--red-text);font-size:9px">CANARY</span>'
+        : isLiar ? ' <span style="color:var(--muted);font-size:9px">LIAR</span>' : '';
+      return `<div class="pace-row">
+        <span class="pace-team">Turn ${x.corner}</span>
+        <div class="pace-track"><span class="pace-bar" style="width:${w.toFixed(1)}px;background:${color}"></span>
+          <span class="pace-label">${x.loss_pct.toFixed(1)}% slower in the wet${tag}</span></div>
+      </div>`;
+    }).join('');
+    const verdictText = (narrative && narrative.corner_verdict) || '';
+    c.innerHTML = `<h2>Which corners told you first</h2>
+      ${verdictText ? `<p class="verdict-intro">${escapeHTML(verdictText)}</p>` : ''}
+      <div class="meta-row"><span>median apex speed, this race's own dry-compound laps vs wet-compound laps · real telemetry (FastF1), not an estimate · <span style="color:var(--red-text)">red</span> = canary (earliest tell conditions changed) · <span style="color:var(--muted)">grey</span> = liar (misleadingly quick)</span></div>
+      <div class="pace-chart">${rows}</div>`;
     return c;
   }
 
