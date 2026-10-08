@@ -3248,6 +3248,49 @@ through a freshly-created venv (clean dependency resolution), where it
 worked without issue. Not expected to affect Railway's Linux deploy, which
 resolves its own wheels independently per requirements.txt.
 
+### Corner sensitivity, extended: fresh-vs-worn-tyre fallback for every race, 2026-10-08
+Same-day follow-up. User asked, reasonably, when the wet/dry corner chart
+above would "work for all races" -- it never would have: that comparison
+is inherently wet-vs-dry, and this project's own full-season scan (all 18
+completed 2026 rounds) found real wet-compound running in exactly ONE race
+(Canada) with a working circuit map (Bahrain also has wet laps but its
+circuit map doesn't resolve, per the entry above) -- every other race is
+bone dry and would correctly, permanently return `None`. Not a rollout
+timing question; a structural limit of what that one comparison measures.
+
+Added a second comparison to `engine/corner_sensitivity.py`, tried as a
+fallback when there's no wet running to compare: median apex speed on
+fresh tyres (early in a stint) vs worn tyres (`FRESH_MAX_AGE`/
+`WORN_MIN_AGE` using FastF1's `TyreLife` column), holding compound constant
+(the race's single most-run dry compound, so a compound change is never
+mistaken for wear) -- the same "canary vs liar corner" framing, for tyre
+degradation instead of weather. Works on essentially any race, since every
+race has fresh and worn tyres regardless of conditions. Removed the
+wet-compound pre-check gate in `build_briefing_data` entirely (both
+comparisons now live inside `build_corner_sensitivity` itself, which tries
+wet/dry first and falls back automatically) -- the function was already
+built to degrade to `None` safely, so there was no reason left to
+pre-filter which races even attempt it.
+
+Generalised the pack's output schema so one shape serves both modes:
+`mode` ("wet_dry" | "degradation"), `a_label`/`b_label` (what was actually
+compared), and generic `a_median_kmh`/`b_median_kmh`/`n_a`/`n_b` per
+corner, replacing the wet/dry-specific field names from the same-day entry
+above. The narrative instructions and the frontend card were updated to
+describe whichever mode actually ran rather than assuming weather.
+
+Verified against real telemetry before shipping, the same way the wet/dry
+version's drift bug was caught: ran the degradation fallback against the
+2026 Australian GP (bone dry, previously gated out entirely) and got a
+clean, physically coherent ranking with no red flags -- low-speed,
+technical corners (lateral tyre loading) showed the most sensitivity
+(Turn 14: 6.6%), high-speed corners showed near-zero, matching real
+racing intuition. Confirmed end-to-end through the full
+`build_briefing_data` pipeline and the actual rendered frontend card
+(title adapts to "Which corners feel the HARD tyre wear most" in
+degradation mode vs "Which corners told you first" in wet_dry mode).
+`PACK_VERSION` 16 -> 17.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

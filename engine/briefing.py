@@ -27,7 +27,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 16  # 16: FastF1-backed corner_sensitivity + corner_verdict narrative field
+PACK_VERSION = 17  # 17: corner_sensitivity falls back to fresh/worn-tyre degradation
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -76,11 +76,15 @@ delta_position position(s). If delta_position is 0, don't claim a position chang
 instead that it would have closed delta_gap_s seconds on the leader without changing the \
 finish. This is the one place a hypothetical belongs — everywhere else in this briefing \
 describes what actually happened.
-- corner_verdict: if corner_sensitivity is null, return an EMPTY STRING — this race had no \
-wet-running to measure, or the data wasn't available; never invent a corner reading. When \
-present, name the canary_corners (by number, e.g. "Turn 1") as the earliest, clearest tell \
-that grip had changed, citing their loss_pct, and name the liar_corners as the ones that \
-stayed deceptively quick and shouldn't be trusted as a read on conditions."""
+- corner_verdict: if corner_sensitivity is null, return an EMPTY STRING — the data wasn't \
+available; never invent a corner reading. When present, corner_sensitivity.mode is either \
+"wet_dry" (compares this race's own dry-compound laps against its wet-compound laps) or \
+"degradation" (compares fresh-tyre laps against worn-tyre laps on corner_sensitivity.compound, \
+when the race had no wet running to measure) — use a_label/b_label to describe the comparison \
+correctly rather than assuming it was about weather. Name the canary_corners (by number, e.g. \
+"Turn 1") as the earliest, clearest tell that grip had changed, citing their loss_pct, and \
+name the liar_corners as the ones that \
+stayed deceptively quick and shouldn't be trusted as a read on what changed."""
 
 NARRATIVE_SCHEMA = {
     "type": "object",
@@ -106,7 +110,7 @@ NARRATIVE_SCHEMA = {
         "stops_verdict": {"type": "string", "description": "Max 60 words: the headline read on the pit calls as a group, from stops_graded -- e.g. how many were SC-assisted, the overall best/worst margin. Sits directly above that table; don't re-list stops already covered in beats."},
         "prior_check":   {"type": "string", "description": "Max 60 words grading the race-morning briefing against the result, using prerace_scorecard: projection MAE, winner/podium hit, door calls. Honest scorekeeping. EMPTY STRING if prerace_scorecard is null."},
         "whatif_verdict": {"type": "string", "description": "Max 50 words stating what the re-simulation in whatif_scenario found: pitting on alt_stop_lap instead of real_stop_lap gains delta_position position(s). This sits beside the what-if chart. EMPTY STRING if whatif_scenario is null."},
-        "corner_verdict": {"type": "string", "description": "Max 50 words naming corner_sensitivity's canary_corners (biggest wet-vs-dry apex speed loss -- the earliest tell conditions changed) and liar_corners (smallest -- a misleading read). Cite loss_pct. EMPTY STRING if corner_sensitivity is null."},
+        "corner_verdict": {"type": "string", "description": "Max 50 words naming corner_sensitivity's canary_corners (biggest a-vs-b apex speed loss -- the earliest, clearest tell) and liar_corners (smallest -- a misleading read). Use mode/a_label/b_label to describe what was actually compared (wet vs dry, or fresh vs worn tyres) -- don't assume it was about weather. Cite loss_pct. EMPTY STRING if corner_sensitivity is null."},
     },
     "required": ["headline", "lede", "beats", "tyre_verdict", "stops_verdict"],
     "additionalProperties": False,
@@ -613,22 +617,20 @@ def build_briefing_data(session_key: int) -> dict:
         whatif_scenario = None
 
     # FastF1 (github.com/theOehrly/Fast-F1), not OpenF1: the only source this
-    # project has for corner-level telemetry. Gated on the race actually
-    # having wet-compound running at all -- a bone-dry race has nothing to
-    # compare and would just pay for a ~15-25s FastF1 session load for a
-    # guaranteed None. Post-race only, never called from the pre-race
-    # briefing, since FastF1 has nothing to serve until a session is
-    # archived.
-    corner_sensitivity = None
-    if any("INTERMEDIATE" in r["compound_sequence"] or "WET" in r["compound_sequence"]
-          for r in results):
-        try:
-            from engine.corner_sensitivity import build_corner_sensitivity
-            corner_sensitivity = build_corner_sensitivity(
-                session.get("year"), session.get("country_name"))
-        except Exception as e:
-            print(f"[briefing] corner sensitivity failed: {e}")
-            corner_sensitivity = None
+    # project has for corner-level telemetry. Tries a wet-vs-dry comparison
+    # first, falling back to fresh-vs-worn-tyre degradation when there was
+    # no wet running (build_corner_sensitivity's own job, not gated here) --
+    # unconditional, since the degradation path works on essentially any
+    # race regardless of weather. Post-race only, never called from the
+    # pre-race briefing, since FastF1 has nothing to serve until a session
+    # is archived.
+    try:
+        from engine.corner_sensitivity import build_corner_sensitivity
+        corner_sensitivity = build_corner_sensitivity(
+            session.get("year"), session.get("country_name"))
+    except Exception as e:
+        print(f"[briefing] corner sensitivity failed: {e}")
+        corner_sensitivity = None
 
     return {
         "session": {

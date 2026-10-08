@@ -459,7 +459,7 @@
     sections.push({ id: 'deg-curves', title: 'Tyre degradation model', node: degCurveCard(d.deg_curves, null, n && n.tyre_verdict) });
 
     if (d.corner_sensitivity && d.corner_sensitivity.corners.length) {
-      sections.push({ id: 'corner-sensitivity', title: 'Which corners told you first',
+      sections.push({ id: 'corner-sensitivity', title: 'Corner sensitivity',
                      node: cornerSensitivityCard(d.corner_sensitivity, n) });
     }
 
@@ -600,13 +600,18 @@
     return c;
   }
 
-  // ── corner sensitivity: median apex speed, dry vs wet, by corner (FastF1
-  // telemetry) — canary corners (biggest loss) lead, liar corners (smallest,
-  // a misleading tell) trail. Same bar styling as teamPaceCard/strategyWinRateCard.
+  // ── corner sensitivity: median apex speed, by corner (FastF1 telemetry) —
+  // either wet vs dry (when the race had real wet running) or fresh vs worn
+  // tyres (fallback, works on any race) — canary corners (biggest loss)
+  // lead, liar corners (smallest, a misleading tell) trail. Same bar
+  // styling as teamPaceCard/strategyWinRateCard.
   function cornerSensitivityCard(cs, narrative) {
     const c = document.createElement('div');
     c.className = 'card';
     const corners = cs.corners;
+    const isWetDry = cs.mode === 'wet_dry';
+    const title = isWetDry ? 'Which corners told you first' : `Which corners feel the ${escapeHTML(cs.compound || '')} tyre wear most`;
+    const compareLabel = `${escapeHTML(cs.b_label)} vs ${escapeHTML(cs.a_label)}`;
     const MAX_BAR_PX = 420;
     const maxLoss = Math.max(...corners.map(x => Math.abs(x.loss_pct)), 0.01);
     const canarySet = new Set(cs.canary_corners);
@@ -621,13 +626,13 @@
       return `<div class="pace-row">
         <span class="pace-team">Turn ${x.corner}</span>
         <div class="pace-track"><span class="pace-bar" style="width:${w.toFixed(1)}px;background:${color}"></span>
-          <span class="pace-label">${x.loss_pct.toFixed(1)}% slower in the wet${tag}</span></div>
+          <span class="pace-label">${x.loss_pct.toFixed(1)}% slower on ${escapeHTML(cs.b_label)}${tag}</span></div>
       </div>`;
     }).join('');
     const verdictText = (narrative && narrative.corner_verdict) || '';
-    c.innerHTML = `<h2>Which corners told you first</h2>
+    c.innerHTML = `<h2>${title}</h2>
       ${verdictText ? `<p class="verdict-intro">${escapeHTML(verdictText)}</p>` : ''}
-      <div class="meta-row"><span>median apex speed, this race's own dry-compound laps vs wet-compound laps · real telemetry (FastF1), not an estimate · <span style="color:var(--red-text)">red</span> = canary (earliest tell conditions changed) · <span style="color:var(--muted)">grey</span> = liar (misleadingly quick)</span></div>
+      <div class="meta-row"><span>median apex speed, this race's own ${compareLabel} laps · real telemetry (FastF1), not an estimate · <span style="color:var(--red-text)">red</span> = canary (earliest, clearest tell) · <span style="color:var(--muted)">grey</span> = liar (misleadingly quick)</span></div>
       <div class="pace-chart">${rows}</div>`;
     return c;
   }

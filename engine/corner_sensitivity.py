@@ -1,26 +1,37 @@
 """
-Corner-by-corner wet/dry grip-sensitivity analysis via FastF1 telemetry.
+Corner-by-corner grip-sensitivity analysis via FastF1 telemetry.
 
 OpenF1 (this project's primary data source everywhere else) has no
 telemetry or corner-level data at all -- only lap times and stint
 boundaries. FastF1 (github.com/theOehrly/Fast-F1) reads the same official
 F1 live-timing feed but exposes full car telemetry (speed/throttle/brake/
-position) plus an official per-circuit corner map with an exact track-
-distance marker for every corner.
+position) plus an official per-circuit corner map with an exact reference
+position for every corner.
 
-For every corner, this compares the median apex (minimum) speed across the
-race's own clean dry-compound laps against its clean wet-compound laps --
-an IN-RACE comparison, not cross-race, so track evolution and temperature
-can't confound it. The corners with the biggest relative speed loss are
-the "canaries" (the earliest, clearest tell that grip has changed); the
-smallest (or negative -- faster in the "wet" bucket, usually meaning too
-few/noisy samples) are "liars", a poor or misleading indicator.
+Two comparisons, tried in order, sharing one FastF1 session load:
+
+1. wet_dry: median apex (minimum) speed across the race's own clean dry-
+   compound laps vs its clean wet-compound laps -- Buscombe's "canary vs
+   liar corner" (which corners show a grip change earliest/most clearly vs
+   which stay deceptively quick). Only possible for a race that actually
+   had wet-compound running, which is most races, most of the time.
+2. degradation: falls back to this when there's no wet running (or not
+   enough of it) to compare -- median apex speed on fresh tyres (early in
+   a stint) vs worn tyres (well into one), holding compound constant (the
+   race's single most-run dry compound, so a compound CHANGE never gets
+   mistaken for wear). Works on essentially every race, since every race
+   has fresh and worn tyres regardless of weather.
+
+Both are IN-RACE comparisons, not cross-race, so track evolution and
+temperature can't confound either one. Within whichever comparison ran,
+the corners with the biggest relative speed loss are the "canaries"; the
+smallest (or negative -- usually too few/noisy samples) are "liars".
 
 Deliberately post-race only: FastF1's telemetry isn't populated until a
-session is archived (unlike OpenF1, which this project also uses live),
-and there's nothing to compare in a race with no wet-compound running at
-all -- both cases degrade to None rather than guessing, same as every
-other optional pack field in engine/briefing.py.
+session is archived (unlike OpenF1, which this project also uses live).
+Every failure mode -- no FastF1 session yet, no circuit map, not enough
+clean running for EITHER comparison -- degrades to None rather than
+guessing, same as every other optional pack field in engine/briefing.py.
 
 Session identity: FastF1 is looked up by (year, event name, session type),
 not OpenF1's session_key -- (year, country_name, "R") is passed straight
@@ -54,6 +65,13 @@ APEX_RADIUS_M = 40        # metres, straight-line, from a corner's reference X/Y
 MAX_LAPS_PER_BUCKET = 40  # bounds processing cost -- each lap is its own telemetry pull
 MIN_SAMPLES_PER_CORNER = 3
 CANARY_LIAR_COUNT = 3     # how many corners to name at each end of the ranking
+
+# Degradation fallback: a lap this early on a set is "fresh" (tyre up to
+# temperature, not yet degraded); this late is "worn". Chosen to comfortably
+# fit inside a typical one-stop stint (20-35 laps) without demanding an
+# unusually long run to get enough worn-lap samples.
+FRESH_MAX_AGE = 3
+WORN_MIN_AGE = 15
 
 
 def _ensure_cache() -> None:
@@ -97,11 +115,84 @@ def _apex_speeds(lap_rows, corners: list[dict]) -> dict[int, list[float]]:
     return speeds_by_corner
 
 
+def _rank_corners(corners: list[dict], a_speeds: dict, b_speeds: dict) -> list[dict] | None:
+    """a is the baseline (higher speed expected -- dry, or fresh tyres); b
+    is the compromised condition (wet, or worn tyres). loss_pct > 0 means b
+    was slower at that corner, as physically expected."""
+    results = []
+    for c in corners:
+        n = c["Number"]
+        a, b = a_speeds.get(n, []), b_speeds.get(n, [])
+        if len(a) < MIN_SAMPLES_PER_CORNER or len(b) < MIN_SAMPLES_PER_CORNER:
+            continue
+        a_med, b_med = statistics.median(a), statistics.median(b)
+        if a_med <= 0:
+            continue
+        results.append({
+            "corner": n,
+            "loss_pct": round((a_med - b_med) / a_med * 100, 1),
+            "a_median_kmh": round(a_med, 1),
+            "b_median_kmh": round(b_med, 1),
+            "n_a": len(a),
+            "n_b": len(b),
+        })
+    if not results:
+        return None
+    results.sort(key=lambda r: -r["loss_pct"])
+    return results
+
+
+def _wet_dry_comparison(laps, corners: list[dict]) -> dict | None:
+    wet_laps = laps[laps["Compound"].isin(WET_COMPOUNDS)]
+    dry_laps = laps[laps["Compound"].isin(DRY_COMPOUNDS)]
+    if len(wet_laps) < MIN_SAMPLES_PER_CORNER or len(dry_laps) < MIN_SAMPLES_PER_CORNER:
+        return None   # no wet running (most races), or not enough of it to compare
+    results = _rank_corners(corners, _apex_speeds(dry_laps, corners), _apex_speeds(wet_laps, corners))
+    if not results:
+        return None
+    return {
+        "mode": "wet_dry",
+        "a_label": "dry",
+        "b_label": "wet",
+        "corners": results,
+        "canary_corners": [r["corner"] for r in results[:CANARY_LIAR_COUNT]],
+        "liar_corners": [r["corner"] for r in results[-CANARY_LIAR_COUNT:]],
+    }
+
+
+def _degradation_comparison(laps, corners: list[dict]) -> dict | None:
+    dry_laps = laps[laps["Compound"].isin(DRY_COMPOUNDS)]
+    if dry_laps.empty:
+        return None
+    # Hold compound constant (the race's single most-run dry compound) so a
+    # compound CHANGE is never mistaken for tyre wear.
+    main_compound = dry_laps["Compound"].value_counts().idxmax()
+    compound_laps = dry_laps[dry_laps["Compound"] == main_compound]
+    fresh_laps = compound_laps[compound_laps["TyreLife"] <= FRESH_MAX_AGE]
+    worn_laps = compound_laps[compound_laps["TyreLife"] >= WORN_MIN_AGE]
+    if len(fresh_laps) < MIN_SAMPLES_PER_CORNER or len(worn_laps) < MIN_SAMPLES_PER_CORNER:
+        return None   # no stints ran long enough to get enough worn-lap samples
+    results = _rank_corners(corners, _apex_speeds(fresh_laps, corners), _apex_speeds(worn_laps, corners))
+    if not results:
+        return None
+    return {
+        "mode": "degradation",
+        "a_label": "fresh tyres",
+        "b_label": "worn tyres",
+        "compound": main_compound,
+        "corners": results,
+        "canary_corners": [r["corner"] for r in results[:CANARY_LIAR_COUNT]],
+        "liar_corners": [r["corner"] for r in results[-CANARY_LIAR_COUNT:]],
+    }
+
+
 def build_corner_sensitivity(year: int, country_name: str) -> dict | None:
     """Returns None for any of several real, expected cases: FastF1 has no
     session for this race yet, the race's circuit map doesn't resolve, or
-    there simply isn't enough clean wet-compound running to compare against
-    the dry baseline (most races, most of the time) -- never raises."""
+    there simply isn't enough clean running for EITHER comparison -- never
+    raises. Tries the wet/dry comparison first (the more interesting read
+    when it's available); falls back to fresh-vs-worn degradation, which
+    works on essentially any race regardless of weather."""
     try:
         _ensure_cache()
         import fastf1
@@ -124,39 +215,7 @@ def build_corner_sensitivity(year: int, country_name: str) -> dict | None:
         laps = session.laps
         clean = laps[(laps["TrackStatus"] == "1") & laps["LapTime"].notna()
                     & laps["PitInTime"].isna() & laps["PitOutTime"].isna()]
-        wet_laps = clean[clean["Compound"].isin(WET_COMPOUNDS)]
-        dry_laps = clean[clean["Compound"].isin(DRY_COMPOUNDS)]
-        if len(wet_laps) < MIN_SAMPLES_PER_CORNER or len(dry_laps) < MIN_SAMPLES_PER_CORNER:
-            return None   # a dry race, or not enough clean wet running to compare
-
-        wet_speeds = _apex_speeds(wet_laps, corners)
-        dry_speeds = _apex_speeds(dry_laps, corners)
+        return _wet_dry_comparison(clean, corners) or _degradation_comparison(clean, corners)
     except Exception as e:
         print(f"[corner_sensitivity] telemetry processing failed for {year} {country_name}: {e}")
         return None
-
-    results = []
-    for c in corners:
-        n = c["Number"]
-        wet, dry = wet_speeds.get(n, []), dry_speeds.get(n, [])
-        if len(wet) < MIN_SAMPLES_PER_CORNER or len(dry) < MIN_SAMPLES_PER_CORNER:
-            continue
-        dry_med, wet_med = statistics.median(dry), statistics.median(wet)
-        if dry_med <= 0:
-            continue
-        results.append({
-            "corner": n,
-            "loss_pct": round((dry_med - wet_med) / dry_med * 100, 1),
-            "dry_median_kmh": round(dry_med, 1),
-            "wet_median_kmh": round(wet_med, 1),
-            "n_dry": len(dry),
-            "n_wet": len(wet),
-        })
-    if not results:
-        return None
-    results.sort(key=lambda r: -r["loss_pct"])
-    return {
-        "corners": results,
-        "canary_corners": [r["corner"] for r in results[:CANARY_LIAR_COUNT]],
-        "liar_corners": [r["corner"] for r in results[-CANARY_LIAR_COUNT:]],
-    }
