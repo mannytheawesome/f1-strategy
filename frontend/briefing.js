@@ -516,6 +516,12 @@
       sections.push({ id: 'stops-graded', title: 'The stops, graded', node: gCard });
     }
 
+    // auto-generated what-if: the model re-ran the race with the worst-graded
+    // stop re-timed, reusing the same chart the manual what-if editor uses.
+    if (d.whatif_scenario) {
+      sections.push({ id: 'whatif-scenario', title: 'What if...', node: whatifScenarioCard(d.whatif_scenario, n) });
+    }
+
     // prior check — grade the race-morning briefing against the result
     const sc = d.prerace_scorecard;
     if (sc) {
@@ -568,6 +574,24 @@
         <span class="beat-text">${escapeHTML(b.text || '')}</span>
       </div>`).join('');
     c.innerHTML = `<h2>Key moments</h2><div class="beats">${rows}</div>`;
+    return c;
+  }
+
+  function whatifScenarioCard(scenario, narrative) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const dp = scenario.delta_position || 0, dg = scenario.delta_gap_s || 0;
+    let verdict, cls;
+    if (dp > 0)        { verdict = `▲ GAINS ${dp} PLACE${dp > 1 ? 'S' : ''}`; cls = 'delta-up'; }
+    else if (dg > 0)   { verdict = `SAME POSITION, ${dg.toFixed(1)}s CLOSER TO THE LEADER`; cls = 'delta-up'; }
+    else               { verdict = 'NO MATERIAL CHANGE'; cls = ''; }
+    const verdictText = (narrative && narrative.whatif_verdict) || '';
+    c.innerHTML = `<h2>What if ${escapeHTML(scenario.acronym)} had pitted on lap ${scenario.alt_stop_lap} instead of ${scenario.real_stop_lap}?</h2>
+      ${verdictText ? `<p class="verdict-intro">${escapeHTML(verdictText)}</p>` : ''}
+      <div class="verdict ${cls}">${escapeHTML(scenario.acronym)}: ${verdict}</div>
+      <div style="margin:10px 0">${whatifTraceSVG(scenario.trace)}</div>
+      <div class="meta-row" style="font-size:10px"><span>re-simulated full race, same real strategy for every other driver · <b style="color:#2f6fed">blue</b> = ${escapeHTML(scenario.acronym)}'s real strategy · <b>grey</b> = the field · gold bands = SC/VSC · lower = faster</span></div>
+      <div class="notice" style="font-size:10px">Only the stop lap changed — same compounds, same number of stops. This is a real model re-run, not an estimate.</div>`;
     return c;
   }
 

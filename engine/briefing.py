@@ -27,7 +27,7 @@ from engine.predictor import (
 
 # Bumped whenever the data-pack shape changes; cached briefings with an older
 # version are rebuilt (and their narrative regenerated) on next request.
-PACK_VERSION = 14  # 14: data.live fills Pirelli-verified opening-stint compound gaps
+PACK_VERSION = 15  # 15: auto-generated whatif_scenario + whatif_verdict narrative field
 
 BRIEFING_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "briefings")
@@ -68,7 +68,14 @@ copied from the pack (e.g. "+54.66s", "P3→P2", "-2.256 pace") — not a senten
 `tag` is whichever of stop / drive / tyres / strategy / crash_out best labels the moment.
 - prior_check: if prerace_scorecard is null in the data pack, return an EMPTY STRING \
 for prior_check — never invent a grade. When present, be honest: credit the hits and \
-own the misses using its numbers."""
+own the misses using its numbers.
+- whatif_verdict: if whatif_scenario is null, return an EMPTY STRING — never invent a \
+counterfactual. When present, it is a REAL re-simulation of the whole race (not a guess): \
+state plainly that pitting on alt_stop_lap instead of real_stop_lap would have gained \
+delta_position position(s). If delta_position is 0, don't claim a position change — say \
+instead that it would have closed delta_gap_s seconds on the leader without changing the \
+finish. This is the one place a hypothetical belongs — everywhere else in this briefing \
+describes what actually happened."""
 
 NARRATIVE_SCHEMA = {
     "type": "object",
@@ -93,6 +100,7 @@ NARRATIVE_SCHEMA = {
         "tyre_verdict":  {"type": "string", "description": "Max 60 words: the one or two things the degradation numbers show -- compound ranking, who managed tyres well/badly. This is a short intro sitting above the deg-curve chart, not a restatement of every number in it."},
         "stops_verdict": {"type": "string", "description": "Max 60 words: the headline read on the pit calls as a group, from stops_graded -- e.g. how many were SC-assisted, the overall best/worst margin. Sits directly above that table; don't re-list stops already covered in beats."},
         "prior_check":   {"type": "string", "description": "Max 60 words grading the race-morning briefing against the result, using prerace_scorecard: projection MAE, winner/podium hit, door calls. Honest scorekeeping. EMPTY STRING if prerace_scorecard is null."},
+        "whatif_verdict": {"type": "string", "description": "Max 50 words stating what the re-simulation in whatif_scenario found: pitting on alt_stop_lap instead of real_stop_lap gains delta_position position(s). This sits beside the what-if chart. EMPTY STRING if whatif_scenario is null."},
     },
     "required": ["headline", "lede", "beats", "tyre_verdict", "stops_verdict"],
     "additionalProperties": False,
@@ -159,6 +167,155 @@ def _grade_stops(stints_by_driver: dict, acronyms: dict, curves: dict,
             })
     out.sort(key=lambda s: -s["gain_s"])
     return out
+
+
+# Lap offsets tried when re-timing a candidate stop — spread wide enough to
+# span past a plausible SC/VSC window, clipped to the room actually available
+# between the stop's own neighbouring stops. Kept short (4, not an exhaustive
+# sweep) because each one is a full race re-simulation via run_whatif —
+# WHATIF_MAX_ATTEMPTS bounds the total cost regardless.
+WHATIF_RETIME_OFFSETS = (-5, -2, 2, 5)
+# Hard cap on total run_whatif calls (a real race re-simulation each, ~0.2-1s)
+# across every candidate stop tried — this runs once per briefing build (the
+# result is cached to disk afterward like the narrative), but an unbounded
+# search through every graded stop in a 20-stop-plus race isn't worth the
+# wait for a single auto-generated scenario.
+WHATIF_MAX_ATTEMPTS = 20
+# A stop this early is usually the grid-side tyre scramble after a red-
+# flagged/rolling start (everyone reacting to the same conditions at once),
+# not a deliberated strategic call -- skip it so the scenario picked is one
+# a reader would recognise as an actual decision.
+WHATIF_MIN_STOP_LAP = 5
+# A classified finisher's own stints can fall short of total_laps by a lap or
+# two (lapped, not retired) -- safe to assume they ran the same final
+# compound to the flag. A bigger gap means something else happened
+# (mechanical stop, red flag) that padding shouldn't paper over.
+WHATIF_MAX_LAP_PAD = 3
+# A re-timed stop that doesn't change the finishing position still counts as
+# a finding if it closes at least this many seconds on the leader -- no
+# rival happened to be close enough right at that point for a cosmetically
+# flat position to mean nothing changed.
+WHATIF_MIN_GAP_S = 3.0
+
+
+def _build_whatif_scenario(session_key: int, stints_by_driver: dict,
+                           stops_graded: list[dict], retired_by_driver: dict,
+                           total_laps: int) -> dict | None:
+    """Auto-generate one quantified counterfactual: take one of the worst-
+    graded real pit stops and re-time it a few laps either way, re-running
+    the FULL race through engine.whatif.run_whatif for each candidate lap.
+    Reports whichever shift the model says would have gained the most
+    positions, for the first candidate stop (worst first) that yields one.
+    Walks the whole stops_graded list worst-to-best (not just a fixed top-N)
+    since the very worst stops are often the early chaos window this skips —
+    WHATIF_MAX_ATTEMPTS, not a stop count, is what bounds the search.
+
+    Only the stop lap moves — same compounds, same stint count, same tyre
+    inventory usage as the real race — so every candidate plan passes
+    _validate_edited's rules without needing per-race judgement calls. A
+    classified finisher whose own stints fall a lap or two short of
+    total_laps (lapped, not retired) has their final stint padded to the
+    flag first, since run_whatif requires the plan to cover the exact race
+    distance. Degrades to None if nothing pans out within the attempt budget
+    — the debrief already renders fine without a scenario."""
+    from engine.whatif import run_whatif
+
+    # run_whatif derives its own total_laps as the unfiltered max lap number
+    # (it has no reason to drop an untimed post-flag in-lap the way
+    # build_briefing_data's total_laps does) -- padding a lapped driver's
+    # final stint to THIS project's total_laps instead of run_whatif's own
+    # notion of it fails _validate_edited with a one-lap-short plan on any
+    # race where the two disagree. Match run_whatif's convention exactly
+    # rather than assume the two total_lapses are the same number.
+    try:
+        whatif_total_laps = max((l["lap_number"] for l in get_laps(session_key, HIST_TTL_FINAL)),
+                                default=total_laps)
+    except Exception:
+        whatif_total_laps = total_laps
+
+    attempts_left = WHATIF_MAX_ATTEMPTS
+    for worst in reversed(stops_graded):
+        if attempts_left <= 0:
+            break
+        num = worst["driver_number"]
+        if retired_by_driver.get(num) or worst["lap"] < WHATIF_MIN_STOP_LAP:
+            continue
+        driver_stints = [dict(s) for s in
+                         sorted(stints_by_driver.get(num, []), key=lambda s: s.get("lap_start") or 0)]
+        if not driver_stints:
+            continue
+        shortfall = whatif_total_laps - (driver_stints[-1].get("lap_end") or 0)
+        if shortfall < 0 or shortfall > WHATIF_MAX_LAP_PAD:
+            continue
+        if shortfall > 0:
+            driver_stints[-1]["lap_end"] = whatif_total_laps
+
+        stop_idx = next(
+            (i for i in range(len(driver_stints) - 1)
+             if (driver_stints[i + 1].get("lap_start") or 0) - 1 == worst["lap"]),
+            None)
+        if stop_idx is None:
+            continue
+        prev_s, next_s = driver_stints[stop_idx], driver_stints[stop_idx + 1]
+        lo = prev_s.get("lap_start") or 1
+        hi = (next_s.get("lap_end") or whatif_total_laps) - 1
+        if hi - lo < 2:
+            continue   # no room either side of the real stop to try an alternate
+
+        def plan_for(stop_lap: int) -> list[dict]:
+            edited = []
+            for i, s in enumerate(driver_stints):
+                if i == stop_idx:
+                    edited.append({"compound": s["compound"], "lap_start": s["lap_start"],
+                                   "lap_end": stop_lap, "tyre_age": s.get("tyre_age_at_start") or 0})
+                elif i == stop_idx + 1:
+                    edited.append({"compound": s["compound"], "lap_start": stop_lap + 1,
+                                   "lap_end": s["lap_end"], "tyre_age": 0})
+                else:
+                    edited.append({"compound": s["compound"], "lap_start": s["lap_start"],
+                                   "lap_end": s["lap_end"], "tyre_age": s.get("tyre_age_at_start") or 0})
+            return edited
+
+        candidates = sorted({max(lo, min(hi, worst["lap"] + d)) for d in WHATIF_RETIME_OFFSETS}
+                            - {worst["lap"]})
+        best = None
+        for alt_lap in candidates:
+            if attempts_left <= 0:
+                break
+            attempts_left -= 1
+            try:
+                result = run_whatif(session_key, num, plan_for(alt_lap))
+            except Exception:
+                continue
+            delta = result.get("delta") or {}
+            if delta.get("position") is None:
+                continue
+            score = (delta["position"], delta.get("gap") or 0)
+            if best is None or score > best[0]:
+                best = (score, alt_lap, result)
+        if best is None:
+            continue
+        best_position, best_gap = best[0]
+        # A real strategy shift often closes a meaningful gap without
+        # actually flipping the finishing position (no rival was close
+        # enough right at that point) -- still a genuine, quotable finding,
+        # not just a rounding difference, so a clear gap win alone also
+        # counts (WHATIF_MIN_GAP_S), not only a position change.
+        if best_position <= 0 and (best_position < 0 or best_gap < WHATIF_MIN_GAP_S):
+            continue   # nothing tried for this stop beats the real result
+        _, alt_lap, result = best
+        delta = result["delta"]
+        return {
+            "acronym":        worst["acronym"],
+            "driver_number":  num,
+            "real_stop_lap":  worst["lap"],
+            "alt_stop_lap":   alt_lap,
+            "real_grade":     worst["grade"],
+            "delta_position": delta["position"],
+            "delta_gap_s":    delta["gap"],
+            "trace":          result["trace"],
+        }
+    return None
 
 
 def _stint_pace_table(all_laps: list, stints_by_driver: dict, acronyms: dict,
@@ -439,6 +596,16 @@ def build_briefing_data(session_key: int) -> dict:
         for r in results:
             r["sets_at_start"] = None
 
+    stops_graded = _grade_stops(stints_by_driver, acronyms, curves,
+                               sc_events, pit_loss, total_laps)
+    retired_by_driver = {r["driver_number"]: r["retired"] for r in results}
+    try:
+        whatif_scenario = _build_whatif_scenario(session_key, stints_by_driver,
+                                                 stops_graded, retired_by_driver, total_laps)
+    except Exception as e:
+        print(f"[briefing] whatif scenario generation failed: {e}")
+        whatif_scenario = None
+
     return {
         "session": {
             "session_key":  session_key,
@@ -458,11 +625,11 @@ def build_briefing_data(session_key: int) -> dict:
         "deg_curves":  curves_to_dict(curves),
         "results":     results,
         "stats":       stats,
-        "stops_graded": _grade_stops(stints_by_driver, acronyms, curves,
-                                     sc_events, pit_loss, total_laps),
+        "stops_graded": stops_graded,
         "stint_pace":  _stint_pace_table(all_laps, stints_by_driver, acronyms,
                                          sc_events, total_laps,
                                          extra_exclude=yellow_laps),
+        "whatif_scenario": whatif_scenario,
     }
 
 

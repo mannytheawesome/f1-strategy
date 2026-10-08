@@ -3043,6 +3043,68 @@ independently before concluding a stint-data gap is a bug rather than the
 race's own result (retirement, lapped-and-classified, a penalty) explaining
 it.
 
+### Auto-generated what-if scenario: quantified counterfactual, not just prose, 2026-10-08
+User asked for more narrative depth and more graphics, citing Ruth Buscombe's
+Substack strategy writeups (named "rules" backed by historical patterns and
+re-simulated alternate strategies with real numbers, e.g. "S-H-H wins 59% of
+the time"). Agreed scope: both the debrief and the pre-race briefing need
+this, starting with the debrief since it could reuse proven infrastructure
+already in the codebase rather than build new simulation wiring.
+
+Added `engine.briefing._build_whatif_scenario`: takes the worst-graded real
+pit stop from `stops_graded` and re-times it a few laps either way, each
+candidate re-run through the FULL race simulation via
+`engine.whatif.run_whatif` -- the exact same engine (and the exact same
+`whatifTraceSVG` chart) already driving the manual what-if editor, just
+triggered automatically instead of by a dragged slider. Reports whichever
+shift the model found gains the most positions (or, failing that, closes a
+clear gap without flipping the finish -- `WHATIF_MIN_GAP_S`). New pack field
+`whatif_scenario`, new narrative field `whatif_verdict` (empty string if
+null, same pattern as `prior_check`). `PACK_VERSION` 14 -> 15.
+
+Real engineering snags hit and fixed before shipping (none hypothetical --
+each one first produced a wrong or empty result against real session data,
+found by verifying end-to-end against real sessions rather than trusting
+unit tests of the new function in isolation):
+- **Most early stops are the chaotic post-restart scramble, not a real
+  decision**: the single worst-graded stop is very often inside the first
+  few laps (the same red-flag/rolling-start chaos documented above) --
+  `WHATIF_MIN_STOP_LAP` skips stops before lap 5, and the search walks the
+  whole `stops_graded` list worst-to-best (bounded by `WHATIF_MAX_ATTEMPTS`,
+  not a fixed top-N) rather than giving up after the single worst stop.
+- **`run_whatif`'s own `total_laps` can disagree with `build_briefing_data`'s**:
+  the latter deliberately drops an untimed post-flag in-lap (see the
+  `_merge_stints_without_matching_pit_stop` entry above); `run_whatif`
+  doesn't, so padding a lapped driver's final stint to the project's own
+  `total_laps` instead of `run_whatif`'s own notion of it failed validation
+  with an off-by-one "plan covers N laps, race is N+1" on a real session.
+  Fixed by deriving `whatif_total_laps` the same unfiltered way `run_whatif`
+  does, specifically for this padding, rather than assuming the two numbers
+  match.
+- **Position-only acceptance was too strict**: a real re-timed stop often
+  closes several seconds without flipping the actual finishing position (no
+  rival was close enough right there) -- rejecting those as "no result"
+  threw away genuine, quotable findings. `WHATIF_MIN_GAP_S` accepts a clear
+  gap win on its own, and the narrative wording was split into two cases
+  (position change vs gap-only) instead of only ever citing a position.
+- **Attempt budget, not an exhaustive search**: each candidate is a full
+  race re-simulation (~0.2-1s); searching every graded stop at every offset
+  for a 20+-stop race took 25+ seconds. `WHATIF_MAX_ATTEMPTS` bounds the
+  total `run_whatif` calls regardless of how many stops/offsets are
+  theoretically available to try.
+
+Verified against several real 2026 sessions (not just the two already used
+for the stint-reconciliation work) — found a real scenario for China 2026
+(meeting 1280): re-timing LAW's lap-9 stop to lap 14 gains 1 position. Both
+Bahrain and Australia legitimately return `None` (verified by hand: neither
+race has a mid-race stop whose real-world timing was actually beatable by a
+few laps either way) -- confirms the degrade-gracefully path is a true
+negative, not a bug, before relying on `None` being safe to ship.
+
+Scope note: this is the debrief half only. The pre-race briefing's "deeper
+what-if" treatment (probability-weighted strategy comparison via Monte
+Carlo, a win-rate bar chart) is agreed as the next phase, not started yet.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
