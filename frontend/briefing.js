@@ -668,6 +668,36 @@
     return c;
   }
 
+  // ── strategy win rates: Monte Carlo re-run of each candidate plan forced
+  // onto the pole sitter, everyone else on their own best strategy — the
+  // probability-weighted companion to "The strategies on paper"'s
+  // deterministic time deltas. Same bar-chart styling as teamPaceCard.
+  function strategyWinRateCard(winRates) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const cands = (winRates && winRates.candidates) || [];
+    if (!cands.length) {
+      c.innerHTML = '<h2>Strategy win rates</h2><div class="notice">Not enough data to simulate yet.</div>';
+      return c;
+    }
+    const MAX_BAR_PX = 420;
+    const maxWin = Math.max(...cands.map(s => s.win_probability), 0.01);
+    const rows = cands.map(s => {
+      const w = Math.max(2, s.win_probability / maxWin * MAX_BAR_PX);
+      const winPct = Math.round(s.win_probability * 100);
+      const podPct = Math.round(s.podium_probability * 100);
+      return `<div class="pace-row">
+        <span class="pace-team">${escapeHTML(s.compound_sequence.join('-'))}</span>
+        <div class="pace-track"><span class="pace-bar" style="width:${w.toFixed(1)}px;background:var(--red)"></span>
+          <span class="pace-label">${winPct}% win · ${podPct}% podium · mean P${s.mean_finish.toFixed(1)}</span></div>
+      </div>`;
+    }).join('');
+    c.innerHTML = `<h2>Strategy win rates — if ${escapeHTML(winRates.acronym)} ran each plan</h2>
+      <div class="meta-row"><span>Monte Carlo re-run of the race with ${escapeHTML(winRates.acronym)} forced onto each candidate plan in turn (everyone else runs their own best strategy) · real simulated odds, not the deterministic time delta above</span></div>
+      <div class="pace-chart">${rows}</div>`;
+    return c;
+  }
+
   // ── expected pit stop strategies & windows (Gantt) ───────────────────────
   const PIT_WINDOW_MAX_SHIFT_DISPLAY = 3;   // mirrors engine.prerace.PIT_WINDOW_MAX_SHIFT — display only
 
@@ -1009,6 +1039,12 @@
         : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     sections.push({ id: 'strategies', title: 'The strategies on paper', node: stratCard });
+
+    if (d.strategy_win_rates && d.strategy_win_rates.candidates.length) {
+      sections.push({ id: 'strategy-win-rates', title: 'Strategy win rates',
+                     node: strategyWinRateCard(d.strategy_win_rates) });
+    }
+
     if (n) sections.push({ id: 'race-shape-story', title: 'Race shape (narrative)', node: proseCard('Race shape', n.race_shape) });
 
     if (d.strategies && d.strategies.length) {

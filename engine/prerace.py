@@ -24,7 +24,7 @@ from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
     simulate_race, forecast_to_dict, DriverPace, FUEL_RATE,
     DRY, SC_PIT_FACTOR, _lap_t, _cliff_life, MIN_STINT, _stint_time,
-    FP_WEIGHTS, _weighted_median, STOP_RISK, _hardness,
+    FP_WEIGHTS, _weighted_median, STOP_RISK, _hardness, PitPlan,
 )
 from engine.pit_loss import pit_loss_for
 from engine.undercut_shift import undercut_shift_for
@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 36   # 36: real weather forecast (engine.weather_forecast) feeds weather_outlook
+PACK_VERSION = 37   # 37: Monte Carlo strategy_win_rates for the pole sitter's candidate plans
                     # and the Monte Carlo rain_probability blend, replacing the old
                     # practice-only retrospective rain read
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
@@ -98,7 +98,7 @@ PRERACE_SCHEMA = {
         "headline":   {"type": "string", "description": "Punchy 4-8 word title framing the race's central strategic question"},
         "grid_story": {"type": "string", "description": "120-200 words: what the grid means strategically — who is out of position, where the pace really is"},
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
-        "race_shape": {"type": "string", "description": "180-280 words: the stop-count call and WHY. Lead with stop_decision.optimal_stops, then decompose stop_decision.crossover — the extra_pit_cost_s of one more stop vs the fresh_rubber_saving_s it buys — to explain why that count wins. Flag any plan's laps_over_cliff. Use stop_decision.sc_flips_call / sc_favored_stops to say whether a Safety Car tips it toward more stops, and track_position_bias for how much staying out is worth here."},
+        "race_shape": {"type": "string", "description": "180-280 words: the stop-count call and WHY. Lead with stop_decision.optimal_stops, then decompose stop_decision.crossover — the extra_pit_cost_s of one more stop vs the fresh_rubber_saving_s it buys — to explain why that count wins. Flag any plan's laps_over_cliff. Use stop_decision.sc_flips_call / sc_favored_stops to say whether a Safety Car tips it toward more stops, and track_position_bias for how much staying out is worth here. If strategy_win_rates is present, cite it alongside the time-based case: each candidate's win_probability/podium_probability is a REAL Monte Carlo result for strategy_win_rates.acronym (not an estimate) — e.g. 'X wins the race on this plan in N% of simulations vs M% on the alternative'. This is the one place in the briefing a probability like that belongs; everywhere else stays in the deterministic time-delta language stop_decision already uses."},
         "the_undercut": {"type": "string", "description": "120-200 words on the undercut vs the overcut, using the undercut object: fresh_gain_per_lap and net_undercut_s (fresh-tyre gain over the window, net of the out-lap), judged against pit_loss_s and the verdict. Say plainly whether teams should pit early to jump rivals (undercut) or hold track position and extend (overcut), and tie it to how hard passing is here."},
         "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
@@ -672,11 +672,20 @@ def _blend_pace_delta(raw_delta: float, r_w: float, quali_delta: float,
 def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                     strategies: list[dict], total_laps: int, pit_loss: float,
                     circuit: str, inventory: dict | None = None,
-                    rain_probability: float = 0.0) -> list:
+                    rain_probability: float = 0.0,
+                    override_start: dict[int, str] | None = None,
+                    prescribed_strategies: dict | None = None) -> list:
     """Run the race model from lap 0 for a given grid order and return the full
     field of DriverForecast objects (Monte Carlo already applied). The grid is
     spread at GRID_SPREAD_S per slot to give the track-position anchor something
-    to hold on to. Returns [] if the inputs are insufficient."""
+    to hold on to. Returns [] if the inputs are insufficient.
+
+    override_start / prescribed_strategies force ONE driver (keyed by
+    driver_number) onto a specific starting compound / full pit plan instead
+    of the shared strategies[0] assumption and simulate_race's own DP
+    optimizer — used by _strategy_win_rates to compare candidate strategies
+    against each other via the SAME Monte Carlo pass this function already
+    runs for every other caller, not a separate simulation path."""
     if not grid or not strategies:
         return []
     pace_by_num = {r["driver_number"]: r for r in pace_rows}
@@ -702,6 +711,8 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
         if stock and stock.get(start_c, 0) < 1:
             own_start = next((c for c in ("MEDIUM", "HARD", "SOFT")
                               if stock.get(c, 0) >= 1), start_c)
+        if override_start and num in override_start:
+            own_start = override_start[num]
         serialised.append({
             "driver_number": num, "acronym": g["acronym"],
             "position": g["position"], "compound": own_start, "tyre_age": 0,
@@ -731,7 +742,8 @@ def _run_projection(grid: list[dict], pace_rows: list[dict], curves: dict,
                          pit_loss=pit_loss,
                          track_position_weight=track_position_weight(circuit),
                          inventory=inv_left, circuit=circuit,
-                         rain_probability=rain_probability)
+                         rain_probability=rain_probability,
+                         prescribed_strategies=prescribed_strategies)
 
 
 def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
@@ -1301,6 +1313,69 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
     }
 
 
+# How many of the fastest candidates (already sorted, strategies[:5] from
+# build_prerace_data) actually get Monte Carlo'd -- each one is a full
+# field simulation (simulate_race always runs its own internal Monte Carlo
+# pass, n_runs=500), so this is what bounds the added build cost, not an
+# accuracy concern (the candidates beyond this are rarely "in play" anyway,
+# per _stop_decision's own viability labelling).
+STRATEGY_WIN_RATE_CANDIDATES = 3
+
+
+def _strategy_win_rates(grid: list[dict], pace_rows: list[dict], curves: dict,
+                        strategies: list[dict], total_laps: int, pit_loss: float,
+                        circuit: str, inventory: dict | None = None,
+                        rain_probability: float = 0.0) -> list[dict] | None:
+    """Probability-weighted comparison of the candidate strategies already
+    built for _stop_decision: force each one in turn onto the pole sitter
+    (every other driver keeps running their own independently-optimised
+    plan, same as the headline projection), and read off the SAME Monte
+    Carlo pass simulate_race already runs internally for every call — no
+    new simulation machinery, just _run_projection called once per
+    candidate with a different forced plan.
+
+    This is what _stop_decision's deterministic time-based crossover can't
+    say: not just which plan is fastest on raw pace, but how often each one
+    actually wins/podiums once the Safety Car lottery and pace uncertainty
+    are folded in — the Buscombe-style "this plan wins N% of the time"
+    framing, grounded in a real simulation rather than an estimate.
+
+    Returns None if there's no grid or no candidates to compare."""
+    if not grid or not strategies:
+        return None
+    pole = min(grid, key=lambda g: g["position"])
+    ref_num = pole.get("driver_number")
+    if ref_num is None:
+        ref_num = next((r["driver_number"] for r in pace_rows
+                        if r["acronym"] == pole["acronym"]), None)
+    if ref_num is None:
+        return None
+
+    out = []
+    for s in strategies[:STRATEGY_WIN_RATE_CANDIDATES]:
+        pits = [PitPlan(lap=lap, compound=compound)
+                for lap, compound in zip(s["pit_laps"], s["compound_sequence"][1:])]
+        try:
+            forecasts = _run_projection(
+                grid, pace_rows, curves, strategies, total_laps, pit_loss, circuit,
+                inventory=inventory, rain_probability=rain_probability,
+                override_start={ref_num: s["start_compound"]},
+                prescribed_strategies={ref_num: pits})
+        except Exception:
+            continue
+        fc = next((f for f in forecasts if f.driver_number == ref_num), None)
+        if fc is None:
+            continue
+        out.append({
+            "stops": s["stops"],
+            "compound_sequence": s["compound_sequence"],
+            "win_probability": round(fc.win_probability, 3),
+            "podium_probability": round(fc.podium_probability, 3),
+            "mean_finish": round(fc.mean_finish, 2),
+        })
+    return {"acronym": pole["acronym"], "candidates": out} if out else None
+
+
 def _prerace_sources(meeting_key: int) -> list[dict]:
     """The completed, pre-GP sessions this briefing is built from — cheap
     (one cached /sessions lookup), so the cache check in get_prerace_briefing
@@ -1651,6 +1726,13 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
 
     undercut = _undercut_power(curves, field_baseline, pit_loss, total_laps, circuit)
     stop_decision = _stop_decision(strategies, curves, pit_loss, total_laps, circuit, sc_prob)
+    strategy_win_rates = None
+    try:
+        strategy_win_rates = _strategy_win_rates(
+            grid, pace_rows, curves, strategies, total_laps, pit_loss, circuit,
+            inventory=driver_stock, rain_probability=rain_probability)
+    except Exception:
+        pass
 
     return {
         "meeting": {
@@ -1671,6 +1753,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "strategies": strategies,
         "undercut": undercut,
         "stop_decision": stop_decision,
+        "strategy_win_rates": strategy_win_rates,
         "pit_loss": pit_loss,
         "pit_loss_source": "sprint_measured" if sprint_key else "circuit_measured",
         "sc_probability": sc_prob,

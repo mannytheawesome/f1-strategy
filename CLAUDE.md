@@ -3105,6 +3105,58 @@ Scope note: this is the debrief half only. The pre-race briefing's "deeper
 what-if" treatment (probability-weighted strategy comparison via Monte
 Carlo, a win-rate bar chart) is agreed as the next phase, not started yet.
 
+### Phase 2: probability-weighted strategy comparison for the pre-race briefing, 2026-10-08
+Follow-up to the debrief what-if scenario above — same user request (more
+depth, more graphics, citing Buscombe's "S-H-H wins 59% of the time"
+framing), this time for the pre-race briefing's existing candidate-strategy
+table (`strategies`, already built for `_stop_decision`'s deterministic
+time-delta comparison). `_stop_decision` can say which plan is fastest on
+raw pace and whether a Safety Car would flip that call, but not by how much
+the actual odds move — that needs a real Monte Carlo comparison, which
+didn't exist as a reusable per-candidate-strategy tool before this.
+
+Discovered `simulate_race` already runs Monte Carlo internally on every
+call (`run_monte_carlo` is called from inside it, not by external callers —
+confirmed by grepping for call sites, there's exactly one, inside
+`predictor.py` itself). This meant no new simulation machinery was needed:
+added `override_start` / `prescribed_strategies` passthrough params to
+`_run_projection` (previously every driver free-optimised; these let ONE
+driver be forced onto a specific starting compound and full pit plan while
+everyone else keeps running their own best strategy, same convention
+`engine.whatif.run_whatif` already uses for its baseline/modified
+comparison). New `engine.prerace._strategy_win_rates`: forces the pole
+sitter onto each of the top `STRATEGY_WIN_RATE_CANDIDATES` (3) candidates in
+turn and reads off `win_probability`/`podium_probability`/`mean_finish`
+from the forecast Monte Carlo already attached. New pack field
+`strategy_win_rates`; `race_shape`'s narrative instructions extended to cite
+it (one probability claim, named as a real Monte Carlo result) alongside
+the existing deterministic crossover language. `PACK_VERSION` 36 -> 37.
+
+New frontend `strategyWinRateCard` (reuses the `.pace-row`/`.pace-bar`
+styling `teamPaceCard` already established, not a new chart type), rendered
+directly beneath "The strategies on paper" table. Verified end-to-end for a
+real meeting (1280, China): pole-sitter ANT's three candidate 1-stop plans
+came back 53% / 49% / 43% win probability — confirmed visually in the
+browser with a synthetic narrative citing the real numbers.
+
+Bounded the added cost deliberately: `STRATEGY_WIN_RATE_CANDIDATES = 3`, not
+all 5 candidates, since each one is a full field Monte Carlo simulation
+(n_runs=500 internally) — measured as a few extra seconds on top of the
+pre-existing ~11-15s/race full-cache build, which this project's own DP
+search already treats as an acceptable cost for real strategic candidates
+that rarely overturn the top of the table anyway (see `force_end_compound`'s
+3-stop-branch comment above for the same tradeoff made once already).
+
+A real testing mistake caught before it masked anything: the unit tests'
+own `DriverForecast`/`DriverStrategy` fixtures were initially missing
+several of `DriverStrategy`'s required fields, which raised inside the
+mocked `_run_projection` and was silently swallowed by
+`_strategy_win_rates`' own `except Exception: continue` (there to tolerate
+one candidate's simulation genuinely failing without killing the others) --
+every "success" test quietly returned `None` and still looked like it might
+pass by accident if asserted loosely. Fixed the fixtures, not the exception
+handling (the broad catch is correct behaviour; the fixture was wrong).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
