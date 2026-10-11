@@ -51,7 +51,7 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 37   # 37: Monte Carlo strategy_win_rates for the pole sitter's candidate plans
+PACK_VERSION = 38   # 38: _long_run_pace excludes wet stints from the pace-level read
                     # and the Monte Carlo rain_probability blend, replacing the old
                     # practice-only retrospective rain read
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
@@ -182,6 +182,23 @@ def _long_run_pace(source_sessions: list[dict], curves: dict,
             if le - ls + 1 < 6:
                 continue
             compound = st.get("compound")
+            if compound not in DRY:
+                # A wet stint runs ~10s/lap slower than dry at this kind of
+                # circuit (confirmed directly: Singapore 2026's INTERMEDIATE
+                # baseline sat 10.2s above its HARD baseline) -- nothing below
+                # corrects for that, only tyre age and fuel load within a
+                # stint. Found 2026-10-11 comparing against Pirelli's own pace
+                # chart: a team whose only representative long run came from a
+                # wet sprint (rather than dry FP1) showed an 11-15% pace gap
+                # to the field -- physically impossible for a real F1 grid,
+                # and entirely an artifact of mixing wet and dry lap times as
+                # if they were on the same scale. Excluding wet stints from
+                # this pace-LEVEL read is the same "don't guess, say less"
+                # choice this project makes everywhere else when the data
+                # can't support a real answer -- a team with no dry long run
+                # at all is better left out of this table (no_data=True below)
+                # than given a confidently wrong number.
+                continue
             curve = curves.get(compound)
             # Drop the in-lap (final lap of the stint ends in the pit lane —
             # same exclusion predictor._stint_deg_samples applies).

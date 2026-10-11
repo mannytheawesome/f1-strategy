@@ -368,6 +368,60 @@ class TestLongRunPaceConfidenceFlags:
         assert filtered[0]["pace_delta"] == 0.0
 
 
+class TestLongRunPaceExcludesWetStints:
+    """Found 2026-10-11 comparing Singapore 2026 (a sprint weekend whose
+    Sprint Race ran entirely in the wet) against Pirelli's own published
+    pace chart: a team whose only representative long run came from the wet
+    Sprint rather than dry FP1 showed an 11-15% pace gap to the field --
+    physically impossible for a real F1 grid. Nothing in this function
+    corrected for the ~10s/lap wet-vs-dry gap (only tyre age and fuel load
+    within a stint), so a wet stint's lap times were being pooled directly
+    alongside dry ones as if on the same scale."""
+
+    def _laps(self, driver, lap_times, start_lap=1):
+        return [{"driver_number": driver, "lap_number": start_lap + i,
+                 "lap_duration": t, "is_pit_out_lap": False}
+                for i, t in enumerate(lap_times)]
+
+    def test_a_wet_stint_contributes_no_samples(self, monkeypatch):
+        # Lap times here are deliberately ~10s slower than a real dry stint
+        # would be (the real Singapore gap) -- if this stint were still being
+        # pooled, the driver would get a wildly slow pace_delta instead of
+        # being excluded entirely.
+        laps = self._laps(1, [100.0] * 12)
+        stints = [{"driver_number": 1, "compound": "INTERMEDIATE",
+                   "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0}]
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {1: {"name_acronym": "VER"}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+        sources = [{"session_key": 1, "session_type": "Race", "session_name": "Sprint"}]
+
+        rows = _long_run_pace(sources, {})
+        assert rows == []   # no dry sample at all -- correctly empty, not a wrong number
+
+    def test_a_driver_with_both_wet_and_dry_stints_uses_only_the_dry_one(self, monkeypatch):
+        dry_laps = self._laps(1, [90.0] * 12, start_lap=1)
+        wet_laps = self._laps(1, [100.0] * 12, start_lap=20)
+        stints = [
+            {"driver_number": 1, "compound": "MEDIUM",
+             "lap_start": 1, "lap_end": 12, "tyre_age_at_start": 0},
+            {"driver_number": 1, "compound": "INTERMEDIATE",
+             "lap_start": 20, "lap_end": 31, "tyre_age_at_start": 0},
+        ]
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: dry_laps + wet_laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: {1: {"name_acronym": "VER"}})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+        sources = [{"session_key": 1, "session_type": "Race", "session_name": "Sprint"}]
+
+        rows = _long_run_pace(sources, {})
+        assert len(rows) == 1
+        assert rows[0]["laps"] == 10   # only the dry stint's usable laps counted
+
+
 class TestLongRunPaceFetchFailures:
     """A rate-limited session fetch inside _long_run_pace was already
     tolerated (skip that session, keep going) but left no record that it

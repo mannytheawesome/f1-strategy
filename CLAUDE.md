@@ -3291,6 +3291,68 @@ racing intuition. Confirmed end-to-end through the full
 degradation mode vs "Which corners told you first" in wet_dry mode).
 `PACK_VERSION` 16 -> 17.
 
+### Pre-race team pace: wet stints were being pooled with dry ones, 2026-10-11
+User asked to check our pre-race Singapore 2026 charts (strategies, team
+pace, deg curves, tyres available) against Pirelli's own published
+previews. One of the four was a confirmed, fixed bug; the other three
+turned out not to be, on investigation -- worth recording why, so this
+doesn't get re-litigated on the next race weekend's comparison.
+
+**Confirmed and fixed**: `engine.prerace._long_run_pace` pools laps from
+FP sessions and the Sprint race as interchangeable pace-LEVEL sources,
+correcting for tyre degradation (via the fitted deg curve) and fuel burn
+within a stint -- but nothing corrected for wet vs dry conditions. 
+Singapore 2026's Sprint ran entirely in the wet (every finisher stayed on
+Intermediates for all 13 laps). A wet stint runs roughly 10s/lap slower
+than dry at this kind of circuit -- confirmed directly, not estimated:
+Singapore's own fitted INTERMEDIATE baseline sat 10.2s above its HARD
+baseline. Any team whose only representative long run came from the wet
+Sprint (rather than dry FP1) had that whole ~10s/lap gap folded into their
+"pace gap" with nothing to cancel it out -- three teams (Red Bull, Audi,
+Racing Bulls) showed an 11-15% gap to the field in production, which is
+physically impossible for a real F1 grid (Pirelli's own chart showed a
+0-3.56% spread). Fixed by excluding non-dry stints (`compound not in DRY`)
+from this function's sample collection entirely, the same "don't guess,
+say less" choice this project makes everywhere else when the data can't
+support a real answer -- a team with zero dry long-run samples now
+correctly produces no row here (and `no_data: True` at the team level)
+rather than a confidently wrong number. Verified directly against the real
+Singapore data: the three previously-broken teams correctly disappeared
+from the table, and the remaining eight teams' spread tightened from
+11-15% down to a realistic 0-3.22%, closely matching Pirelli's own shape.
+Regression-tested (`tests/test_prerace_charts.py`,
+`TestLongRunPaceExcludesWetStints`). `PACK_VERSION` 37 -> 38.
+
+**Investigated and NOT a bug, on closer inspection**: the other three
+apparent discrepancies all point the same direction -- Pirelli's chart is
+labelled "Provisional Grid", strongly suggesting it's a pre-weekend
+preview generated before Singapore's actual qualifying session ran, while
+this project's own numbers are live and already reflect that session.
+- *Tyres available*: initially looked wrong (VER showing 6 used Softs, 0
+  new, vs Pirelli's 4 total) until actually tracing his real stint history
+  across all four completed sessions by hand: 1 fresh Soft in Sprint
+  Qualifying + 5 in today's Qualifying, each short enough (<=5 laps) to
+  still count as race-viable per `SHORT_STINT_LAPS`. The arithmetic is
+  internally consistent with `engine.tyre_inventory`'s own design (`used`
+  sets are opened-but-still-viable, not consumed) -- the apparent "0
+  remaining" alarm was checking `.remaining()` (new-only) instead of
+  `.total_held()` (new + used, the number that actually answers "what can
+  this driver fit for the race"). Pirelli's chart most likely just predates
+  the 5 sets used in today's session.
+- *Strategies*: Pirelli's 4 published strategies are all single-stop
+  (MED/SOFT -> HARD/MEDIUM/SOFT); this project's candidate table is mostly
+  2-stop and doesn't include any Soft-start option at all -- explained
+  directly by the next finding, not a separate issue.
+- *Missing SOFT degradation curve*: genuinely no data to fit one from yet
+  -- a sprint weekend has only one practice session (FP1) before
+  qualifying, and FP1 had zero representative Soft long runs logged
+  (Hard got 63 data points, Medium only 6 at LOW confidence, Soft zero).
+  `build_prerace_data`'s strategy search already skips any compound with
+  no fitted curve, which is exactly why no Soft-start candidate appears --
+  correct, conservative behaviour given the data, not a bug to patch
+  around. Not fixable without more dry running; should resolve naturally
+  once the race itself (much more dry mileage) completes.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
