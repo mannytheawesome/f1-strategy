@@ -29,6 +29,7 @@ from engine.predictor import (
 from engine.pit_loss import pit_loss_for
 from engine.undercut_shift import undercut_shift_for
 from engine.restart_delta import restart_delta_for
+from engine.overtake_delta import pass_threshold_for
 
 # Clean-lap filter for _long_run_pace (below): keep only laps within this
 # ratio of a stint's own best lap, same idea as predictor.DEG_LONGRUN but
@@ -52,12 +53,14 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 39   # 39: strategies[] gains restart_risk_cost_s, the EV cost of a
-                    # candidate's compound choice going cold on an SC/VSC restart
-                    # lap (engine.restart_delta) -- 38: _long_run_pace excludes wet
-                    # stints from the pace-level read and the Monte Carlo
-                    # rain_probability blend, replacing the old practice-only
-                    # retrospective rain read
+PACK_VERSION = 40   # 40: overtaking.pass_threshold_s_per_lap is now a real
+                    # measurement (engine.overtake_delta), not an analytical
+                    # model quantity -- 39: strategies[] gains restart_risk_cost_s,
+                    # the EV cost of a candidate's compound choice going cold on
+                    # an SC/VSC restart lap (engine.restart_delta) -- 38:
+                    # _long_run_pace excludes wet stints from the pace-level read
+                    # and the Monte Carlo rain_probability blend, replacing the
+                    # old practice-only retrospective rain read
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -785,32 +788,47 @@ def _project_race(grid: list[dict], pace_rows: list[dict], curves: dict,
     }
 
 
-BATTLE_WINDOW_LAPS = 5   # laps a wheel-to-wheel fight realistically lasts before
-                         # tyre delta / DRS train / traffic resolves it
+BATTLE_WINDOW_LAPS = 1   # a pass is scored against the very next lap, matching
+                         # what engine.overtake_calibration actually measures
 
 
 def _overtaking_cost(total_laps: int, circuit: str) -> dict:
-    """Model-implied overtaking difficulty: the sustained race-pace edge (s/lap)
-    a following car needs to convert a 1s gap into a pass within a short battle
-    window. Derived analytically from the sim's track-position blend — for two
-    equal-strategy cars the trailing car's projected finish drops below the
-    leader's once its per-lap pace advantage d satisfies gap < (1-w)*d*window,
-    i.e. d > gap / ((1-w) * window). Street circuits (higher w) resist hardest.
-    This is a model quantity, not an empirical DRS measurement."""
+    """Overtaking difficulty here: the pace edge (s/lap) a following car
+    needs, at a close gap, for a 50% chance of completing the pass by the
+    next lap. Used to be derived purely analytically from the sim's
+    track-position blend weight -- its own docstring admitted "a model
+    quantity, not an empirical DRS measurement." Now a real measurement
+    (engine.overtake_delta.pass_threshold_for, calibrated in
+    engine/overtake_calibration.py from real 2023-2026 lap times and
+    gaps): for every green-flag lap, every close pair of cars, did a pace
+    advantage convert into a position swap by the next lap. Verified
+    directly against real data before trusting it: the pooled pass-rate
+    curve is clean and monotonic from 0-3s/lap (thousands of samples),
+    crossing 50% at ~1.1-1.2s/lap -- independently close to a published
+    F1 strategist's own reported Budapest (1.09) and Zandvoort (1.14)
+    figures, numbers this calibration was never fitted to match.
+    track_position_weight/is_street_circuit are kept only for the
+    "difficulty" label below; they no longer feed the threshold itself."""
+    # Deferred: engine.overtake_calibration imports from engine.prerace
+    # (for _prerace_sources/CIRCUIT_LAPS via engine.undercut_calibration),
+    # which would make a top-level import here circular. Only needed for
+    # the gap_assumed_s display value below -- pass_threshold_for already
+    # handles its own deferred import internally.
+    from engine.overtake_calibration import GAP_THRESHOLD_S
+
     is_street = is_street_circuit(circuit)
     w = track_position_weight(circuit)
-    gap = 1.0
-    threshold = gap / ((1 - w) * BATTLE_WINDOW_LAPS)
+    threshold = pass_threshold_for(circuit)
     return {
         "track_position_weight": w,
         "battle_window_laps": BATTLE_WINDOW_LAPS,
-        "gap_assumed_s": gap,
+        "gap_assumed_s": GAP_THRESHOLD_S,
         "pass_threshold_s_per_lap": round(threshold, 2),
         "difficulty": "hard" if is_street else "moderate",
-        "note": (f"Model-implied: a following car needs about {threshold:.2f} s/lap "
-                 f"of sustained race pace to convert a {gap:.0f}s gap into a pass "
-                 f"within ~{BATTLE_WINDOW_LAPS} laps here (track-position weight "
-                 f"{w}). Higher means harder to overtake."),
+        "note": (f"Measured from real 2023-2026 races: a following car needs "
+                 f"about {threshold:.2f} s/lap of pace advantage, at a close "
+                 f"gap, for a 50% chance of completing the pass by the next "
+                 f"lap here. Higher means harder to overtake."),
     }
 
 

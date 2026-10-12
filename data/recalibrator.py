@@ -1,19 +1,19 @@
 """
-Background job that keeps engine/undercut_shift.py's per-circuit numbers
-and engine/restart_delta.py's per-compound numbers current without anyone
+Background job that keeps engine/undercut_shift.py's per-circuit numbers,
+engine/restart_delta.py's per-compound numbers, and
+engine/overtake_delta.py's per-circuit numbers current without anyone
 re-running a script by hand.
 
 User asked directly: "automatic recalibration." Before this, the
 undercut-shift calibration was a one-off, manually-run script whose
 output got hand-copied into a hardcoded dict -- accurate the day it ran,
-frozen after that. This thread periodically calls
-engine.undercut_calibration.run_incremental_calibration() and
-engine.restart_calibration.run_incremental_calibration(), each of which
-only ever evaluates races that weren't already in its own persisted
-cache (a newly-completed race since the last run), then writes its
-refreshed table to the same persisted location its "_for()" lookup reads
-from. The two calibrations are independent (separate persisted files,
-separate try/except) so one failing never blocks the other.
+frozen after that. This thread periodically calls each calibration
+module's own run_incremental_calibration(), each of which only ever
+evaluates races that weren't already in its own persisted cache (a
+newly-completed race since the last run), then writes its refreshed
+table to the same persisted location its "_for()" lookup reads from. The
+three calibrations are independent (separate persisted files, separate
+try/except) so one failing never blocks the others.
 
 Runs in its own daemon thread for the life of the process (same pattern
 as data/warmer.py), started from api/main.py's FastAPI lifespan hook.
@@ -32,6 +32,7 @@ RECALIBRATION_INTERVAL_S = 24 * 3600   # once a day is plenty -- races
 def _recalibrate_once() -> None:
     from engine.undercut_calibration import run_incremental_calibration as run_undercut
     from engine.restart_calibration import run_incremental_calibration as run_restart
+    from engine.overtake_calibration import run_incremental_calibration as run_overtake
     try:
         run_undercut()
     except Exception:
@@ -39,8 +40,13 @@ def _recalibrate_once() -> None:
     try:
         run_restart()
     except Exception:
-        pass   # independent of the undercut calibration above -- one
-                # failing must not block the other
+        pass   # independent of the other calibrations -- one failing
+                # must not block the others
+    try:
+        run_overtake()
+    except Exception:
+        pass   # independent of the other calibrations -- one failing
+                # must not block the others
 
 
 def recalibration_loop() -> None:

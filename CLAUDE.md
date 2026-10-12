@@ -3476,6 +3476,61 @@ Pirelli's own stated optimal window (laps 28-34). Full unit (325) and
 integration (6, including a fixed Monza test that used to assert the
 now-removed `SOFT_SPLASH_MAX` cap) suites pass.
 
+### Real overtaking pass-rate calibration, replacing a model quantity, 2026-10-12
+User asked for a deep-dive comparison against an independent F1
+strategist's published methodology (Ruth Buscombe's Substack, read in
+full -- all 30 posts), then asked how much of it we could actually
+adopt. The clearest, most directly fixable gap: her pieces repeatedly
+publish real measured pass-rate tables ("225 instances within 1.2s, 28
+passes by next lap," a measured 50%-pass threshold per circuit --
+Budapest 1.09s/lap, Zandvoort 1.14s/lap). `_overtaking_cost`
+(engine/prerace.py) had always derived its "pace edge needed to pass"
+purely analytically from the sim's own track-position blend weight --
+its own docstring admitted this was "a model quantity, not an empirical
+DRS measurement." We already had the same underlying data (lap times +
+gap-to-car-ahead) and had simply never measured it.
+
+Built the same live-calibration pattern already proven twice this
+session (undercut_shift, restart_delta): `engine/overtake_delta.py`
+(bootstrap default + `pass_threshold_for(circuit)`),
+`engine/overtake_calibration.py` (the live, self-updating measurement),
+`calibrate_overtake_delta.py` (manual CLI). `PACK_VERSION` 39 -> 40.
+
+Measured per circuit: for every green-flag lap 2023-2026, every pair of
+cars adjacent in the running order with a gap under 2.0s, the pace delta
+(leading car's lap time minus the following car's) and whether their
+order flips by the next lap. Bucketed, the 50% crossing is the
+threshold. Verified against real cached data (no network, reusing
+`backtest_full.py`'s own local cache) before building anything: the
+pooled curve is clean and monotonic from 0-3s/lap with thousands of
+samples per bucket, crossing 50% at ~1.1-1.2s/lap -- independently close
+to the strategist's own Budapest/Zandvoort figures, numbers this
+calibration was never fitted to match.
+
+Real run (2023-2026, 68 races, 28,118 close-pair samples) found clean
+circuit-specific crossings for 12 circuits (Monza 0.89s/lap lowest,
+Hungaroring 2.50s/lap highest) but NO clean crossing for most true
+street/desert circuits (Baku, Singapore, Monte Carlo, Las Vegas, Jeddah)
+despite 800-1400+ samples each. Confirmed this is a real finding, not a
+data-scarcity bug: those circuits may genuinely never reliably convert a
+close gap into a pass within a single lap, however large the pace
+advantage, since a real pass there usually takes several laps of
+DRS-train following rather than one clean move. They correctly fall back
+to the pooled default (1.1s/lap) rather than a fabricated number --
+Singapore included, confirmed directly against the live pack.
+Hungaroring's 2.50s/lap is flagged in the module docstring as less
+trustworthy than the rest (a single crossing off one bucket boundary,
+not corroborated the way the others are) -- re-check once more races
+accumulate rather than treating it as precise.
+
+Replaced `_overtaking_cost`'s computation with the calibrated lookup;
+`track_position_weight`/`is_street_circuit` are kept only for the
+"difficulty" display label now, no longer feeding the threshold itself.
+This field is narrative/display-only (feeds the LLM's "the_doors"
+prompt) -- it was never part of the actual strategy-ranking cost
+(`_track_position_cost` is, and is untouched), so this fix makes a
+user-facing number honest without touching the core ranking math.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
