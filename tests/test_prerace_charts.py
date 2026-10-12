@@ -735,14 +735,20 @@ class TestRealMeetingIntegration:
                   if s["compound_sequence"] == ["MEDIUM", "HARD"])
         assert mh["pit_laps"] == [31 - round(CIRCUIT_UNDERCUT_SHIFT["monza"])]
 
-    def test_monza_medium_soft_splash_stint_is_not_shifted(self):
-        # MEDIUM->SOFT also starts on MEDIUM, but the shift is scoped off
-        # of it (end_c softer than start_c) -- shifting it would otherwise
-        # risk pushing the final SOFT splash stint's length past
-        # SOFT_SPLASH_MAX, making the DP's own chosen sequence illegal.
+    def test_monza_medium_soft_candidate_is_internally_consistent(self):
+        # MEDIUM->SOFT also starts on MEDIUM, but the undercut-shift
+        # correction is scoped off of it (end_c softer than start_c) --
+        # _shift_medium_start_earlier only ever runs for a non-softer
+        # ending (in practice MEDIUM->HARD, see the test above). Used to
+        # also assert the resulting stint fit under SOFT_SPLASH_MAX, a
+        # check removed along with the constant itself (2026-10-12: real
+        # 2023-2026 data showed 60.9% of genuine real softer-final-stint
+        # strategies exceeded that 15-lap cap, so it was discarding most
+        # real strategies, not a handful of edge cases) -- stint length is
+        # no longer artificially bounded, just internally consistent.
         from engine.prerace import build_prerace_data
-        from engine.predictor import SOFT_SPLASH_MAX
         pack = build_prerace_data(self.MONZA_2026)
         ms = next(s for s in pack["strategies"]
                   if s["compound_sequence"] == ["MEDIUM", "SOFT"])
-        assert ms["stint_lengths"][1] <= SOFT_SPLASH_MAX
+        assert sum(ms["stint_lengths"]) == pack["meeting"]["total_laps_assumed"]
+        assert ms["pit_laps"] == [ms["stint_lengths"][0]]

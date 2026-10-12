@@ -53,7 +53,6 @@ PACE_BIAS_BASE    = 0.05   # s/lap, floor even for a well-sampled driver --
 PACE_BIAS_THIN_K   = 0.35   # extra s/lap uncertainty, scaled by 1/sqrt(laps)
 SC_LAP_MULT     = 1.35   # median lap time > 35% above session median → SC
 MIN_STINT       = 8      # minimum viable stint length
-SOFT_SPLASH_MAX = 15     # Soft allowed as final compound only if ≤ this many laps
 # DNF_RATE_DEFAULT (below, next to its SC counterparts) replaced the old flat
 # 0.04 here — that understated measured risk by >3x.
 
@@ -771,12 +770,39 @@ def build_pace_model(
 
 # ── Lap time prediction ───────────────────────────────────────────────────────
 
+def _fallback_baseline(compound: str, curves: dict[str, DegCurve],
+                       field_baseline: float) -> float:
+    """Baseline for a compound with no measured curve at all -- zero laps
+    logged anywhere pre-race, not just a thin sample (build_deg_curves'
+    own DEG_RATIO backfill needs at least one real lap to even create an
+    entry to backfill; this is the rarer, more extreme case where it
+    never gets the chance). Anchored off MEDIUM's own real baseline when
+    MEDIUM has been measured, matching the pattern build_deg_curves'
+    EXPECTED_OFFSET clamp already uses for a compound backfilled from at
+    least one real sample -- COMPOUND_DELTA holds the identical offsets.
+    Falls back to field_baseline (the median across whatever OTHER
+    curves exist) only if MEDIUM itself was never measured either, a
+    much rarer case.
+
+    Found via Singapore 2026 (sprint weekend, zero SOFT laps anywhere
+    pre-race): the old code anchored this fallback off field_baseline,
+    which with no SOFT data in the mix is just the median of HARD and
+    MEDIUM's own baselines -- here landing almost exactly at MEDIUM's,
+    so subtracting SOFT's -0.6s offset from it barely beat MEDIUM's real
+    baseline at all. That erased nearly all of SOFT's real pace
+    advantage and is the direct reason no SOFT-start strategy ever
+    ranked competitively there, independent of degradation rate."""
+    med = curves.get("MEDIUM")
+    anchor = med.baseline if (med and med.baseline > 0) else field_baseline
+    return anchor + COMPOUND_DELTA.get(compound, 0)
+
+
 def _lap_t(compound: str, age: int, pace_delta: float,
            curves: dict[str, DegCurve], field_baseline: float) -> float:
     curve = curves.get(compound)
     if curve and curve.baseline > 0:
         return curve.baseline + curve.deg_rate * age + pace_delta
-    return field_baseline + COMPOUND_DELTA.get(compound, 0) + 0.03 * age + pace_delta
+    return _fallback_baseline(compound, curves, field_baseline) + 0.03 * age + pace_delta
 
 
 def _hardness(compound: str) -> int:
@@ -821,7 +847,7 @@ def _stint_lap_times(compound: str, start_age: int, length: int, abs_start: int,
     curve = curves.get(compound)
     deg = curve.deg_rate if (curve and curve.baseline > 0) else 0.03
     base = (curve.baseline if (curve and curve.baseline > 0)
-            else field_baseline + COMPOUND_DELTA.get(compound, 0))
+            else _fallback_baseline(compound, curves, field_baseline))
     cliff = _cliff_life(compound, deg)
     out = []
     for i in range(length):
@@ -1039,8 +1065,6 @@ def optimize_strategy(
                 continue
             if not end_ok(c2):
                 continue
-            if _hardness(c2) < _hardness(current_compound) and (remaining - pit) > SOFT_SPLASH_MAX:
-                continue
             if not in_stock(c2):
                 continue
             t = (stint_t(current_compound, current_age, pit, current_lap)
@@ -1061,8 +1085,6 @@ def optimize_strategy(
                     if forbid_repeat_compound and (c2 == current_compound or c3 == c2):
                         continue
                     if not end_ok(c3):
-                        continue
-                    if _hardness(c3) < _hardness(c2) and r3 > SOFT_SPLASH_MAX:
                         continue
                     if not in_stock(c2, c3):
                         continue
@@ -1097,15 +1119,6 @@ def optimize_strategy(
                                         seq[j] == seq[j - 1] for j in range(1, 4)):
                                     continue
                                 if not end_ok(c4):
-                                    continue
-                                # no mid-race downgrade to a softer tyre unless
-                                # that stint is short enough to be a late splash
-                                seq_lens = [p2, p3, r4]
-                                bad = any(
-                                    _hardness(seq[j]) < _hardness(seq[j - 1])
-                                    and seq_lens[j - 1] > SOFT_SPLASH_MAX
-                                    for j in range(1, 4))
-                                if bad:
                                     continue
                                 if not in_stock(c2, c3, c4):
                                     continue

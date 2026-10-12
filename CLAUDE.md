@@ -3347,11 +3347,134 @@ this project's own numbers are live and already reflect that session.
   -- a sprint weekend has only one practice session (FP1) before
   qualifying, and FP1 had zero representative Soft long runs logged
   (Hard got 63 data points, Medium only 6 at LOW confidence, Soft zero).
-  `build_prerace_data`'s strategy search already skips any compound with
-  no fitted curve, which is exactly why no Soft-start candidate appears --
-  correct, conservative behaviour given the data, not a bug to patch
-  around. Not fixable without more dry running; should resolve naturally
-  once the race itself (much more dry mileage) completes.
+  **Correction, 2026-10-12**: the claim just below this ("not fixable
+  without more dry running") was wrong -- see "Two real bugs behind the
+  missing SOFT-start candidate" further down. The strategy search doesn't
+  skip a compound with no curve at all; it falls through to a different,
+  buggy flat-fallback path, and separately a hardcoded 15-lap cap was
+  structurally blocking any long SOFT-ending candidate regardless. Both
+  were real, fixable bugs, not an unavoidable data gap.
+
+### Cold-tyre Safety Car/VSC restart penalty, calibrated from real data, 2026-10-12
+User asked to check Singapore's pre-race strategy table against an
+independent strategist's analysis and F1.com's own Pirelli-sourced
+preview, both citing the same real mechanism for why nobody races on
+HARD there: it's slow to reach operating temperature after a restart
+and loses track position in the laps right after one. Nothing in this
+codebase modelled that at all.
+
+Built the full live-calibration pattern already proven for the
+per-circuit undercut shift (`engine/undercut_shift.py` +
+`engine/undercut_calibration.py` + `data/recalibrator.py`), mirrored
+file-for-file for this: `engine/restart_delta.py` (bootstrap default +
+`restart_delta_for(compound)`), `engine/restart_calibration.py` (the
+live, self-updating measurement), `calibrate_restart_delta.py` (manual
+CLI), and a new `_restart_risk_cost` term in `engine/prerace.py`,
+wired into the same per-strategy cost loop as `_track_position_cost`.
+`PACK_VERSION` 38 -> 39.
+
+Measured in **seconds**, not positions: each driver's lap-time residual
+on the real restart lap vs the field's own median lap time on that same
+lap (cross-sectional, no dependency on each driver's own deg curve).
+Pooled globally across circuits/years, not split -- the cold-tyre effect
+is roughly circuit-invariant physics, and a street-only HARD bucket
+would be starved to near-zero samples precisely because HARD is rarely
+raced there.
+
+Found and fixed a real methodology bug before trusting any number:
+`race_control`'s own "ENDING"/"IN THIS LAP" lap number is NOT reliably
+the first green-flag lap. Confirmed directly against Singapore 2026's
+own two real VSCs (session_key 11388) -- the first VSC's end_lap (9)
+was still neutralised (108.2s vs a ~99.5s pre-VSC baseline), the real
+restart was lap 10 (99.2s); the second VSC's end_lap (40) was already
+back to full pace (98.6s). The SAME race disagreed with itself on
+whether end_lap meant "restarted." Fixed with `_true_restart_lap`: find
+a pre-event pace baseline, then search end_lap, end_lap+1, end_lap+2 for
+the first one back within tolerance of it, rather than trusting the
+message's lap number at face value.
+
+Honest result after running `calibrate_restart_delta.py` for real
+against 2023-2026 (comfortably clearing `MIN_SAMPLES=10` for every
+compound, n=600+ each): every compound's measured restart-lap delta
+came back within 0.03s of the field median -- no detectable HARD
+penalty at this pooled, global sample size, despite two independent
+methodology passes (the second, after the end_lap fix, actually
+*flattened* the first run's modest SOFT signal rather than sharpening
+it -- evidence the first run's numbers were mostly noise from exactly
+which lap got sampled, not a real effect). Hardcoded that real
+near-null snapshot into `RESTART_LAP_DELTA_S` rather than leaving it an
+ambiguous empty dict or forcing a number the data doesn't support. This
+doesn't mean the underlying claim is wrong -- it may be real but
+circuit-specific (diluted by the deliberate global pooling) or just too
+small to separate from noise at this sample size -- but shipping a
+confidently-wrong HARD penalty because the hypothesis said it should be
+there would be exactly the mistake this project's "verify before
+trusting a number" rule exists to prevent. `_restart_risk_cost` applies
+~0 cost everywhere today, correctly, until real data says otherwise.
+Also worth noting: even a confirmed real effect here was only ever going
+to be a minor correction (fractions of a second once scaled by
+`sc_prob` and compound-exposure) -- nowhere near enough on its own to
+explain Singapore's strategy-table discrepancy, which turned out to
+have a much bigger, separate cause (next entry).
+
+### Two real bugs behind the missing SOFT-start candidate, 2026-10-12
+Follow-up to the restart-penalty work above: while investigating why no
+SOFT-start candidate appeared for Singapore despite SOFT being Pirelli's
+own stated favourite (plain MEDIUM->SOFT, pit window laps 28-34), found
+two separate, confirmed, now-fixed bugs -- neither is "missing data,"
+both are real logic errors.
+
+**Bug 1 -- the zero-sample flat-fallback anchored off the wrong
+baseline.** Singapore's SOFT had zero laps logged anywhere pre-race (a
+sprint weekend's only practice session never ran one), so
+`build_deg_curves` never created a `SOFT` curve entry at all --
+`_lap_t`/`_stint_lap_times` fall through to a flat fallback for a
+compound with no curve: `field_baseline + COMPOUND_DELTA[compound]`.
+`field_baseline` is the median of whatever OTHER curves exist (here,
+HARD and MEDIUM) -- not anchored to MEDIUM specifically, unlike
+`build_deg_curves`'s own `EXPECTED_OFFSET` clamp (`med.baseline +
+EXPECTED_OFFSET[c]`), which already gets this right for a compound
+backfilled from at least one real sample. With no SOFT data in the mix,
+Singapore's field_baseline landed almost exactly at MEDIUM's own
+baseline, so subtracting SOFT's -0.6s offset from it barely beat
+MEDIUM's real baseline at all -- erasing nearly all of SOFT's real pace
+advantage, independent of degradation rate. `COMPOUND_DELTA`'s own
+top-of-file comment already says "vs fresh Medium," confirming this was
+a deviation from the documented intent, not a deliberate design choice.
+Fixed with a new `_fallback_baseline(compound, curves, field_baseline)`
+helper that anchors off `curves["MEDIUM"].baseline` when it exists,
+falling back to `field_baseline` only if MEDIUM itself was never
+measured either. Used by both `_lap_t` and `_stint_lap_times`.
+
+**Bug 2 -- `SOFT_SPLASH_MAX=15` was structurally blocking the winning
+strategy from ever being generated at all.** `optimize_strategy`
+unconditionally refused to even consider a candidate that downgrades to
+a softer compound for a final stint longer than 15 laps, in all three
+stop-count branches -- not a confidence-weighted judgment call (no
+backtest citation, unlike the other tuned constants nearby), just a flat
+rule. Directly contradicted by this very race: Hamilton's real strategy
+was MEDIUM->SOFT with a 44-lap final SOFT stint, nearly 3x past the
+cap. Checked against real 2023-2026 data before touching it (same
+cache_only backtest_full.py harness used throughout this project, no
+network needed): of every real case where a driver's final stint
+downgrades to a softer compound than the one before it, **60.9% exceed
+15 laps** (median 23, max 60, n=335 of 550) -- this wasn't a rare
+exception, it was the majority behaviour the constraint was silently
+discarding. Removed the three `SOFT_SPLASH_MAX` checks entirely (1-stop,
+2-stop, and 3-stop branches) rather than picking a new cutoff -- the real
+distribution doesn't support any single cap, and the lap-time model
+(now that Bug 1 is fixed) correctly values a compound's pace/wear
+tradeoff on its own merits without one.
+
+**Combined effect, verified directly**: before either fix, Singapore's
+top-ranked candidate was a 2-stop (MEDIUM-SOFT-MEDIUM, 6080.21s) beating
+a MEDIUM->HARD 1-stop by just 4.4s, with no plain MEDIUM->SOFT 1-stop
+anywhere in the list. After both fixes: the top candidate is a plain
+**MEDIUM->SOFT 1-stop, pit lap 28**, total_time 6018.73s, clearly ahead
+of everything else (+23s to the next-best) -- landing exactly inside
+Pirelli's own stated optimal window (laps 28-34). Full unit (325) and
+integration (6, including a fixed Monza test that used to assert the
+now-removed `SOFT_SPLASH_MAX` cap) suites pass.
 
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in

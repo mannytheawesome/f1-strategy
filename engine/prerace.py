@@ -28,6 +28,7 @@ from engine.predictor import (
 )
 from engine.pit_loss import pit_loss_for
 from engine.undercut_shift import undercut_shift_for
+from engine.restart_delta import restart_delta_for
 
 # Clean-lap filter for _long_run_pace (below): keep only laps within this
 # ratio of a stint's own best lap, same idea as predictor.DEG_LONGRUN but
@@ -51,9 +52,12 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 38   # 38: _long_run_pace excludes wet stints from the pace-level read
-                    # and the Monte Carlo rain_probability blend, replacing the old
-                    # practice-only retrospective rain read
+PACK_VERSION = 39   # 39: strategies[] gains restart_risk_cost_s, the EV cost of a
+                    # candidate's compound choice going cold on an SC/VSC restart
+                    # lap (engine.restart_delta) -- 38: _long_run_pace excludes wet
+                    # stints from the pace-level read and the Monte Carlo
+                    # rain_probability blend, replacing the old practice-only
+                    # retrospective rain read
 from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from engine.briefing import BRIEFING_DIR, generate_structured_narrative
 from engine.circuits import is_street_circuit, track_position_weight, resurfacing_caveat
@@ -551,10 +555,10 @@ def _pit_window(seq: list[str], lens: list[int], pit_index: int,
 # -- a soft starter is usually already at the front with less undercut
 # exposure to defend against, so this correction is scoped to MEDIUM starts
 # only -- and further restricted to a non-softer ending compound (in
-# practice, MEDIUM->HARD) at the call site, matching the actual evidence and
-# avoiding pulling a MEDIUM->SOFT splash stint's final leg past
-# SOFT_SPLASH_MAX. Other starting compounds are left as the pure-pace
-# answer for lack of evidence either way. The circuit's own _undercut_power
+# practice, MEDIUM->HARD) at the call site, matching the actual evidence
+# (SOFT-starting one-stops showed no such bias). Other starting compounds
+# are left as the pure-pace answer for lack of evidence either way. The
+# circuit's own _undercut_power
 # signal (net_undercut_s) was checked as a way to scale this per-circuit
 # instead of using one flat number, but didn't correlate with the size of
 # the real bias across those 4 races (Australia had the LARGEST real-world
@@ -1245,6 +1249,47 @@ def _track_position_cost(stops: int, circuit: str, pit_loss: float) -> float:
                 * POSITION_RISK_SCALE, 1)
 
 
+def _restart_risk_cost(compound_sequence: list[str], stint_lengths: list[int],
+                       total_laps: int, sc_prob: float) -> float:
+    """Expected-value cost of a candidate's compound choice going cold on
+    a Safety Car/VSC restart. User-reported (Singapore 2026): a MEDIUM->
+    HARD 1-stop ranked as a viable candidate despite 0 of 22 real
+    finishers ever racing on HARD there -- cross-checked against an
+    independent strategist's analysis and F1.com's own Pirelli-sourced
+    preview, both citing the same real mechanism: HARD is slow to reach
+    operating temperature after a restart and loses track position in
+    the laps right after one, an effect optimize_strategy's lap-time
+    model (pace fading over a stint, not a one-time cold-tyre penalty on
+    one specific lap) has no way to represent on its own.
+
+    We don't know pre-race WHEN a restart will happen, only the whole-
+    race probability that one happens at all (sc_prob, already computed
+    elsewhere in this pipeline from the circuit's own SC rate). Given
+    that, and no finer-grained timing model, the simplest defensible
+    approximation is that a restart is equally likely to land on any lap
+    -- so a compound's share of this plan's total race distance stands
+    in for "probability the car happens to be on this compound if/when
+    the restart lands." engine.restart_delta.restart_delta_for(compound)
+    is the measured seconds lost (positive) or gained (negative) on the
+    restart lap itself, from real history (engine/restart_calibration.py)
+    -- see that module for exactly what's measured and why it's pooled
+    globally rather than split by circuit. Zero for any compound with too
+    few real samples to trust, so an uncalibrated compound costs nothing
+    rather than a guessed number.
+
+    cost = sc_prob * sum(stint_laps/total_laps * restart_delta_for(compound))
+
+    Re-check this against real data (calibrate_restart_delta.py) if a
+    specific race's restart-affected candidates ever look wrong -- the
+    one genuine judgment call here is treating a restart as uniformly
+    likely across the race, not the delta numbers themselves."""
+    if not total_laps:
+        return 0.0
+    exposure = sum((length / total_laps) * restart_delta_for(compound)
+                   for compound, length in zip(compound_sequence, stint_lengths))
+    return round(sc_prob * exposure, 1)
+
+
 def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
                    total_laps: int, circuit: str, sc_prob: float) -> dict | None:
     """Why the optimal stop count is what it is. Decomposes the gap between the
@@ -1588,6 +1633,14 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     # turn makes that comparison actually visible; a pure time optimum
     # picks one "answer", but real strategy calls are a genuine choice
     # among several plans that are all close.
+    # Hoisted here (was computed after the strategies loop, further down)
+    # so _restart_risk_cost can use it in the same cost-assignment loop as
+    # _track_position_cost below -- circuit/total_laps are already bound
+    # well above this point, so this is a pure reordering, no change to
+    # its other downstream consumers (_stop_decision, the pack's
+    # sc_probability field).
+    sc_prob = sc_probability([], 0, total_laps, circuit)
+
     strategies = []
     seen_signatures: set[tuple] = set()
     for stops in (1, 2, 3):
@@ -1634,10 +1687,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 stint_lengths = [bounds[i + 1] - bounds[i] for i in range(len(seq))]
                 total_time = strat.total_time_from_now
                 # Scoped to MEDIUM->HARD specifically, matching the actual
-                # backtested evidence -- also keeps this from ever shifting
-                # a MEDIUM->SOFT splash stint's final leg past
-                # SOFT_SPLASH_MAX, which pulling the pit lap earlier would
-                # otherwise risk (a longer, no-longer-legal "splash" stint).
+                # backtested evidence (SOFT-starting one-stops showed no
+                # such bias, see the comment above this function).
                 if stops == 1 and start_c == "MEDIUM" and _hardness(seq[1]) >= _hardness(start_c):
                     pit_laps, stint_lengths, total_time = _shift_medium_start_earlier(
                         seq[0], seq[1], stint_lengths, total_laps, curves,
@@ -1656,7 +1707,9 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 })
     for s in strategies:
         s["track_position_cost_s"] = _track_position_cost(s["stops"], circuit, pit_loss)
-        s["total_time"] += s["track_position_cost_s"]
+        s["restart_risk_cost_s"] = _restart_risk_cost(
+            s["compound_sequence"], s["stint_lengths"], total_laps, sc_prob)
+        s["total_time"] += s["track_position_cost_s"] + s["restart_risk_cost_s"]
 
     strategies.sort(key=lambda s: s["total_time"])
     strategies = strategies[:5]   # top 5 candidates, fastest first
@@ -1678,8 +1731,6 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             s["viability"] = "needs a Safety Car"
         else:
             s["viability"] = "not on the table"
-
-    sc_prob = sc_probability([], 0, total_laps, circuit)
 
     # ── long-run pace order, quali sectors, lap-0 projection ────────────────
     pace_fetch_failures: list[str] = []
