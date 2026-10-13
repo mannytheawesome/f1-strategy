@@ -419,6 +419,19 @@ def get_drivers(session_key: int, ttl: float = HIST_TTL) -> dict[int, dict]:
     return {r["driver_number"]: r for r in rows}
 
 
+# Shared by api/routers/briefings.py (races list, standings) and
+# engine/standings.py (championship context fed into the pre-race pack) --
+# one cached fetch of the season's sessions either way, not a duplicated one
+# per caller. 10 min TTL: short enough to pick up a newly-added session
+# without every one of these callers independently re-fetching the whole
+# season list on every page load (the bug this TTL was originally sized for).
+SEASON_SESSIONS_TTL = 600
+
+
+def get_season_sessions(year: int) -> list[dict]:
+    return _cached_get(f"season_sessions:{year}", "sessions", SEASON_SESSIONS_TTL, year=year)
+
+
 PIT_BOUNDARY_TOLERANCE_LAPS = 2
 
 def get_pit_stops(session_key: int, ttl: float = HIST_TTL) -> list[dict]:

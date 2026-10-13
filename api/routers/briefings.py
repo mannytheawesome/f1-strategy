@@ -4,7 +4,8 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from data.live import _cached_get, _cache_get, _cache_set, get_drivers, HIST_TTL_FINAL
+from data.live import (_cached_get, _cache_get, _cache_set, get_drivers,
+                       get_season_sessions, HIST_TTL_FINAL)
 
 router = APIRouter()
 
@@ -26,12 +27,14 @@ def _regen_allowed(regenerate: bool, token: str | None) -> bool:
 # its OWN outer response cache went stale -- meaning up to 3x redundant
 # identical fetches per visitor, worst case right after every redeploy
 # (their outer caches are all short-lived, so none of them survive a
-# restart). Sharing one cached copy here collapses that back to one fetch.
+# restart). Sharing one cached copy here collapses that back to one fetch --
+# get_season_sessions (data/live.py) now also backs engine/standings.py, so
+# a pre-race pack build shares the exact same cached fetch too.
 _SEASON_LIST_TTL = 600   # 10 min -- short enough to catch a newly-added race
 
 
 def _season_sessions(year: int) -> list[dict]:
-    return _cached_get(f"season_sessions:{year}", "sessions", _SEASON_LIST_TTL, year=year)
+    return get_season_sessions(year)
 
 
 def _season_meetings(year: int) -> list[dict]:
@@ -172,86 +175,12 @@ def race_list(year: int = 2026):
 
 @router.get("/api/standings")
 def standings(year: int = 2026):
-    """Drivers' and constructors' championship standings, summed from
-    OpenF1's own per-session `points` field across every completed Race
-    and Sprint session this year -- not a self-implemented points table,
-    so sprint scoring is exactly whatever OpenF1 itself applied, no
-    separate rule table to keep in sync. A mid-season team change is
-    attributed correctly for constructors (points credited to whichever
-    team a driver was actually driving for that weekend); the driver-level
-    `team`/`team_colour` shown is just their most recent one, for display."""
+    """Drivers' and constructors' championship standings. Computation lives
+    in engine/standings.py (compute_standings) -- shared with the pre-race
+    pack's championship context, so both read the exact same real numbers."""
     try:
-        cached = _cache_get(f"standings:{year}")
-        if cached is not None:
-            return cached
-        from datetime import datetime, timezone
-        from dateutil.parser import parse as parse_dt
-        now = datetime.now(timezone.utc)
-        raw = _season_sessions(year)
-        scoring_keys = []
-        for s in raw:
-            if s.get("session_type", "").lower() != "race":
-                continue
-            end = s.get("date_end")
-            if not end:
-                continue
-            end_dt = parse_dt(end)
-            if end_dt.tzinfo is None:
-                end_dt = end_dt.replace(tzinfo=timezone.utc)
-            if end_dt > now:
-                continue
-            scoring_keys.append(s["session_key"])
-
-        driver_points: dict[int, float] = {}
-        driver_acr: dict[int, str] = {}
-        driver_team: dict[int, str] = {}
-        driver_colour: dict[int, str] = {}
-        team_points: dict[str, float] = {}
-        team_colour: dict[str, str] = {}
-
-        for sk in scoring_keys:
-            try:
-                results = _cached_get(f"session_result:{sk}", "session_result",
-                                      HIST_TTL_FINAL, session_key=sk)
-                drivers = get_drivers(sk, HIST_TTL_FINAL)
-            except Exception:
-                continue
-            for r in results:
-                num = r.get("driver_number")
-                pts = r.get("points") or 0
-                if num is None or not pts:
-                    continue
-                driver_points[num] = driver_points.get(num, 0) + pts
-                d = drivers.get(num, {})
-                if d.get("name_acronym"):
-                    driver_acr[num] = d["name_acronym"]
-                team = d.get("team_name")
-                if team:
-                    driver_team[num] = team
-                    driver_colour[num] = d.get("team_colour")
-                    team_points[team] = team_points.get(team, 0) + pts
-                    team_colour.setdefault(team, d.get("team_colour"))
-
-        drivers_standings = sorted(
-            [{"driver_number": n, "acronym": driver_acr.get(n, str(n)),
-              "team": driver_team.get(n), "team_colour": driver_colour.get(n),
-              "points": pts}
-             for n, pts in driver_points.items()],
-            key=lambda x: -x["points"])
-        for i, d in enumerate(drivers_standings, 1):
-            d["position"] = i
-
-        constructors_standings = sorted(
-            [{"team": team, "team_colour": team_colour.get(team), "points": pts}
-             for team, pts in team_points.items()],
-            key=lambda x: -x["points"])
-        for i, c in enumerate(constructors_standings, 1):
-            c["position"] = i
-
-        result = {"year": year, "drivers": drivers_standings,
-                  "constructors": constructors_standings}
-        _cache_set(f"standings:{year}", result, 1800)
-        return result
+        from engine.standings import compute_standings
+        return compute_standings(year)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

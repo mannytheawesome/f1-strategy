@@ -8,6 +8,7 @@ import pytest
 
 import api.routers.briefings as briefings
 import data.live as live
+import engine.standings as standings_mod
 
 
 @pytest.fixture(autouse=True)
@@ -177,9 +178,6 @@ class TestRaceListPodium:
 
 class TestStandings:
     def _patch(self, monkeypatch, sessions, results_by_session, drivers_by_session):
-        monkeypatch.setattr(briefings, "_cache_get", lambda *a, **k: None)
-        monkeypatch.setattr(briefings, "_cache_set", lambda *a, **k: None)
-
         def fake_get(endpoint, **params):
             if endpoint == "sessions":
                 return sessions
@@ -187,11 +185,15 @@ class TestStandings:
                 return results_by_session.get(params["session_key"], [])
             raise AssertionError(f"unexpected endpoint {endpoint}")
 
-        monkeypatch.setattr(briefings, "get_drivers",
+        # The real computation lives in engine.standings now (compute_standings,
+        # shared with the pre-race pack's championship context) -- it imported
+        # its own bindings of _cache_get/_cache_set/get_drivers at module load
+        # time, separate from briefings' (and from data.live's own globals, which
+        # _cached_get itself still resolves through, hence patching `live` too).
+        monkeypatch.setattr(standings_mod, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(standings_mod, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(standings_mod, "get_drivers",
                             lambda sk, ttl: drivers_by_session.get(sk, {}))
-        # See TestRaceListPodium._patch -- sessions/session_result now go
-        # through data.live._cached_get, which resolves _get/_cache_get/_cache_set
-        # from data.live's own globals, not briefings' rebound imports.
         monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
         monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
         monkeypatch.setattr(live, "_get", fake_get)

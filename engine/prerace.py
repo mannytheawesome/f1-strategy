@@ -53,7 +53,10 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 40   # 40: overtaking.pass_threshold_s_per_lap is now a real
+PACK_VERSION = 41   # 41: new top-level `championship` field -- each grid
+                    # driver's real standing entering this race plus races
+                    # remaining this season (engine.standings), narrative-only
+                    # -- 40: overtaking.pass_threshold_s_per_lap is now a real
                     # measurement (engine.overtake_delta), not an analytical
                     # model quantity -- 39: strategies[] gains restart_risk_cost_s,
                     # the EV cost of a candidate's compound choice going cold on
@@ -107,7 +110,7 @@ PRERACE_SCHEMA = {
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
         "race_shape": {"type": "string", "description": "180-280 words: the stop-count call and WHY. Lead with stop_decision.optimal_stops, then decompose stop_decision.crossover — the extra_pit_cost_s of one more stop vs the fresh_rubber_saving_s it buys — to explain why that count wins. Flag any plan's laps_over_cliff. Use stop_decision.sc_flips_call / sc_favored_stops to say whether a Safety Car tips it toward more stops, and track_position_bias for how much staying out is worth here. If strategy_win_rates is present, cite it alongside the time-based case: each candidate's win_probability/podium_probability is a REAL Monte Carlo result for strategy_win_rates.acronym (not an estimate) — e.g. 'X wins the race on this plan in N% of simulations vs M% on the alternative'. This is the one place in the briefing a probability like that belongs; everywhere else stays in the deterministic time-delta language stop_decision already uses."},
         "the_undercut": {"type": "string", "description": "120-200 words on the undercut vs the overcut, using the undercut object: fresh_gain_per_lap and net_undercut_s (fresh-tyre gain over the window, net of the out-lap), judged against pit_loss_s and the verdict. Say plainly whether teams should pit early to jump rivals (undercut) or hold track position and extend (overcut), and tie it to how hard passing is here."},
-        "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door."},
+        "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door. If championship shows a grid driver within a handful of points of the lead with few races_remaining, note plainly that a title fight narrows which doors are worth opening — bounded-downside plans matter more than usual for that driver specifically."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
         "watch_list": {"type": "string", "description": "80-160 words: the 2-4 unknowns that get filled in during the first stint, and exactly what to watch for each"},
     },
@@ -1015,6 +1018,63 @@ def _recovery_prior(circuit: str, meeting_key, max_races: int = 3) -> dict | Non
     }
 
 
+def _championship_context(grid: list[dict], year: int | None) -> dict | None:
+    """Each grid driver's real championship standing entering this race,
+    plus how many Grand Prix rounds remain in the season. User asked how
+    much of an independent strategist's methodology we could adopt;
+    "championship roadmapping" was one of the ideas -- a title contender's
+    real risk tolerance for a strategy (a 2-stop that's 1-2s faster in
+    expectation but carries more track-position/SC exposure, say) isn't
+    the same with 4 races left and a 12-point gap as it is in April.
+
+    Narrative/display-only, same as _overtaking_cost and recovery_prior --
+    feeds the LLM's risk/reward framing (see PRERACE_SCHEMA's the_doors
+    description) rather than re-weighting the strategy search itself. A
+    genuine risk-weighted ranking would need a per-candidate variance
+    estimate (how much DOES a 2-stop's extra pit stop actually raise the
+    chance of a bad outcome, in expectation?) that this pipeline doesn't
+    compute pre-race yet -- run_monte_carlo (engine/predictor.py) builds
+    exactly that, but only for an in-progress race's live forecasts, not
+    for pre-race strategy candidates. Left as a real number here rather
+    than guessed at.
+
+    Uses engine.standings.compute_standings -- the same real, OpenF1-
+    results-summed computation /api/standings serves, not a duplicate."""
+    if not year:
+        return None
+    try:
+        from engine.standings import compute_standings, season_race_progress
+        standings = compute_standings(year)
+        progress = season_race_progress(year)
+    except Exception:
+        return None
+    if not standings.get("drivers"):
+        return None
+
+    by_driver = {d["driver_number"]: d for d in standings["drivers"]}
+    leader_points = standings["drivers"][0]["points"]
+    drivers = []
+    for g in grid:
+        d = by_driver.get(g["driver_number"])
+        if not d:
+            continue
+        drivers.append({
+            "driver_number": g["driver_number"],
+            "acronym": g["acronym"],
+            "championship_position": d["position"],
+            "points": d["points"],
+            "points_behind_leader": round(leader_points - d["points"], 1),
+        })
+    if not drivers:
+        return None
+    return {
+        "year": year,
+        "races_remaining": progress["remaining"],
+        "races_completed": progress["completed"],
+        "drivers": drivers,
+    }
+
+
 def _weather_outlook(sources: list[dict], circuit: str,
                      race_datetime: str | None = None) -> dict:
     """Blends a rain PRIOR (OpenF1 only exposes observed weather, so practice
@@ -1804,6 +1864,12 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         pass
     overtaking = _overtaking_cost(total_laps, circuit)
 
+    championship = None
+    try:
+        championship = _championship_context(grid, meta.get("year"))
+    except Exception:
+        pass
+
     recovery_prior = None
     try:
         recovery_prior = _recovery_prior(circuit, meeting_key)
@@ -1862,6 +1928,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         "projection": projection,
         "doors": doors,
         "overtaking": overtaking,
+        "championship": championship,
         "weather_outlook": _weather_outlook(sources, circuit,
                                             race_datetime=race.get("date_start") if race else None),
         "recovery_prior": recovery_prior,
