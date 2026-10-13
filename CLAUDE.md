@@ -3531,6 +3531,65 @@ prompt) -- it was never part of the actual strategy-ranking cost
 (`_track_position_cost` is, and is untouched), so this fix makes a
 user-facing number honest without touching the core ranking math.
 
+### Wind-adjusted overtake threshold: investigated, real data said no, 2026-10-13
+Natural next idea after the overtake-threshold calibration above: wind
+along a circuit's main straight should affect DRS/slipstream effectiveness
+(tailwind = less drag benefit from following = harder to use the draft to
+close in, or the reverse, depending on which way the physics actually
+nets out -- the point of testing was to stop guessing which). Investigated
+before writing any feature code, per this project's standing discipline.
+
+First obstacle: a circuit's true compass bearing isn't derivable from
+anything already in this pipeline. OpenF1's `location` telemetry and
+FastF1's `circuit_info.corners` (engine/corner_sensitivity.py) are both
+track-local coordinate systems, not north-referenced -- confirmed directly
+against Monza's corner map. Real bearings had to come from an external
+source: OpenStreetMap's `highway=raceway` way geometry (Overpass API),
+picking the longest/most sensibly-named straight per circuit and computing
+true bearing from its real lat/long points. Cross-validated against each
+circuit's own pit-lane way (parallel to the main straight, so its bearing
+should roughly match) wherever one existed. Got usable bearings this way
+for 7 circuits (Monza, Suzuka, Silverstone, Zandvoort high-to-medium
+confidence; Spa, Hungaroring, Spielberg medium, single-source); Melbourne,
+Miami, Shanghai, Catalunya, Yas Marina didn't resolve cleanly (street
+circuit with no raceway tags, or ambiguous/merged OSM geometry) and were
+left out rather than guessed at.
+
+Joined each circuit's close-pair samples (reusing
+`engine.overtake_calibration`'s own sample extraction, extended to keep
+each sample's lap timestamp) against OpenF1 weather's `wind_direction`/
+`wind_speed` at the nearest prior reading, computing a signed tailwind
+component along that circuit's straight. First attempt (median-split per
+circuit into "more tailwind" vs "more headwind" halves, refitting the 50%
+threshold on each half) looked promising at Monza (0.87 vs no clean
+crossing) -- but this was halving an already-modest per-circuit sample
+into subsets too small for `MIN_BUCKET_SAMPLES` to mean much; every other
+circuit's halves found no crossing at all, which is underpowered, not
+evidence either way.
+
+Redone properly: a single pooled logistic regression across all 7
+circuits' full samples (`passed ~ pace_delta + tailwind`, 8,764 samples,
+no halving), the right test for a continuous covariate. Result: tailwind's
+coefficient was statistically indistinguishable from zero (z=0.25,
+likelihood-ratio stat 0.065 against a chi-square(1) critical value of
+3.84 for p<0.05) -- no measurable relationship between wind and pass
+probability once pace delta is accounted for, even restricted to the
+straight-dominant circuits (Monza, Suzuka, Silverstone) where the
+mechanism should be strongest if it were real. The earlier Monza-only
+hint was noise from the underpowered split, not a real signal.
+
+Conclusion: not built. OpenF1's weather sampling (snapshots roughly every
+10-50 minutes, not per-lap) can't rule out a real effect too fine-grained
+for this resolution to catch, so this is "no effect detected at the
+resolution available," not "proven zero" -- but there's nothing here to
+calibrate a feature on, and the discipline this project has followed
+every other time (undercut, restart, overtake) is to ship what the data
+actually shows. Logged here so this isn't re-investigated from scratch;
+the Overpass bearing-lookup method (track_bearings.py /
+wind_overtake_pooled.py, run from scratch, not committed -- scratchpad
+only) would be the starting point if ever revisited with finer-grained
+weather data.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
