@@ -129,7 +129,29 @@ from engine.circuits import STREET_CIRCUITS
 SC_PIT_FACTOR  = 0.78   # full safety car  (n=177)
 VSC_PIT_FACTOR = 0.69   # virtual safety car (n=71)
 
-SC_RATE_DEFAULT = 0.0067
+# SC_RATE_DEFAULT governs every circuit NOT in SC_RATE_CIRCUIT or
+# STREET_CIRCUITS below -- which, re-checked 2026-10-22, turned out to be
+# most of the calendar (7 circuits: austin, imola, lusail, mexico city,
+# montreal, shanghai, yas marina circuit), not an edge case. The old 0.0067
+# had no cited provenance and was measurably wrong: pooling real race_control
+# SC/VSC events across those 7 circuits' 2023-2025 races (19 races, 1178
+# laps, 23 events) gives 0.0195 -- essentially 3x higher, and 6 of the 7
+# circuits individually land above the old value (only Yas Marina's own thin
+# 3-race sample, 0.0057, sits close to it; folded into the same pooled
+# number rather than carved out as its own circuit-specific entry, same
+# "don't fit a number this thin on its own" discipline as the rejected
+# per-circuit DNF table above). Not added as 7 new SC_RATE_CIRCUIT entries
+# for the same reason -- each circuit's own 3-race count (1-6 events) is too
+# thin to trust individually; the pooled rate is the trustworthy level.
+# Swept SC_RATE_DEFAULT 0.0067-0.022 against the full 2023-2026 cache before
+# shipping (same Brier-score discipline as every other Monte-Carlo-facing
+# constant): win/podium Brier score is flat across the whole range (0.0170/
+# 0.0477 at 0.0067 vs 0.0170/0.0478 at 0.0195, n=246) -- same finding as the
+# original SC_RATE_CIRCUIT key-matching fix, SC events are rare enough per
+# lap that this doesn't move prediction accuracy either way. Kept anyway,
+# same precedent as that fix: this is a correctness fix for sc_probability()
+# (the live-board/pre-race stat), not a backtest-measurable accuracy gain.
+SC_RATE_DEFAULT = 0.0195
 SC_RATE_STREET  = 0.0120
 
 # Per-circuit SC rates (events per lap) from 2018-2025 historical data.

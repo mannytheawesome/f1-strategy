@@ -3590,6 +3590,37 @@ wind_overtake_pooled.py, run from scratch, not committed -- scratchpad
 only) would be the starting point if ever revisited with finer-grained
 weather data.
 
+### The flat default SC/VSC rate covered most of the calendar and was ~3x too low, 2026-10-22
+Hunting for the next worthwhile fix (not a user-reported bug this time), checked the
+upcoming race calendar against every per-circuit calibration table built this session
+(undercut_shift, overtake_delta, restart_delta, pit_loss, SC_RATE_CIRCUIT). Four of the
+next six races (Austin, Mexico City, Lusail, Yas Marina) fall outside `SC_RATE_CIRCUIT`'s
+12 hand-researched circuits and silently use the flat `SC_RATE_DEFAULT`, which turned out
+to have no cited provenance and to cover most of the real calendar, not an edge case:
+7 circuits total (adding imola, montreal, shanghai).
+
+Pulled real race_control SC/VSC events for all 7 from the local cache (backfilling a few
+sessions' race_control over the network where needed): individually thin (3 races each,
+1-6 events — the same sample depth that got the per-circuit DNF table rejected earlier in
+this file), but pooled across all 7 (19 races, 1178 laps, 23 events) gives 0.0195 SC/VSC
+events per lap — essentially 3x the old 0.0067, with 6 of 7 circuits independently landing
+above it (only Yas Marina's own thin sample, 0.0057, sits close to the old value).
+
+Swept `SC_RATE_DEFAULT` 0.0067→0.022 against the full 2023-2026 cache before touching
+anything, same Brier-score discipline this file already applies to every Monte-Carlo-
+facing constant: win/podium Brier score is flat across the whole range (0.0170/0.0477 at
+0.0067 vs 0.0170/0.0478 at 0.0195, n=246 checkpoints) — same finding as the original
+SC_RATE_CIRCUIT key-matching fix (2026-08-11): SC events are rare enough per lap that this
+doesn't move prediction accuracy either way. Shipped anyway, same precedent as that fix —
+a correctness fix for `sc_probability()` (the number shown on the live board and in
+pre-race briefings), not a backtest-measurable accuracy gain. `SC_RATE_DEFAULT` raised to
+0.0195.
+
+Deliberately did NOT add the 7 circuits as new `SC_RATE_CIRCUIT` entries — each one's own
+3-race count is too thin to trust individually (the exact mistake the per-circuit DNF
+table made); the pooled number is the trustworthy level, so they stay on the (now
+corrected) shared default rather than getting their own thin, overfit figures.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
