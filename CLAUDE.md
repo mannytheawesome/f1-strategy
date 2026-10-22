@@ -3621,6 +3621,31 @@ Deliberately did NOT add the 7 circuits as new `SC_RATE_CIRCUIT` entries — eac
 table made); the pooled number is the trustworthy level, so they stay on the (now
 corrected) shared default rather than getting their own thin, overfit figures.
 
+### Overtake pass-threshold bootstrap table refreshed, Hungaroring's caution confirmed, 2026-10-22
+Follow-up to the SC-rate fix above, same hunting pass: `engine/overtake_delta.py`'s
+hardcoded `OVERTAKE_PASS_THRESHOLD_S` was still the 2026-10-12 snapshot (68 races,
+28,118 samples) even though production has been running the live, daily-recalibrated
+file since then — the hardcoded table only matters as the bootstrap a *fresh deploy*
+uses before that background job's first tick, but it had drifted enough to matter.
+
+Re-ran the calibration against the current cache (85 races, 36,117 samples) and refreshed
+the table from it. Two changes worth noting beyond numbers moving within noise:
+- **Hungaroring's 2.50s/lap — flagged in the original entry as "a single crossing off one
+  bucket boundary, not corroborated the way the others are, re-check once more races
+  accumulate" — has fully collapsed to NO clean crossing at all** (n=1696, up from 1149).
+  The caution was right; removed from the table, now correctly falls to the pooled
+  default like Singapore/Monte Carlo/Las Vegas/Jeddah/Lusail.
+- **Baku flipped the other way**: no crossing in the first run, a clean 1.28s/lap now
+  (n=1853) — more data resolved it rather than confirming it as a "never converts"
+  circuit the way the others in that group have stayed.
+- Also newly resolved with enough samples: Austin (1.25), Mexico City (1.46), Interlagos
+  (1.13) — three of our next six races.
+
+Lesson applied going forward: treat any circuit's first-ever crossing as provisional until
+it's survived at least one refresh, same as Hungaroring's case here. No logic changes,
+no PACK_VERSION bump (the live file already serves production; this only updates the
+bootstrap fallback). Full suite re-run clean after the change.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

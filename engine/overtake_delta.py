@@ -25,24 +25,31 @@ closely matching the strategist's own reported Budapest (1.09) and
 Zandvoort (1.14) figures, an independent cross-check neither number was
 fitted to produce.
 
-OVERTAKE_PASS_THRESHOLD_S below is the real measured snapshot from the
-first run of calibrate_overtake_delta.py (2026-10-12, 2023-2026 cache,
-68 races, 28,118 close-pair samples) -- not a guess. Worth being honest
-about what it does and doesn't show: most true street/desert circuits
-(Baku, Singapore, Monte Carlo, Las Vegas, Jeddah) found NO clean 50%
-crossing within the sampled pace-delta range, despite 800-1400+ samples
+OVERTAKE_PASS_THRESHOLD_S below is the real measured snapshot, refreshed
+2026-10-22 (2023-2026 cache, 85 races, 36,117 close-pair samples -- up
+from the first run's 68 races/28,118 samples on 2026-10-12) -- not a
+guess. Worth being honest about what it does and doesn't show: Singapore,
+Monte Carlo, Las Vegas, Jeddah, and Lusail still found NO clean 50%
+crossing within the sampled pace-delta range, despite 800-1800+ samples
 each -- not a data-scarcity gap, but a plausible real finding: those
 circuits may genuinely never reliably convert a close gap into a pass
 within a single lap, however large the pace advantage, since a real pass
 there usually takes several laps of DRS-train following rather than one
 clean move. They fall back to DEFAULT below rather than a fabricated
 number, which is the correct behaviour given what the data actually
-shows, not a failure of the calibration. Hungaroring's 2.50s/lap is the
-one number worth treating with more caution than the rest -- notably
-higher than every other circuit, plausible for a famously hard-to-pass
-track but a single crossing off one bucket boundary, not corroborated by
-multiple consistent buckets the way most of the others are. Re-check it
-once more races accumulate rather than assuming it's precise.
+shows, not a failure of the calibration.
+
+Two things changed on this refresh, not just the numbers moving within
+noise: Baku now has a clean crossing (1.28, n=1853) where the first run
+found none -- more samples resolved it, rather than it being a stable
+"never converts" circuit like the ones above. And Hungaroring's 2.50s/lap,
+flagged in the first run as "a single crossing off one bucket boundary,
+not corroborated the way the others are -- re-check once more races
+accumulate" -- has now fully collapsed to NO clean crossing at all
+(n=1696, up from 1149) and is removed from the table below. The caution
+was correct; the number it was cautioning about no longer exists. Treat
+any single-run crossing with the same scepticism until it's survived a
+refresh like this one.
 
 Only then hardcode a bootstrap snapshot here -- same stance as
 undercut_shift.py and restart_delta.py.
@@ -52,30 +59,33 @@ undercut_shift.py and restart_delta.py.
 # trailing car needs over a leading car, at a gap under
 # engine.overtake_calibration.GAP_THRESHOLD_S, for a 50% chance of
 # completing the pass by the next lap. Trailing comment is the real
-# sample size behind each figure, as of this snapshot (2026-10-12).
+# sample size behind each figure, as of this snapshot (2026-10-22).
 OVERTAKE_PASS_THRESHOLD_S: dict[str, float] = {
-    "spielberg":          0.87,   # n=1168
-    "monza":              0.89,   # n=1267
+    "monza":              0.90,   # n=1701
     "shanghai":           0.98,   # n=1233
     "miami":              1.01,   # n=1467
+    "spielberg":          1.02,   # n=1508
+    "catalunya":          1.09,   # n=1543
     "melbourne":          1.13,   # n=1326
-    "spa-francorchamps":  1.12,   # n=1042
-    "zandvoort":          1.18,   # n=1376
+    "interlagos":         1.13,   # n=1372
+    "spa-francorchamps":  1.19,   # n=1443
     "yas marina circuit": 1.19,   # n=1346
-    "silverstone":        1.20,   # n=1123
-    "catalunya":          1.27,   # n=1157
+    "zandvoort":          1.20,   # n=2156
+    "austin":             1.25,   # n=1054
+    "baku":               1.28,   # n=1853 -- new this refresh, see docstring
     "suzuka":             1.28,   # n=1639
-    "hungaroring":        2.50,   # n=1149 -- see docstring caveat above
+    "silverstone":        1.44,   # n=1520
+    "mexico city":        1.46,   # n=1454
 }
 
 # Pooled field-wide median across every circuit's real samples -- a
 # better blind guess than a hand-picked constant for a circuit with no
 # track record yet (a brand new venue, or one not yet calibrated) *and*
 # the circuits above that found no clean crossing of their own (see
-# docstring: most true street/desert circuits land here, not from too
-# little data, but because a close gap there may genuinely never
+# docstring: Singapore/Monte Carlo/Las Vegas/Jeddah/Lusail land here, not
+# from too little data, but because a close gap there may genuinely never
 # reliably convert within one lap).
-DEFAULT_OVERTAKE_PASS_THRESHOLD_S = 1.1
+DEFAULT_OVERTAKE_PASS_THRESHOLD_S = 1.14
 
 
 def pass_threshold_for(circuit: str) -> float:
