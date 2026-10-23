@@ -28,10 +28,10 @@ def track(event: TrackEvent):
 
 
 def _admin_allowed(token: str | None) -> bool:
-    """Unlike briefing regeneration (api/routers/briefings.py's
-    _regen_allowed, which defaults OPEN when ADMIN_TOKEN isn't configured),
-    stats access defaults CLOSED -- visitor data shouldn't become public
-    just because nobody got around to setting a token."""
+    """Same posture as briefing regeneration (api/routers/briefings.py's
+    _regen_allowed) -- both default CLOSED when ADMIN_TOKEN isn't
+    configured, since visitor data and paid LLM calls shouldn't become
+    open just because nobody got around to setting a token."""
     admin = os.environ.get("ADMIN_TOKEN")
     return bool(admin) and token == admin
 

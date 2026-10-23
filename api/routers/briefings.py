@@ -11,14 +11,17 @@ router = APIRouter()
 
 
 def _regen_allowed(regenerate: bool, token: str | None) -> bool:
-    """The site is public; regenerate=true triggers a paid LLM call, so when
-    ADMIN_TOKEN is configured it must be supplied. Automatic (re)generation
-    for uncached/stale briefings is unaffected — it's bounded by the number
-    of real races, not by visitors."""
+    """The site is public; regenerate=true triggers a paid LLM call, so it
+    always requires a matching ADMIN_TOKEN -- fails closed (denied) if
+    ADMIN_TOKEN isn't configured at all, same posture as usage.py's
+    _admin_allowed, rather than leaving regeneration open to any visitor
+    just because nobody set a token yet. Automatic (re)generation for
+    uncached/stale briefings is unaffected — it's bounded by the number of
+    real races, not by visitors."""
     if not regenerate:
         return False
     admin = os.environ.get("ADMIN_TOKEN")
-    return (not admin) or token == admin
+    return bool(admin) and token == admin
 
 
 # race_list, standings, and next_meeting all fire together on every single
