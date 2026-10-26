@@ -1079,6 +1079,7 @@
           ? ` Going to a ${xo.more_stops}-stop over a ${xo.fewer_stops}-stop costs <b>${xo.extra_pit_cost_s}s</b> in the pits, but the fresher rubber wins back <b>${xo.fresh_rubber_saving_s}s</b> — worth <b>${xo.margin_s}s</b>.`
           : ` A ${xo.more_stops}-stop's extra pit stop costs <b>${xo.extra_pit_cost_s}s</b> but its fresher rubber only claws back <b>${xo.fresh_rubber_saving_s}s</b> — ${xo.margin_s}s short.`)
         : ''} ${sd.sc_flips_call ? `<span style="color:#ffd700">A Safety Car would flip it to a ${sd.sc_favored_stops}-stop.</span>` : 'A Safety Car doesn\'t change the call.'}</span></div>` : ''}
+      ${sd && sd.close_call_caveat ? `<div class="notice">⚠ ${escapeHTML(sd.close_call_caveat)}</div>` : ''}
       ${inv ? `<div class="meta-row" style="margin-top:6px"><span>tyre stock: ${inv.top10_with_new_hard}/${inv.top10_count} of the top 10 hold a new HARD · ${inv.top10_with_new_medium}/${inv.top10_count} a new MEDIUM · ${inv.top10_with_new_soft}/${inv.top10_count} a new SOFT</span></div>` : ''}`;
     sections.push({ id: 'strategies', title: 'The strategies on paper', node: stratCard });
 

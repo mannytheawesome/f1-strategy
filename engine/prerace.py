@@ -53,7 +53,15 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 41   # 41: new top-level `championship` field -- each grid
+PACK_VERSION = 42   # 42: stop_decision gains close_call_caveat -- a 2026-10-26
+                    # offline sweep of all 81 cached races found the model's
+                    # stop-count call matches the real race's dominant outcome
+                    # only 44% of the time (n=34) when the crossover margin is
+                    # under ~10s (no better than the ~47/53 base rate), rising
+                    # to 71-100% once the margin passes ~20s -- below
+                    # CLOSE_CALL_MARGIN_S the call is a near coin-flip and is
+                    # now flagged rather than presented with false confidence
+                    # -- 41: new top-level `championship` field -- each grid
                     # driver's real standing entering this race plus races
                     # remaining this season (engine.standings), narrative-only
                     # -- 40: overtaking.pass_threshold_s_per_lap is now a real
@@ -1368,6 +1376,11 @@ def _restart_risk_cost(compound_sequence: list[str], stint_lengths: list[int],
     return round(sc_prob * exposure, 1)
 
 
+# Below this crossover margin, the stop-count call is backtested noise, not
+# signal -- see PACK_VERSION 42's comment for the sweep that found this.
+CLOSE_CALL_MARGIN_S = 15.0
+
+
 def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
                    total_laps: int, circuit: str, sc_prob: float) -> dict | None:
     """Why the optimal stop count is what it is. Decomposes the gap between the
@@ -1438,6 +1451,14 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
         }
 
     is_street = is_street_circuit(circuit)
+    close_call_caveat = None
+    if crossover and abs(crossover["margin_s"]) < CLOSE_CALL_MARGIN_S:
+        close_call_caveat = (
+            f"This stop-count call is close -- only {abs(crossover['margin_s']):.1f}s "
+            f"separates the {crossover['fewer_stops']}-stop and {crossover['more_stops']}-stop "
+            "plans. Calls this close have historically landed on the wrong side about "
+            "as often as the right one -- treat the stop count as a toss-up, not a lock."
+        )
     return {
         "optimal_stops": best["stops"],
         "candidates": diag,
@@ -1446,6 +1467,7 @@ def _stop_decision(strategies: list[dict], curves: dict, pit_loss: float,
         "sc_favored_stops": sc_favored,
         "sc_flips_call": sc_favored != best["stops"],
         "track_position_bias": "high" if is_street else "moderate",
+        "close_call_caveat": close_call_caveat,
         "note": ("The optimal stop count balances pit-lane time against tyre life: "
                  "each extra stop costs a pit loss but buys younger, faster rubber "
                  "and dodges the cliff. A Safety Car cuts the pit cost ~55%, which "
@@ -1790,10 +1812,17 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         s["total_time"] += s["track_position_cost_s"] + s["restart_risk_cost_s"]
 
     strategies.sort(key=lambda s: s["total_time"])
+    # Kept alongside the top-5 display slice below so _stop_decision's crossover
+    # margin reflects the TRUE gap between the best candidate at each stop count --
+    # a close 1-stop vs 2-stop call can have the top 5 all land on one stop count
+    # (exactly what happened pre-race at Austin 2026), which would hide the very
+    # margin CLOSE_CALL_MARGIN_S needs to see if it only looked at the display slice.
+    all_strategies = strategies
+    for s in all_strategies:
+        s["time_delta"] = round(s["total_time"] - all_strategies[0]["total_time"], 1)
     strategies = strategies[:5]   # top 5 candidates, fastest first
     best_stops = strategies[0]["stops"] if strategies else 1
     for s in strategies:
-        s["time_delta"] = round(s["total_time"] - strategies[0]["total_time"], 1)
         # Candidates are generated at a forced 1, 2 and 3 stops, so a plan that
         # is nowhere near the optimum still appears in the table. Say plainly
         # which ones are actually on the table: a deficit inside a stop's worth
@@ -1877,7 +1906,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         pass
 
     undercut = _undercut_power(curves, field_baseline, pit_loss, total_laps, circuit)
-    stop_decision = _stop_decision(strategies, curves, pit_loss, total_laps, circuit, sc_prob)
+    stop_decision = _stop_decision(all_strategies, curves, pit_loss, total_laps, circuit, sc_prob)
     strategy_win_rates = None
     try:
         strategy_win_rates = _strategy_win_rates(
