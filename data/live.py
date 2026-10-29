@@ -688,6 +688,42 @@ def _merge_stint_fragments(rows: list[dict]) -> list[dict]:
     for _, stints in by_driver.items():
         stints = sorted(stints, key=lambda s: s["lap_start"])
 
+        # OpenF1 sometimes re-emits one physical stint as several rows that
+        # ALL carry the same stint_number -- no pit-lane visit anywhere
+        # between them, just a live-data correction republished mid-session.
+        # Confirmed directly against real Austin 2026 data: several drivers'
+        # qualifying/practice SOFT stint_number 2 or 3 appeared as 2-3
+        # separate rows of 3-9 laps each, every one tyre_age_at_start=0 --
+        # each inflated that driver's race-morning tyre-availability count
+        # by a full extra set (traced against F1.com's own published chart,
+        # which didn't show the extra set). The age-arithmetic key below
+        # only catches this for short 1-2 lap slivers (the restart case it
+        # was built for, see the docstring example); these fragments are
+        # longer and slip through untouched. stint_number is OpenF1's own
+        # authoritative grouping -- two rows sharing a REAL one (not the
+        # sanitizer's 0 fallback for missing data, which several genuinely
+        # different stints could share) are the same physical stint by
+        # definition, whatever their individual ages/lengths say. Merge
+        # those first, unconditionally, before the fallback logic below.
+        by_num: dict[int, dict] = {}
+        pre_merged: list[dict] = []
+        for s in stints:
+            sn = s.get("stint_number")
+            if not sn:   # 0/None -- no real stint_number to anchor on
+                pre_merged.append(s)
+                continue
+            keep = by_num.get(sn)
+            if keep is None:
+                by_num[sn] = dict(s)
+                pre_merged.append(by_num[sn])
+                continue
+            ends = [e for e in (keep.get("lap_end"), s.get("lap_end")) if e is not None]
+            keep["lap_end"] = max(ends) if ends else None
+            if s["lap_start"] < keep["lap_start"]:
+                keep["lap_start"] = s["lap_start"]
+                keep["tyre_age_at_start"] = s.get("tyre_age_at_start") or 0
+        stints = sorted(pre_merged, key=lambda s: s["lap_start"])
+
         # Rows of one physical set share a compound and an implied fitting lap
         # (lap_start - tyre_age), because the age keeps counting on that set.
         sets: dict[tuple, dict] = {}
