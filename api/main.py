@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.routers import meta, timing, analysis, strategy, briefings, usage, circuits
 from data.warmer import start_background_warmer
 from data.recalibrator import start_background_recalibrator
+from data.live_tyre_scheduler import start_background_tyre_capture
 
 
 @asynccontextmanager
@@ -34,6 +35,10 @@ async def lifespan(app: FastAPI):
     # races complete, instead of frozen at whatever a one-off manual
     # script last produced (see data/recalibrator.py).
     start_background_recalibrator()
+    # Captures F1's real declared tyre New/used flag the moment a session
+    # goes live, so engine.tyre_inventory can use it instead of guessing
+    # from tyre_age_at_start -- see data/live_tyre_scheduler.py.
+    start_background_tyre_capture()
     yield
 
 
