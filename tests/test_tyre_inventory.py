@@ -265,3 +265,85 @@ class TestAllocationNeverExceeded:
         r = inv.reconciled()
         assert r["MEDIUM"]["used"] <= ALLOCATION["standard"]["MEDIUM"]
         assert r["MEDIUM"]["new"] >= 0
+
+
+class TestLiveFlagsOverride:
+    """engine.tyre_inventory's tyre_age_at_start==0 heuristic can't tell a
+    genuinely new set from a refitted used one -- found via a real Austin
+    2026 mismatch against F1.com's chart, traced to deep-Q3 runners (ANT,
+    HAM, RUS, PIA) taking an extra Qualifying banker lap on an already-
+    scrubbed set. F1's live timing feed carries the real declared flag;
+    data.live_timing_feed.load_captured_flags surfaces it as
+    live_flags_by_session, matched positionally against driver_stints."""
+
+    def test_live_flag_false_does_not_start_a_new_group(self):
+        # Four Qualifying SOFT stints, all tyre_age_at_start==0 (indistinguishable
+        # by the old heuristic) -- the real feed says the 4th was a refit, not a
+        # genuinely new set, so it must fold into the 3rd group instead of
+        # counting as a 4th used SOFT.
+        session = [
+            make_stint(1, "SOFT", 1, 2, stint_number=1),
+            make_stint(1, "SOFT", 3, 4, stint_number=2),
+            make_stint(1, "SOFT", 5, 6, stint_number=3),
+            make_stint(1, "SOFT", 7, 8, stint_number=4),
+        ]
+        live_flags = {1: [
+            {"compound": "SOFT", "new": True, "total_laps": 2},
+            {"compound": "SOFT", "new": True, "total_laps": 2},
+            {"compound": "SOFT", "new": True, "total_laps": 2},
+            {"compound": "SOFT", "new": False, "total_laps": 2},   # the refit
+        ]}
+        result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
+                                    live_flags_by_session=[live_flags])
+        r = result[0].reconciled()
+        # 3 genuine opens, not 4 -- matches F1.com, not the age-based guess.
+        # (The refit's laps fold onto the 3rd group, still well under the
+        # short-stint threshold, so it stays "used" rather than flipping to
+        # "discarded" -- a separate, correct effect of folding mileage in.)
+        assert r["SOFT"]["used"] == 3
+
+    def test_no_captured_data_falls_back_to_heuristic_unchanged(self):
+        # Same shape as above but with no live capture at all (the situation
+        # for every session before this feature existed, and most sessions
+        # after it) -- must come out exactly as it did before this feature,
+        # i.e. all 4 counted (the pre-existing, known-imperfect behaviour).
+        session = [
+            make_stint(1, "SOFT", 1, 3, stint_number=1),
+            make_stint(1, "SOFT", 4, 6, stint_number=2),
+            make_stint(1, "SOFT", 7, 9, stint_number=3),
+            make_stint(1, "SOFT", 10, 12, stint_number=4),
+        ]
+        with_none_list = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
+                                           live_flags_by_session=[None])
+        without_param = compute_inventory([session], DRIVERS, session_is_qualifying=[True])
+        assert with_none_list[0].reconciled() == without_param[0].reconciled()
+        assert with_none_list[0].reconciled()["SOFT"]["used"] == 4
+
+    def test_partial_capture_only_overrides_the_stints_it_covers(self):
+        # Capture only saw the first two stints (e.g. it started mid-session):
+        # stint 2 is a real refit (folds into stint 1's group), stint 3 has no
+        # live coverage at all and must fall back to the age heuristic, which
+        # correctly reads it as its own fresh set (tyre_age_at_start==0).
+        session = [
+            make_stint(1, "SOFT", 1, 2, stint_number=1, tyre_age_at_start=0),
+            make_stint(1, "SOFT", 3, 4, stint_number=2, tyre_age_at_start=0),
+            make_stint(1, "SOFT", 5, 6, stint_number=3, tyre_age_at_start=0),
+        ]
+        live_flags = {1: [
+            {"compound": "SOFT", "new": True, "total_laps": 2},
+            {"compound": "SOFT", "new": False, "total_laps": 2},
+        ]}
+        result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
+                                    live_flags_by_session=[live_flags])
+        r = result[0].reconciled()
+        # 2 physical sets: stint 1+2 merged into one (the live-confirmed
+        # refit), plus stint 3 as its own set via the heuristic fallback --
+        # not 3, and not 1.
+        assert r["SOFT"]["used"] == 2
+
+    def test_live_flags_for_a_different_driver_do_not_affect_this_one(self):
+        session = [make_stint(1, "SOFT", 1, 3, stint_number=1)]
+        live_flags = {99: [{"compound": "SOFT", "new": False, "total_laps": 3}]}
+        result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
+                                    live_flags_by_session=[live_flags])
+        assert result[0].reconciled()["SOFT"]["used"] == 1

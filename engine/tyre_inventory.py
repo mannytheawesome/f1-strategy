@@ -206,6 +206,7 @@ def compute_inventory(
     is_sprint: bool = False,
     q3_drivers: set[int] | None = None,   # unused; kept for call-site compat
     session_is_qualifying: list[bool] | None = None,
+    live_flags_by_session: list[dict[int, list[dict]] | None] | None = None,
 ) -> list[DriverInventory]:
     """
     Compute tyre inventory for all drivers.
@@ -221,6 +222,19 @@ def compute_inventory(
       per-session cap on real-tyre groups (see the comment above). None/
       omitted treats every session as non-qualifying (cap of 1), matching
       the old behaviour for callers that don't pass it.
+    live_flags_by_session: parallel list to stints_by_session, from
+      data.live_timing_feed.load_captured_flags — the GENUINE "New"/used
+      flag F1's live timing feed declares per stint, for any session someone
+      ran a capture against. None (the entry, or the whole list) means no
+      live data for that session, which is the default for every session
+      before this existed: falls back to the tyre_age_at_start==0 guess
+      exactly as before. Where live data IS available, it replaces the guess
+      stint-for-stint (matched positionally — both lists describe the same
+      real pit-stop-delimited sequence) rather than approximating it, which
+      is what actually fixes the deep-Q3-runner overcount this guess can't:
+      a driver refitting an already-scrubbed set for an extra banker lap
+      reports tyre_age_at_start==0 same as a genuinely fresh one, but F1's
+      own timing system knows the difference even when OpenF1 doesn't.
     """
     alloc = ALLOCATION["sprint"] if is_sprint else ALLOCATION["standard"]
 
@@ -237,6 +251,8 @@ def compute_inventory(
     for idx, session_stints in enumerate(stints_by_session):
         is_quali = bool(session_is_qualifying[idx]) if (
             session_is_qualifying and idx < len(session_is_qualifying)) else False
+        live_flags = (live_flags_by_session[idx]
+                      if live_flags_by_session and idx < len(live_flags_by_session) else None)
 
         by_driver: dict[int, list[dict]] = {}
         for stint in session_stints:
@@ -246,6 +262,14 @@ def compute_inventory(
 
         for num, driver_stints in by_driver.items():
             driver_stints.sort(key=lambda s: s.get("stint_number", 0))
+            # Real declared flags for this driver, in the same chronological
+            # order as driver_stints -- both describe the same real sequence
+            # of pit-stop-delimited stints, so position i in one is position
+            # i in the other. Missing/shorter than driver_stints for any
+            # reason (capture started mid-session, etc.) just means fewer
+            # stints get the real answer; the rest still get the guess.
+            live_list = (live_flags or {}).get(num) if live_flags else None
+
             # groups[compound] is a list of accumulated-lap totals, one per
             # physical set opened this session for that compound. Every
             # fresh-flagged stint starts a new group EXCEPT in a non-
@@ -253,12 +277,15 @@ def compute_inventory(
             # that compound — there, it's folded in as a continuation, same
             # as a non-fresh stint would be (see comment above).
             groups: dict[str, list[int]] = {}
-            for stint in driver_stints:
+            for i, stint in enumerate(driver_stints):
                 compound = stint.get("compound", "UNKNOWN")
                 if compound not in COMPOUNDS:
                     continue
                 laps = _stint_laps(stint)
-                is_fresh = stint.get("tyre_age_at_start", 0) == 0
+                if live_list is not None and i < len(live_list):
+                    is_fresh = bool(live_list[i].get("new"))
+                else:
+                    is_fresh = stint.get("tyre_age_at_start", 0) == 0
                 lst = groups.setdefault(compound, [])
                 starts_new_group = is_fresh and (is_quali or not lst)
                 if starts_new_group:

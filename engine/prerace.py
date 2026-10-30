@@ -1646,6 +1646,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         drivers_raw = get_drivers(grid_source["session_key"], HIST_TTL)
         stints_by_session = []
         session_is_qualifying = []
+        live_flags_by_session = []
         for s in sources:
             try:
                 stints = get_stints(s["session_key"], HIST_TTL)
@@ -1660,6 +1661,15 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
                 stints_by_session.append(stints)
                 session_is_qualifying.append(
                     s.get("session_type", "").lower() == "qualifying")
+                # The real declared New/used flag, if anyone ran a live
+                # capture against this session (see data.live_timing_feed) --
+                # None for every session before that existed, which is fine,
+                # compute_inventory falls back to the age-based guess.
+                try:
+                    from data.live_timing_feed import load_captured_flags
+                    live_flags_by_session.append(load_captured_flags(s["session_key"]))
+                except Exception:
+                    live_flags_by_session.append(None)
             except Exception:
                 pass
         top10 = [g for g in grid[:10]]
@@ -1671,7 +1681,8 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         invs = {i.driver_number: i for i in
                 compute_inventory(stints_by_session, drivers_raw, is_sprint_weekend,
                                   q3_drivers=set(top10_nums),
-                                  session_is_qualifying=session_is_qualifying)}
+                                  session_is_qualifying=session_is_qualifying,
+                                  live_flags_by_session=live_flags_by_session)}
         rows = [invs[n] for n in top10_nums if n in invs]
         if rows:
             inventory_summary = {
