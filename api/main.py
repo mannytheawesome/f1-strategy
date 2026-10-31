@@ -177,5 +177,19 @@ def live_capture_status():
     }
 
 
+@app.get("/api/debug/live_capture_detail")
+def live_capture_detail(session_key: int):
+    """Raw per-driver captured flags for one session, straight from
+    load_captured_flags -- for inspecting what a captured_sessions count in
+    live_capture_status actually consists of (e.g. a stint count that looks
+    too low/high for a real session)."""
+    from data.live_timing_feed import load_captured_flags
+
+    flags = load_captured_flags(session_key)
+    if flags is None:
+        return {"session_key": session_key, "found": False}
+    return {"session_key": session_key, "found": True, "flags": flags}
+
+
 # Mounted last so it never shadows the API routes above.
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="static")
