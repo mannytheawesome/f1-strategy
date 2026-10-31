@@ -85,8 +85,17 @@ MSG_CLOSE = 7
 # nothing here needs them.
 TOPICS = ["TimingAppData", "SessionInfo", "SessionStatus", "DriverList"]
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                         "cache", "live_tyre_flags")
+# Same directory HTTP_CACHE_DB_PATH already lives in -- production sets that
+# to a mounted Railway volume (/data) specifically so disk state survives a
+# redeploy (this project deploys often); the old relative "cache/..." default
+# didn't, and a redeploy mid-weekend silently wiped every session captured so
+# far (confirmed directly: two debug-endpoint deploys during the 2026 Mexico
+# City weekend erased FP1 and FP2's real captured data). Same fix as
+# engine/undercut_calibration.py / restart_calibration.py / overtake_calibration.py.
+from data.live import HTTP_CACHE_DB_PATH
+
+CACHE_DIR = os.path.join(os.path.dirname(HTTP_CACHE_DB_PATH) or ".",
+                         "live_tyre_flags")
 
 
 def _deep_merge(base: Any, update: Any) -> Any:
