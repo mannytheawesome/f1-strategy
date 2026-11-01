@@ -13,6 +13,7 @@ from data.live import (
 from engine.fp_analysis import analyse_fp, _field_compound_summary
 from engine.quali_analysis import analyse_quali
 from engine.tyre_inventory import compute_inventory
+from data.live_timing_feed import load_captured_flags
 from engine.degradation import build_degradation_curves
 from engine.strategy import generate_strategies
 from engine.predictor import (
@@ -207,15 +208,29 @@ def tyre_inventory(session_key: int):
                 stints_by_session.append([])
                 session_is_qualifying.append(False)
 
+        # Real declared New/used flags from data/live_timing_feed.py, for
+        # whichever of these sessions someone actually ran a live capture
+        # against -- None per-session (the default, for every session
+        # before this existed) falls back to compute_inventory's own
+        # tyre_age_at_start==0 guess.
+        live_flags_by_session = [
+            load_captured_flags(s["session_key"]) for s in relevant_sessions
+        ]
+
         drivers_raw = get_drivers(session_key, HIST_TTL)
         inventory   = compute_inventory(stints_by_session, drivers_raw, is_sprint,
-                                        session_is_qualifying=session_is_qualifying)
+                                        session_is_qualifying=session_is_qualifying,
+                                        live_flags_by_session=live_flags_by_session)
 
         return {
             "session_key": session_key,
             "meeting_key": meeting_key,
             "sessions_counted": [s["session_name"] for s in relevant_sessions],
             "is_sprint": is_sprint,
+            "live_data_sessions": [
+                s["session_name"] for s, f in zip(relevant_sessions, live_flags_by_session)
+                if f is not None
+            ],
             "drivers": [d.to_dict() for d in inventory],
         }
     except Exception as e:
