@@ -319,11 +319,19 @@ class TestLiveFlagsOverride:
         assert with_none_list[0].reconciled() == without_param[0].reconciled()
         assert with_none_list[0].reconciled()["SOFT"]["used"] == 4
 
-    def test_partial_capture_only_overrides_the_stints_it_covers(self):
-        # Capture only saw the first two stints (e.g. it started mid-session):
-        # stint 2 is a real refit (folds into stint 1's group), stint 3 has no
-        # live coverage at all and must fall back to the age heuristic, which
-        # correctly reads it as its own fresh set (tyre_age_at_start==0).
+    def test_mid_session_capture_drop_falls_back_to_heuristic_entirely(self):
+        # Capture only saw the first two of three real stints (e.g. the
+        # websocket dropped mid-session and was never retried -- confirmed
+        # directly against real Mexico City 2026 Qualifying data, where
+        # several drivers' captures stopped partway through). Half-trusting
+        # the live prefix and guessing the uncaptured tail from
+        # tyre_age_at_start==0 is what produced the bug: Qualifying never
+        # folds fresh-flagged stints, so each untrusted tail stint became
+        # its own spurious "fresh" group on top of the live-confirmed ones.
+        # A length mismatch means we can no longer trust the positional
+        # correspondence, so this must fall back to the pure heuristic for
+        # every stint in the session -- all three read fresh from
+        # tyre_age_at_start==0 and none fold (Qualifying), so three sets.
         session = [
             make_stint(1, "SOFT", 1, 2, stint_number=1, tyre_age_at_start=0),
             make_stint(1, "SOFT", 3, 4, stint_number=2, tyre_age_at_start=0),
@@ -336,10 +344,27 @@ class TestLiveFlagsOverride:
         result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
                                     live_flags_by_session=[live_flags])
         r = result[0].reconciled()
-        # 2 physical sets: stint 1+2 merged into one (the live-confirmed
-        # refit), plus stint 3 as its own set via the heuristic fallback --
-        # not 3, and not 1.
-        assert r["SOFT"]["used"] == 2
+        assert r["SOFT"]["used"] == 3
+
+    def test_full_length_match_still_overrides_every_stint(self):
+        # The live list covers every real stint this driver ran this
+        # session (the normal, successful case) -- live data is trusted
+        # for all of them, including correcting a refit the age heuristic
+        # alone would have missed (stint 2 reports tyre_age_at_start==0,
+        # i.e. "fresh" by the old guess, but the real declared flag says
+        # it's a refit of stint 1's set).
+        session = [
+            make_stint(1, "SOFT", 1, 2, stint_number=1, tyre_age_at_start=0),
+            make_stint(1, "SOFT", 3, 4, stint_number=2, tyre_age_at_start=0),
+        ]
+        live_flags = {1: [
+            {"compound": "SOFT", "new": True, "total_laps": 2},
+            {"compound": "SOFT", "new": False, "total_laps": 2},
+        ]}
+        result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
+                                    live_flags_by_session=[live_flags])
+        r = result[0].reconciled()
+        assert r["SOFT"]["used"] == 1
 
     def test_live_flags_for_a_different_driver_do_not_affect_this_one(self):
         session = [make_stint(1, "SOFT", 1, 3, stint_number=1)]
