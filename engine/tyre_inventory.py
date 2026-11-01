@@ -235,13 +235,15 @@ def compute_inventory(
       a driver refitting an already-scrubbed set for an extra banker lap
       reports tyre_age_at_start==0 same as a genuinely fresh one, but F1's
       own timing system knows the difference even when OpenF1 doesn't.
-      Per driver+session, a live list that's a DIFFERENT LENGTH than that
-      driver's OpenF1 stints for the session is treated the same as no live
-      data at all for that driver that session (falls back to the guess
-      for every stint, not just the ones past where live data runs out) --
-      a mid-session capture drop means we no longer know the positional
-      correspondence holds, and partial trust is worse than none (see the
-      comment at the per-driver live_list lookup below).
+      Per driver+session, a live list SHORTER than that driver's OpenF1
+      stints for the session is trusted for the prefix it actually covers
+      (the capture runs from session start and a drop is never retried, so
+      a short list is a genuine prefix, not an arbitrary subset) and treats
+      everything past that prefix as an unconfirmed continuation rather
+      than guessing it's fresh — see the comment at the per-driver
+      live_list lookup below for why guessing fresh there was the bug.
+      An empty list (connected but never confirmed a single stint) has no
+      positional reference at all, so it's treated as no live data.
     """
     alloc = ALLOCATION["sprint"] if is_sprint else ALLOCATION["standard"]
 
@@ -272,29 +274,23 @@ def compute_inventory(
             # Real declared flags for this driver, in the same chronological
             # order as driver_stints -- both describe the same real sequence
             # of pit-stop-delimited stints, so position i in one is position
-            # i in the other, PROVIDED the two lists are the same length.
-            # Requiring an exact match (rather than trusting live for
-            # whatever prefix it has and guessing the rest) matters because
-            # the mismatch isn't always "capture started late" -- confirmed
-            # directly against real Mexico City 2026 Qualifying data: the
-            # live capture for several drivers stopped mid-session (the
-            # scheduler doesn't retry a mid-session drop, see
-            # data/live_tyre_scheduler.py's _run_capture), leaving a SHORT
-            # prefix of genuinely-confirmed stints followed by OpenF1 stints
-            # the live feed never saw. In Qualifying those trailing OpenF1
-            # stints never fold (every fresh flag starts its own group), so
-            # guessing them from tyre_age_at_start==0 stacked multiple
-            # spurious "fresh" groups on top of the live-confirmed ones --
-            # HAM showed 6 OpenF1 stints against only 2 live-confirmed ones
-            # and came out with 7 "still good" Soft sets, when the fully-
-            # live-confirmed drivers that session (PIA, BEA, SAI, HUL) show
-            # the heuristic agreeing with the real flag on literally every
-            # stint. A length mismatch means we don't actually know we have
-            # the right real sequence, so it's safer to fall back to the
-            # heuristic for the whole session than to half-trust a partial
-            # one.
+            # i in the other FOR WHATEVER PREFIX live_list ACTUALLY COVERS.
+            # That prefix assumption holds even when live_list is SHORTER
+            # than driver_stints, because the capture starts at/before
+            # session start (data/live_tyre_scheduler.py's STARTUP_GRACE_S)
+            # and a mid-session drop is never retried -- so a short list is
+            # a genuine prefix, not an arbitrary subset. Confirmed directly:
+            # every driver whose capture covered the WHOLE session that
+            # Mexico City 2026 Qualifying (PIA, BEA, SAI, HUL) had the real
+            # flag agree with tyre_age_at_start==0 on literally every
+            # stint -- OpenF1 isn't fragmenting Qualifying stints the way it
+            # does Practice ones, so a prefix match is trustworthy.
+            #
+            # An empty list means the capture connected but never confirmed
+            # even the first stint -- no positional reference at all, same
+            # as no capture.
             live_list = (live_flags or {}).get(num) if live_flags else None
-            if live_list is not None and len(live_list) != len(driver_stints):
+            if live_list is not None and len(live_list) == 0:
                 live_list = None
 
             # groups[compound] is a list of accumulated-lap totals, one per
@@ -309,8 +305,22 @@ def compute_inventory(
                 if compound not in COMPOUNDS:
                     continue
                 laps = _stint_laps(stint)
-                if live_list is not None and i < len(live_list):
-                    is_fresh = bool(live_list[i].get("new"))
+                if live_list is not None:
+                    if i < len(live_list):
+                        is_fresh = bool(live_list[i].get("new"))
+                    else:
+                        # Past where the capture dropped -- genuinely
+                        # unknown, and in Qualifying a wrong "fresh" guess
+                        # here is exactly the overcounting bug this exists
+                        # to avoid (nothing folds it back down). Treat it as
+                        # a continuation of whatever's already open instead:
+                        # undercounting a real new stint is far safer than
+                        # the inflation it replaces, and by this point in
+                        # the sequence a group is already open from the
+                        # live-confirmed prefix for any compound actually in
+                        # use, so there's no first-stint-of-session case to
+                        # lose.
+                        is_fresh = False
                 else:
                     is_fresh = stint.get("tyre_age_at_start", 0) == 0
                 lst = groups.setdefault(compound, [])

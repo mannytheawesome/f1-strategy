@@ -319,19 +319,20 @@ class TestLiveFlagsOverride:
         assert with_none_list[0].reconciled() == without_param[0].reconciled()
         assert with_none_list[0].reconciled()["SOFT"]["used"] == 4
 
-    def test_mid_session_capture_drop_falls_back_to_heuristic_entirely(self):
+    def test_mid_session_capture_drop_folds_the_unconfirmed_tail(self):
         # Capture only saw the first two of three real stints (e.g. the
         # websocket dropped mid-session and was never retried -- confirmed
         # directly against real Mexico City 2026 Qualifying data, where
-        # several drivers' captures stopped partway through). Half-trusting
-        # the live prefix and guessing the uncaptured tail from
-        # tyre_age_at_start==0 is what produced the bug: Qualifying never
-        # folds fresh-flagged stints, so each untrusted tail stint became
-        # its own spurious "fresh" group on top of the live-confirmed ones.
-        # A length mismatch means we can no longer trust the positional
-        # correspondence, so this must fall back to the pure heuristic for
-        # every stint in the session -- all three read fresh from
-        # tyre_age_at_start==0 and none fold (Qualifying), so three sets.
+        # several drivers' captures stopped partway through). The old
+        # behaviour guessed the uncaptured tail from tyre_age_at_start==0,
+        # which produced the bug: Qualifying never folds fresh-flagged
+        # stints, so each untrusted tail stint became its own spurious
+        # "fresh" group on top of the live-confirmed ones. The fix trusts
+        # the live-confirmed prefix (stint 1 fresh, stint 2 a real refit --
+        # both folded into one 4-lap group) and treats the unconfirmed tail
+        # (stint 3) as a continuation of that same group rather than
+        # guessing it's fresh: one 6-lap group, worn past SOFT's 5-lap
+        # threshold, so it's discarded, not counted as a usable set.
         session = [
             make_stint(1, "SOFT", 1, 2, stint_number=1, tyre_age_at_start=0),
             make_stint(1, "SOFT", 3, 4, stint_number=2, tyre_age_at_start=0),
@@ -344,7 +345,25 @@ class TestLiveFlagsOverride:
         result = compute_inventory([session], DRIVERS, session_is_qualifying=[True],
                                     live_flags_by_session=[live_flags])
         r = result[0].reconciled()
-        assert r["SOFT"]["used"] == 3
+        assert r["SOFT"]["used"] == 0
+        assert r["SOFT"]["new"] == 7  # 8 allocated - 1 discarded group
+
+    def test_empty_live_list_has_no_positional_reference_so_falls_back(self):
+        # The capture connected but dropped before confirming even the
+        # first stint -- an empty list, not a short one. There's no
+        # positional reference at all here, so this must behave exactly
+        # like no live data: both stints read fresh from
+        # tyre_age_at_start==0 and fold (not Qualifying), one 4-lap group,
+        # still short enough to count as used.
+        session = [
+            make_stint(1, "SOFT", 1, 2, stint_number=1, tyre_age_at_start=0),
+            make_stint(1, "SOFT", 3, 4, stint_number=2, tyre_age_at_start=0),
+        ]
+        live_flags = {1: []}
+        result = compute_inventory([session], DRIVERS, session_is_qualifying=[False],
+                                    live_flags_by_session=[live_flags])
+        r = result[0].reconciled()
+        assert r["SOFT"]["used"] == 1
 
     def test_full_length_match_still_overrides_every_stint(self):
         # The live list covers every real stint this driver ran this
