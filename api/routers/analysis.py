@@ -12,7 +12,7 @@ from data.live import (
 )
 from engine.fp_analysis import analyse_fp, _field_compound_summary
 from engine.quali_analysis import analyse_quali
-from engine.tyre_inventory import compute_inventory
+from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes
 from data.live_timing_feed import load_captured_flags
 from engine.degradation import build_degradation_curves
 from engine.strategy import generate_strategies
@@ -193,6 +193,10 @@ def tyre_inventory(session_key: int):
         is_sprint = any("sprint" in n.lower() for n in session_names
                         if "qualifying" not in n.lower())
 
+        # The primary driver lineup (the one the final inventory is keyed
+        # to) has to be known before remapping any session's stints below.
+        drivers_raw = get_drivers(session_key, HIST_TTL)
+
         # Fetch stints for each relevant session
         stints_by_session = []
         session_is_qualifying = []
@@ -201,6 +205,16 @@ def tyre_inventory(session_key: int):
             try:
                 stints = _cached_get(f"stints:{sk}", "stints", HIST_TTL,
                                      session_key=sk)
+                # A FIA-mandated rookie/reserve outing (confirmed directly:
+                # 9 of 22 cars ran one in FP1 this Mexico City weekend)
+                # drives under its own number, not the regular driver's --
+                # without this remap those stints silently vanish from the
+                # primary driver's count entirely (the substitute's number
+                # isn't in drivers_raw), making it look like the car used
+                # nothing that session when it may have burned real sets.
+                # See engine.tyre_inventory.remap_fp1_substitutes.
+                session_drivers = get_drivers(sk, HIST_TTL)
+                stints = remap_fp1_substitutes(stints, session_drivers, drivers_raw)
                 stints_by_session.append(stints)
                 session_is_qualifying.append(
                     s.get("session_type", "").lower() == "qualifying")
@@ -217,7 +231,6 @@ def tyre_inventory(session_key: int):
             load_captured_flags(s["session_key"]) for s in relevant_sessions
         ]
 
-        drivers_raw = get_drivers(session_key, HIST_TTL)
         inventory   = compute_inventory(stints_by_session, drivers_raw, is_sprint,
                                         session_is_qualifying=session_is_qualifying,
                                         live_flags_by_session=live_flags_by_session)
