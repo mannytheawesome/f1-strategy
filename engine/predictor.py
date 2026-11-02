@@ -498,7 +498,8 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
 
 
 def build_deg_curves(
-    fp_data: list[tuple[str, list[dict], list[dict]]]
+    fp_data: list[tuple[str, list[dict], list[dict]]],
+    circuit: str = "",
 ) -> dict[str, DegCurve]:
 
     # Strict pass = genuine long runs, the only data wear can be read from.
@@ -676,6 +677,24 @@ def build_deg_curves(
             ratio_floor = med.deg_rate * DEG_RATIO[c] * DEG_RATIO_FLOOR_FRACTION
             if cur.deg_rate < ratio_floor:
                 curves[c] = DegCurve(c, ratio_floor, cur.baseline,
+                                     cur.data_points,
+                                     cur.confidence.rstrip("*") + "*", cur.sessions)
+
+    # Historical FP-vs-race correction, learned from past predictions at
+    # this circuit checked against what the race actually did (see
+    # engine.circuit_degradation's module docstring for how Mexico City
+    # 2026 was measured). Only meaningful for an estimate that's still
+    # FP-only -- if real race laps for THIS weekend are already in
+    # fp_data, that's strictly better evidence than a past race's
+    # correction factor, so it's skipped entirely in that case.
+    has_race_data = any(name == "RACE" for name, _, _ in fp_data)
+    if circuit and not has_race_data:
+        from engine.circuit_degradation import race_deg_shrink_for
+        shrink = race_deg_shrink_for(circuit)
+        if shrink != 1.0:
+            for c, cur in list(curves.items()):
+                adjusted = max(cur.deg_rate * shrink, MIN_DEG.get(c, 0.0))
+                curves[c] = DegCurve(c, adjusted, cur.baseline,
                                      cur.data_points,
                                      cur.confidence.rstrip("*") + "*", cur.sessions)
 

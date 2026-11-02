@@ -85,7 +85,7 @@ def pre_race_strategy(session_key: int, total_laps: int = 71):
         if not fp_data:
             raise HTTPException(status_code=404, detail="No FP data available yet")
 
-        curves   = build_deg_curves(fp_data)
+        curves   = build_deg_curves(fp_data, circuit=circuit)
         sc_prob  = sc_probability([], 0, total_laps, circuit)
 
         # Field baseline from available compound baselines
@@ -265,6 +265,7 @@ def strategy_duel_route(session_key: int, total_laps: int = None):
         session     = get_session(session_key)
         meeting_key = session.get("meeting_key")
         mode        = _session_mode(session)
+        circuit     = session.get("circuit_short_name", "")
 
         # Practice sessions in this meeting → weighted deg-curve prior
         all_sessions = sorted(
@@ -303,7 +304,7 @@ def strategy_duel_route(session_key: int, total_laps: int = None):
                 status_code=400,
                 detail="total_laps is required for a non-race session")
 
-        curves    = build_deg_curves(fp_data)
+        curves    = build_deg_curves(fp_data, circuit=circuit)
         baselines = [c.baseline for c in curves.values() if c.baseline > 0]
         field_bl  = statistics.median(baselines) if baselines else 90.0
         pit_loss  = get_avg_pit_loss(session_key, HIST_TTL) or PIT_LOSS
