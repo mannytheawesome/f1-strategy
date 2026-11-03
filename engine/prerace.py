@@ -53,7 +53,14 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 43   # 43: build_deg_curves now gets `circuit`, applying the
+PACK_VERSION = 44   # 44: compute_inventory now seeds a cross-session orphan
+                    # stint (no local group, tyre_age_at_start already
+                    # nonzero -- OpenF1's stint_number doesn't reset per
+                    # session) from its real tyre age instead of dropping
+                    # its mileage -- fixed a real Medium undercount
+                    # confirmed against the official Mexico City 2026 tyre
+                    # chart (see engine/tyre_inventory.py) -- 43: build_deg_curves
+                    # now gets `circuit`, applying the
                     # new per-circuit FP-vs-race degradation correction
                     # (engine/circuit_degradation.py) where one's been
                     # measured -- Mexico City 2026's Hard-heavy pre-race
