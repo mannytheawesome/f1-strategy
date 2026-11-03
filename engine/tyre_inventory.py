@@ -30,6 +30,20 @@ gets meaningfully worn and is no longer something a strategist would count
 as available for the race, even though the regulation doesn't force it to
 be physically handed back. So each opened set is classified by how many
 laps it actually ran (`SHORT_STINT_LAPS`), not just counted as "used."
+
+A session's own tracked groups reset per session (each session gets at
+most one real group per compound outside Qualifying — see
+`compute_inventory`'s comments), but OpenF1's own `stint_number` does NOT
+reset per session: a session can open on stint_number 2+, with
+`tyre_age_at_start` already nonzero, when the car kept the same physical
+tyre across the session boundary. An early version of this model treated
+that case — a non-fresh stint with no local group to fold into — as
+"continuation of a set opened before this session started, nothing new to
+count," and simply dropped its mileage. Confirmed directly against the
+official Mexico City 2026 race-morning tyre chart that this undercounted
+real consumption for several drivers (Medium read a full set too high).
+Now seeded from `tyre_age_at_start` itself — real, independently-reported
+cumulative wear, not a reset-to-zero guess — so that mileage isn't lost.
 """
 
 from __future__ import annotations
@@ -329,9 +343,28 @@ def compute_inventory(
                     lst.append(laps)
                 elif lst:
                     lst[-1] += laps
-                # else: continuation of a set opened before this session
-                # started (no tracked group) — not one of THIS session's new
-                # sets, so it doesn't add mileage to anything we're counting.
+                else:
+                    # A non-fresh stint with no local group to fold into --
+                    # OpenF1's stint_number doesn't reset per session (a
+                    # session can genuinely open on stint_number 2+, the
+                    # car having kept the same physical tyre from the
+                    # previous session), so this is real, already-worn
+                    # rubber, not nothing. Dropping its mileage entirely
+                    # (the old behaviour) undercounted real consumption --
+                    # confirmed directly against the official Mexico City
+                    # 2026 race-morning tyre chart: several drivers' Medium
+                    # count read a full set too HIGH specifically on
+                    # sessions shaped like this. tyre_age_at_start is real,
+                    # independently-reported cumulative wear (confirmed:
+                    # it's often nonzero at a session's first recorded
+                    # stint, not silently reset to 0 the way a "no history
+                    # before this session" guess would read it) -- seeding
+                    # the group with it recovers that history instead of
+                    # starting from zero, at the cost of only knowing a
+                    # floor on this set's true age if even more of its
+                    # history predates what tyre_age_at_start itself
+                    # captured.
+                    lst.append((stint.get("tyre_age_at_start") or 0) + laps)
 
             inv = inventories[num]
             for compound, group_laps in groups.items():

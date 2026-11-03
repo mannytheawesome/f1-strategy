@@ -142,6 +142,64 @@ class TestNonQualifyingSessionCap:
         assert inv.discarded.get("SOFT", 0) == 1
 
 
+class TestCrossSessionOrphanSeeding:
+    """Real gap found comparing against the official Mexico City 2026
+    race-morning tyre chart: OpenF1's stint_number does NOT reset per
+    session -- a session can open on stint_number 2+, tyre_age_at_start
+    already nonzero, because the car kept the same physical tyre across
+    the session boundary. The old code treated a non-fresh stint with no
+    local group to fold into as having no mileage at all, undercounting
+    several drivers' real Medium consumption by a full set."""
+
+    def test_orphan_stint_is_seeded_from_its_real_tyre_age_not_dropped(self):
+        # No stint_number=1 for this session at all -- the car arrived
+        # already on a tyre with 11 laps on it (confirmed shape: GAS's
+        # real Mexico City 2026 FP3). 11 + 8 more laps run here = 19,
+        # well past MEDIUM's threshold -- discarded, not invisible.
+        session = [
+            make_stint(1, "MEDIUM", 12, 19, tyre_age_at_start=11, stint_number=2),
+        ]
+        inv = _inv([session], session_is_qualifying=[False])
+        r = inv.reconciled()
+        assert r["MEDIUM"]["used"] == 0
+        assert inv.discarded.get("MEDIUM", 0) == 1
+
+    def test_orphan_short_enough_still_counts_as_used_not_dropped(self):
+        # Real age (2) + this stint's laps (3) = 5, still short enough to
+        # stay race-viable -- the orphan isn't always discarded, it's
+        # classified by total laps exactly like any other group.
+        session = [
+            make_stint(1, "MEDIUM", 5, 7, tyre_age_at_start=2, stint_number=2),
+        ]
+        inv = _inv([session], session_is_qualifying=[False])
+        r = inv.reconciled()
+        assert r["MEDIUM"]["used"] == 1
+        assert inv.discarded.get("MEDIUM", 0) == 0
+
+    def test_later_fresh_stint_in_the_same_session_still_folds_into_the_orphan(self):
+        # The existing non-Qualifying one-group-per-session cap still
+        # applies once the orphan has seeded a group -- a later
+        # tyre_age_at_start==0 flag in the SAME session folds into it
+        # rather than starting a second group (unaffected by this fix).
+        session = [
+            make_stint(1, "MEDIUM", 12, 15, tyre_age_at_start=11, stint_number=2),
+            make_stint(1, "MEDIUM", 16, 18, tyre_age_at_start=0, stint_number=3),
+        ]
+        inv = _inv([session], session_is_qualifying=[False])
+        r = inv.reconciled()
+        assert r["MEDIUM"]["used"] == 0
+        assert inv.discarded.get("MEDIUM", 0) == 1
+
+    def test_orphan_across_two_sessions_each_tracked_independently(self):
+        # Mirrors ANT's real Mexico City 2026 shape: a discarded group in
+        # FP2, then a SEPARATE orphan in FP3 that's also real (and also
+        # ends up discarded) -- two real sets consumed, not one.
+        fp2 = [make_stint(1, "MEDIUM", 1, 24, tyre_age_at_start=0, stint_number=1)]
+        fp3 = [make_stint(1, "MEDIUM", 5, 14, tyre_age_at_start=4, stint_number=2)]
+        inv = _inv([fp2, fp3], session_is_qualifying=[False, False])
+        assert inv.discarded.get("MEDIUM", 0) == 2
+
+
 class TestQualifyingNoCap:
     """Real case (NOR's Hungary 2026 Quali): Q1/Q2/Q3 run under one
     session_key, and a driver can genuinely open a distinct fresh set for
