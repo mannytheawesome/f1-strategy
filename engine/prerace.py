@@ -1594,7 +1594,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             pass
     if not fp_data:
         raise ValueError("no usable practice/sprint data yet")
-    curves = build_deg_curves(fp_data)
+    curves = build_deg_curves(fp_data, circuit=circuit)
 
     # ── grid from qualifying (fall back to latest session order) ────────────
     quali = next((s for s in reversed(sources)

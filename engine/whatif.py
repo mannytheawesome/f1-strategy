@@ -28,7 +28,7 @@ import statistics
 from types import SimpleNamespace
 from data.live import (get_sc_laps_from_race_control, get_avg_pit_loss,
                        get_quali_times, get_yellow_laps)
-from engine.tyre_inventory import compute_inventory, COMPOUNDS
+from engine.tyre_inventory import compute_inventory, remap_fp1_substitutes, COMPOUNDS
 
 from engine.circuits import track_position_weight
 
@@ -75,15 +75,31 @@ def _race_start_sets(session: dict, session_key: int,
                     for s in all_sessions)
     stints_by_session = []
     session_is_qualifying = []
+    live_flags_by_session = []
     for s in prior:
         try:
-            stints_by_session.append(get_stints(s["session_key"], HIST_TTL))
+            stints = get_stints(s["session_key"], HIST_TTL)
+            # A team's mandatory rookie/reserve FP1 outing runs a different
+            # driver number under the same car -- remap those stints onto
+            # the regular driver so their tyre usage isn't silently dropped
+            # from the weekend inventory (same fix as engine.prerace and
+            # api.routers.analysis.tyre_inventory; see
+            # engine.tyre_inventory.remap_fp1_substitutes docstring).
+            session_drivers = get_drivers(s["session_key"], HIST_TTL)
+            stints = remap_fp1_substitutes(stints, session_drivers, drivers_raw)
+            stints_by_session.append(stints)
             session_is_qualifying.append(
                 s.get("session_type", "").lower() == "qualifying")
+            try:
+                from data.live_timing_feed import load_captured_flags
+                live_flags_by_session.append(load_captured_flags(s["session_key"]))
+            except Exception:
+                live_flags_by_session.append(None)
         except Exception:
             pass
     invs = compute_inventory(stints_by_session, drivers_raw, is_sprint,
-                             session_is_qualifying=session_is_qualifying)
+                             session_is_qualifying=session_is_qualifying,
+                             live_flags_by_session=live_flags_by_session)
     return {
         i.driver_number: {
             c: {"new": i.remaining(c), "used": i.used.get(c, 0)}
