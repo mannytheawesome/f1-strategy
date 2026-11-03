@@ -3749,6 +3749,41 @@ product page — `engine/prerace.py`'s `build_prerace_data`, which was
 calling `build_deg_curves` without `circuit` at all until caught in the
 same pass. `PACK_VERSION` 42 → 43.
 
+### Cross-session orphan stints were silently dropped, undercounting real tyre consumption, 2026-11-03
+Follow-up deep dive on the Medium/Hard gap flagged as open in the entry
+above (ANT, GAS, LAW, BOR, NOR, STR, COL, ALO, LIN all read 1-2 sets too
+HIGH against the official Mexico City 2026 chart even after the
+substitute-remap and tail-fold fixes). Root cause, confirmed directly:
+OpenF1's `stint_number` does NOT reset per session — pulled every
+driver's stint_number=1 entries across all four sessions and found FP3
+had only 10 of 22, not 22; the other 12 drivers' FP3 data opens on
+stint_number 2+ with `tyre_age_at_start` already nonzero, meaning the car
+kept the same physical tyre across the session boundary and OpenF1 is
+reporting real cumulative age, not a reset-to-zero guess.
+
+`compute_inventory`'s per-session `groups` dict resets every session by
+design (each session gets at most one tracked group per compound outside
+Qualifying). A non-fresh stint with no local group to fold into — exactly
+what a cross-session carryover looks like from inside a single session —
+fell into the `else` branch documented as "continuation of a set opened
+before this session started... doesn't add mileage to anything we're
+counting," silently dropping it. Traced this by hand for GAS: FP2 opens a
+genuinely fresh Medium that gets folded and discarded (21 laps, correct),
+then FP3 opens on stint_number 2 at age 11 — a second, different physical
+set the old code counted as nothing at all.
+
+Fixed by seeding that orphan's group with `tyre_age_at_start` itself
+instead of dropping it — real, independently-reported wear, not an
+assumption. Validated by instrumenting the fix against the full field
+before touching the real file: exact matches on all three compounds went
+4/21 → 8/21 (GAS, ANT, LAW, LIN newly exact; RUS, LEC, SAI, BEA still
+exact; zero regressions). NOR, BOR, STR, ALO still show a smaller residual
+gap — not chased further this pass; four more data points from a single
+race isn't enough to responsibly tune a more specific rule without
+repeating the exact SHORT_STINT_LAPS anecdote-tuning mistake flagged under
+"Notes for future sessions" below. `PACK_VERSION` 43 → 44 (affects
+`build_prerace_data`'s own tyre-inventory calc, same as the fixes above).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
