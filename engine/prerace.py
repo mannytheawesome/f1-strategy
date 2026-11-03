@@ -53,7 +53,13 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 42   # 42: stop_decision gains close_call_caveat -- a 2026-10-26
+PACK_VERSION = 43   # 43: build_deg_curves now gets `circuit`, applying the
+                    # new per-circuit FP-vs-race degradation correction
+                    # (engine/circuit_degradation.py) where one's been
+                    # measured -- Mexico City 2026's Hard-heavy pre-race
+                    # recommendation (not one of 22 real drivers used Hard)
+                    # flips to Medium->Soft->Soft, matching the actual race
+                    # winner -- 42: stop_decision gains close_call_caveat -- a 2026-10-26
                     # offline sweep of all 81 cached races found the model's
                     # stop-count call matches the real race's dominant outcome
                     # only 44% of the time (n=34) when the crossover margin is
