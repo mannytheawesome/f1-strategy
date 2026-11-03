@@ -137,59 +137,5 @@ def circuits_page():
     return _serve_page("circuits.html")
 
 
-@app.get("/api/debug/live_capture_status")
-def live_capture_status():
-    """Whether data/live_tyre_scheduler.py's background thread is alive, which
-    session(s) it's actively capturing right now, and what's been checkpointed
-    to disk so far -- added to verify the live-timing tyre-flag capture
-    (data/live_timing_feed.py) end-to-end against a real live session, since
-    neither piece exposes any other way to observe it from outside the
-    process."""
-    import os
-    import threading
-
-    from data.live_tyre_scheduler import _capturing
-    from data.live_timing_feed import load_captured_flags, CACHE_DIR
-
-    scheduler_alive = any(
-        t.name == "tyre-capture-scheduler" and t.is_alive()
-        for t in threading.enumerate()
-    )
-
-    captured_sessions = []
-    if os.path.isdir(CACHE_DIR):
-        for fname in sorted(os.listdir(CACHE_DIR)):
-            if not fname.endswith(".json"):
-                continue
-            key = fname[:-5]
-            session_key = int(key) if key.isdigit() else key
-            flags = load_captured_flags(session_key) or {}
-            captured_sessions.append({
-                "session_key": session_key,
-                "drivers": len(flags),
-                "stints": sum(len(v) for v in flags.values()),
-            })
-
-    return {
-        "scheduler_alive": scheduler_alive,
-        "capturing_now": sorted(_capturing),
-        "captured_sessions": captured_sessions,
-    }
-
-
-@app.get("/api/debug/live_capture_detail")
-def live_capture_detail(session_key: int):
-    """Raw per-driver captured flags for one session, straight from
-    load_captured_flags -- for inspecting what a captured_sessions count in
-    live_capture_status actually consists of (e.g. a stint count that looks
-    too low/high for a real session)."""
-    from data.live_timing_feed import load_captured_flags
-
-    flags = load_captured_flags(session_key)
-    if flags is None:
-        return {"session_key": session_key, "found": False}
-    return {"session_key": session_key, "found": True, "flags": flags}
-
-
 # Mounted last so it never shadows the API routes above.
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="static")
