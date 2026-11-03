@@ -3646,6 +3646,109 @@ it's survived at least one refresh, same as Hungaroring's case here. No logic ch
 no PACK_VERSION bump (the live file already serves production; this only updates the
 bootstrap fallback). Full suite re-run clean after the change.
 
+### Live tyre-flag capture validated end-to-end against a real race weekend, three real bugs found, 2026-11-01
+`data/live_timing_feed.py` + `data/live_tyre_scheduler.py` (built to fix the
+Austin 2026 deep-Q3-refit overcount — OpenF1's `/stints` has no genuine
+"New"/used flag, only `tyre_age_at_start`, which can't tell a refit from a
+fresh set) had never been proven against a real live session. Mexico City
+2026 (meeting 1298) was the first chance.
+
+**Persistence bug, found immediately**: `CACHE_DIR` was a relative
+`cache/live_tyre_flags` path, never wired to the Railway volume the way
+`HTTP_CACHE_DB_PATH`-derived caches already are (`undercut_calibration.py` /
+`restart_calibration.py` / `overtake_calibration.py` all follow this
+pattern) — a mid-weekend deploy (adding debug endpoints to actually observe
+capture status, since nothing else exposed it) wiped FP1 and FP2's real
+captured data permanently; no replay channel exists through this live-only
+feed. Fixed by deriving `CACHE_DIR` from `HTTP_CACHE_DB_PATH`'s own
+directory; held cleanly through FP3, Qualifying, and the Race.
+
+**Two bugs found wiring the captured flags into `/api/tyre_inventory`
+(the live board's own tyre display, `frontend/index.js`) and comparing
+against the official race-morning tyre chart**:
+- A live capture that drops mid-session (the scheduler never retries one,
+  by design) left live data covering only a prefix of a driver's real
+  stints. Half-trusting that prefix and guessing the uncaptured tail from
+  `tyre_age_at_start==0` inflated counts badly — Qualifying never folds
+  repeated "fresh" flags, so HAM read as having 7 of 8 Soft sets still
+  good. Fixed in two passes: first an all-or-nothing length-match guard,
+  then refined to trust the live-confirmed prefix and fold the
+  unconfirmed tail as a continuation instead of discarding the prefix too
+  — confirmed against every driver whose capture covered the WHOLE
+  session (PIA, BEA, SAI, HUL) that the real flag agrees with the age
+  heuristic on literally every stint, so a prefix match is trustworthy.
+- 9 of 22 cars ran a FIA-mandated rookie/reserve outing in FP1 this
+  weekend (NOR, VER, BOR, STR, ALB, LAW, COL, RUS, BOT). `remap_fp1_
+  substitutes` already existed (validated earlier against real Monza 2026
+  data) but was never actually called from `/api/tyre_inventory` — every
+  one of those 9 primary drivers' FP1 tyre usage was silently dropped
+  (the substitute's number isn't in the primary driver list). Fixed;
+  VER's Medium/Hard went from 2/2 (wrong) to 1/1 (matches the official
+  chart) immediately.
+
+Audited every other call site after finding these two: `engine/prerace.py`
+(the actual Strategy Briefings page) already had both fixes applied
+correctly — unaffected the whole time. `engine/whatif.py`'s
+`_race_start_sets` (the what-if simulator's pre-race tyre baseline) had
+BOTH bugs, unfixed until this same pass. Worth remembering: a real bug
+found in one call site doesn't mean the others are clean — check all of
+them, not just the one that surfaced it.
+
+After both fixes, RUS/LEC/SAI/BEA matched the official chart exactly on
+all three compounds; most others landed within ±1 on Soft (the remaining
+gap is FP1/FP2 simply having no live coverage at all — the mechanism
+didn't exist retroactively). A separate Medium/Hard gap for several
+drivers survived both fixes and wasn't chased further — plausibly
+cross-session tyre identity (a Medium reused across FP1→FP2 without being
+swapped looks like two fresh sets to a model that resets "has this
+compound had a tracked group yet" per session) — flagged as open, not
+fixed.
+
+### Mexico City 2026 degradation recalibration: FP running understated real wear by ~2x, 2026-11-02
+Following the live-capture work above, checked the actual race against
+`/api/pre_race_strategy`'s pre-race call: it recommended Hard-heavy 2-stops
+(`HARD→HARD→SOFT` etc.) and not one of the 22 real drivers used Hard at
+all (confirmed dry race, 0 rainfall samples — not a wet-weather confound).
+The race winner (VER) ran Medium→Soft→Soft.
+
+Recalibrated by feeding the completed Race session into `build_deg_curves`
+via its own existing `FP_WEIGHTS["RACE"]=3.0` support (already validated
+and load-bearing per the `FP_WEIGHTS` sweep above — removing it drops
+winner-hit 84.8%→82.3% elsewhere, so trusting race data hard here is
+consistent with that). Soft's deg_rate roughly halved (0.194→0.093 s/lap),
+Medium's too (0.149→0.072) — both compounds shrank by almost exactly the
+same ~0.48x factor. Hard was untouched: nobody ran it in the race, so
+there was no real lap to compare against. With the corrected curves the
+optimizer independently arrives at Medium→Soft→Soft, matching the winner,
+pit laps included (predicted lap 46 for the second stop; VER's real second
+stop was also lap 46).
+
+Root cause: FP sessions essentially never produce a genuine race-stint-
+length Soft/Medium sample (teams don't run full fuel-load, race-managed
+stints in Practice), so the pre-race estimate had to extrapolate from
+short/qualifying-style running, which overstated wear. Hard looked
+relatively attractive purely because, with no real long Soft/Medium
+sample to compete against, nothing exposed the overstatement.
+
+Built `engine/circuit_degradation.py` (same pattern as `engine/
+pit_loss.py`'s measured per-circuit table, but seeded from a single race
+rather than thousands of historical stops — honestly labeled `n=1 race`)
+so this correction persists for the next time Mexico City is predicted
+FP-only, before its own race exists to fold in directly. Deliberately
+ONE circuit-wide multiplier, not three independent per-compound numbers —
+one race's evidence can't responsibly support that granularity, and the
+one circuit measured so far showed an identical shrink for both compounds
+anyway. `build_deg_curves` gained an optional `circuit` param and only
+applies the stored correction when the weekend's own real race data isn't
+already present (that's strictly better evidence; applying both would
+double-count the same effect).
+
+Wired into both `/api/pre_race_strategy` and `/api/strategy_duel`
+(api/routers/analysis.py) and — the one that actually matters, the real
+product page — `engine/prerace.py`'s `build_prerace_data`, which was
+calling `build_deg_curves` without `circuit` at all until caught in the
+same pass. `PACK_VERSION` 42 → 43.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
