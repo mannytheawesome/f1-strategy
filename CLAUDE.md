@@ -3818,6 +3818,54 @@ pass is the confirmation that it probably isn't the right explanation.
 Decided not to build the bigger version on a hypothesis that failed its
 own prototype. No code changed.
 
+### Degradation shrink swept across the full cache, then had to be walked back twice in one sitting, 2026-11-04
+Follow-up to the Mexico City entries above: the single-race correction
+(n=1) raised the obvious question of whether it generalises. Built
+`sweep_degradation_shrink.py` (offline, backtest_full.py's own 2023-2026
+disk cache, never touches the network) comparing every cached race's
+FP-only deg_rate against its FP+race deg_rate per compound, wherever
+genuinely measured pre-race AND actually raced.
+
+**First finding**: the DIRECTION is universal -- every compound's global
+median ratio is well below 1.0 (SOFT 0.82 n=17, MEDIUM 0.59 n=54, HARD
+0.57 n=48) -- FP running overstates real race wear almost everywhere.
+Shipped a flat global default on this basis. **Immediately regressed**:
+it flipped Mexico City 2026's own recommendation back to Hard-heavy,
+contradicting the one real race this can be checked against (0/22
+drivers used Hard). The MAGNITUDE varies far too much per circuit (0.33
+to 1.42 on only 3-4 races each) to support either a pure per-circuit
+table (the original mistake) or a pure global pool (this one) -- the
+exact same thin-sample shape already rejected for a per-circuit DNF
+table elsewhere in this project, just not recognised the first two times
+through.
+
+**Resolved with partial pooling**: each circuit's own median blends
+toward the global default, weighted by `min(1, n/8)` -- reusing
+`build_deg_curves`' own MEDIUM-confidence threshold (pts>=8) rather than
+inventing a new constant. Shipped with an honest, checked-before-writing
+caveat: Mexico City's own pooled weight (n=2-3, ~0.25-0.375) still isn't
+enough to pull it back to matching that one race -- it still recommends
+Hard->Medium, not the Medium->Soft->Soft the winner actually ran.
+Accepted deliberately: trusting a single race's number completely is the
+worse failure mode across the whole calendar, even though it's the
+better fit for this one circuit. `engine/circuit_degradation.py` ->
+`engine/race_deg_shrink.py`. `build_deg_curves(fp_data,
+apply_race_shrink=False, circuit="")` replaces the old
+circuit-keyword-only signature.
+
+Also worth logging precisely because it nearly caused a false alarm:
+verifying this against production, an early poll returned
+`['MEDIUM','SOFT','SOFT']` -- looked like a clean validation, until the
+underlying `deg_curves` numbers in that same response (0.0932/0.0717/
+0.043) turned out to be exactly `FP-only x 0.48`, the OLD single-race
+shrink from before this pass even started, not the new pooled values at
+all. Railway's deploy had a longer-than-usual lag that same poll
+happened to land inside. Confirmed the real deploy by polling for the
+new code's actual expected number (HARD deg_rate == 0.0538), not just
+"did the endpoint return something" -- a response shape matching what
+you're hoping to see is not the same as confirming the code that
+produced it.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
