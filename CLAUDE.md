@@ -3784,6 +3784,40 @@ repeating the exact SHORT_STINT_LAPS anecdote-tuning mistake flagged under
 "Notes for future sessions" below. `PACK_VERSION` 43 → 44 (affects
 `build_prerace_data`'s own tyre-inventory calc, same as the fixes above).
 
+### SC-aware stop-count adjustment: prototyped, found to point the wrong way, not built, 2026-11-04
+Following the Mexico City work above, considered whether `pre_race_strategy`
+should weigh its high measured `sc_probability` (76.6% that weekend) into
+the stop-count ranking — the standing theory being that pundits' "fewer
+stops favoured under high SC risk" lean reflects real flexibility value a
+fixed-plan optimizer can't see. Prototyped before committing to anything
+production-facing (scratch script, nothing committed): modelled a strategy
+"snapping" its nearest pit stop onto a randomly-drawn SC lap within a few
+laps' window, taking the real calibrated discount (`SC_PIT_FACTOR`) instead
+of paying full `pit_loss`, averaged over thousands of draws using the same
+per-lap hazard shape `sc_probability` itself uses.
+
+Result points the WRONG way: with deterministic time held equal, a 2-stop
+plan's expected SC discount (0.81s) came out bigger than a 1-stop plan's
+(0.40s) — more pit stops means more chances for one to land near a lucky
+SC, not fewer. This single-car, absolute-EV framing can't represent what's
+actually driving the real intuition, which is almost certainly *relative*
+risk (how you fare against rivals who react differently to the same SC,
+e.g. a driver who hasn't pitted yet gaining track position on one who just
+did) — modelling that properly means reusing `simulate_race`/
+`run_monte_carlo`'s existing "hasn't pitted yet" field-relative mechanic
+comparatively across two candidate plans for one driver, not a standalone
+EV function. That's a materially bigger lift, with a genuinely unknown
+outcome (unlike the Mexico fixes above, this hypothesis failed its own
+cheap pre-check before any real build started).
+
+Also worth remembering: the original complaint that motivated this
+("pundits said 1-stop, we said 2-stop") was already fully explained by the
+degradation recalibration entry above, with zero SC-awareness involved —
+the SC-risk explanation was always speculative, never confirmed, and this
+pass is the confirmation that it probably isn't the right explanation.
+Decided not to build the bigger version on a hypothesis that failed its
+own prototype. No code changed.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
