@@ -499,6 +499,7 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
 
 def build_deg_curves(
     fp_data: list[tuple[str, list[dict], list[dict]]],
+    apply_race_shrink: bool = False,
     circuit: str = "",
 ) -> dict[str, DegCurve]:
 
@@ -680,23 +681,27 @@ def build_deg_curves(
                                      cur.data_points,
                                      cur.confidence.rstrip("*") + "*", cur.sessions)
 
-    # Historical FP-vs-race correction, learned from past predictions at
-    # this circuit checked against what the race actually did (see
-    # engine.circuit_degradation's module docstring for how Mexico City
-    # 2026 was measured). Only meaningful for an estimate that's still
-    # FP-only -- if real race laps for THIS weekend are already in
-    # fp_data, that's strictly better evidence than a past race's
-    # correction factor, so it's skipped entirely in that case.
+    # Partially-pooled FP-vs-race correction, measured across the full
+    # 2023-2026 cache (see engine.race_deg_shrink's module docstring --
+    # blends each circuit's own small sample toward a global per-compound
+    # default; a pure flat global version was tried first and flipped
+    # Mexico City 2026's own recommendation back to Hard-heavy, the exact
+    # thing the single-race version it replaced had gotten right). Only
+    # meaningful for an estimate that's still FP-only -- if real race laps
+    # for THIS weekend are already in fp_data, that's strictly better
+    # evidence than a historical correction factor, so it's skipped
+    # entirely in that case.
     has_race_data = any(name == "RACE" for name, _, _ in fp_data)
-    if circuit and not has_race_data:
-        from engine.circuit_degradation import race_deg_shrink_for
-        shrink = race_deg_shrink_for(circuit)
-        if shrink != 1.0:
-            for c, cur in list(curves.items()):
-                adjusted = max(cur.deg_rate * shrink, MIN_DEG.get(c, 0.0))
-                curves[c] = DegCurve(c, adjusted, cur.baseline,
-                                     cur.data_points,
-                                     cur.confidence.rstrip("*") + "*", cur.sessions)
+    if apply_race_shrink and not has_race_data:
+        from engine.race_deg_shrink import race_deg_shrink_for
+        for c, cur in list(curves.items()):
+            shrink = race_deg_shrink_for(c, circuit)
+            if shrink == 1.0:
+                continue
+            adjusted = max(cur.deg_rate * shrink, MIN_DEG.get(c, 0.0))
+            curves[c] = DegCurve(c, adjusted, cur.baseline,
+                                 cur.data_points,
+                                 cur.confidence.rstrip("*") + "*", cur.sessions)
 
     return curves
 

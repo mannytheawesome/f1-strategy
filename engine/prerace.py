@@ -53,20 +53,31 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 44   # 44: compute_inventory now seeds a cross-session orphan
+PACK_VERSION = 45   # 45: build_deg_curves' FP-vs-race correction
+                    # (engine/race_deg_shrink.py) is now partially pooled --
+                    # each circuit's own small sample (all currently n=3-4)
+                    # blended toward a global per-compound default swept
+                    # from the full 2023-2026 cache (68 races) -- replacing
+                    # the single-race Mexico-City-only per-circuit table
+                    # version 43 shipped hours earlier, which didn't
+                    # survive being checked against more data (same
+                    # thin-sample shape as the already-rejected per-circuit
+                    # DNF table). Honest caveat, not fully resolved: Mexico
+                    # City's own pooled values still don't pull far enough
+                    # to flip its recommendation back to the one real race
+                    # this can be checked against -- see
+                    # engine/race_deg_shrink.py's module docstring -- 44: compute_inventory now seeds a cross-session orphan
                     # stint (no local group, tyre_age_at_start already
                     # nonzero -- OpenF1's stint_number doesn't reset per
                     # session) from its real tyre age instead of dropping
                     # its mileage -- fixed a real Medium undercount
                     # confirmed against the official Mexico City 2026 tyre
                     # chart (see engine/tyre_inventory.py) -- 43: build_deg_curves
-                    # now gets `circuit`, applying the
-                    # new per-circuit FP-vs-race degradation correction
-                    # (engine/circuit_degradation.py) where one's been
-                    # measured -- Mexico City 2026's Hard-heavy pre-race
-                    # recommendation (not one of 22 real drivers used Hard)
-                    # flips to Medium->Soft->Soft, matching the actual race
-                    # winner -- 42: stop_decision gains close_call_caveat -- a 2026-10-26
+                    # gained a (now superseded) per-circuit FP-vs-race
+                    # degradation correction -- Mexico City 2026's Hard-heavy
+                    # pre-race recommendation (not one of 22 real drivers
+                    # used Hard) flipped to Medium->Soft->Soft, matching the
+                    # actual race winner -- 42: stop_decision gains close_call_caveat -- a 2026-10-26
                     # offline sweep of all 81 cached races found the model's
                     # stop-count call matches the real race's dominant outcome
                     # only 44% of the time (n=34) when the crossover margin is
@@ -1607,7 +1618,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
             pass
     if not fp_data:
         raise ValueError("no usable practice/sprint data yet")
-    curves = build_deg_curves(fp_data, circuit=circuit)
+    curves = build_deg_curves(fp_data, apply_race_shrink=True, circuit=circuit)
 
     # ── grid from qualifying (fall back to latest session order) ────────────
     quali = next((s for s in reversed(sources)
