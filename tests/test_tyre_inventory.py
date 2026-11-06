@@ -199,6 +199,26 @@ class TestCrossSessionOrphanSeeding:
         inv = _inv([fp2, fp3], session_is_qualifying=[False, False])
         assert inv.discarded.get("MEDIUM", 0) == 2
 
+    def test_a_set_that_was_still_short_when_a_session_ended_is_not_also_counted_used(self):
+        # Real bug found comparing against the official Mexico City 2026
+        # chart again, this time caused by the orphan-seeding fix itself:
+        # NOR opened a fresh 6-lap Medium in FP2 (short enough to lock in
+        # as "used" at FP2's own end), then continued running the SAME
+        # physical tyre into FP3 (tyre_age_at_start=7, close enough to
+        # FP2's own 6-lap total to be the same set, not a separate orphan)
+        # for 6 more laps -- 12-13 total, past the Medium threshold. The
+        # old per-session-commit code counted it BOTH as FP2's "used" set
+        # AND FP3's "discarded" one -- one physical tyre charged against
+        # two allocation slots. It must be classified exactly once, by its
+        # real total mileage.
+        fp2 = [make_stint(1, "MEDIUM", 1, 6, tyre_age_at_start=0, stint_number=1)]
+        fp3 = [make_stint(1, "MEDIUM", 8, 13, tyre_age_at_start=7, stint_number=2)]
+        inv = _inv([fp2, fp3], session_is_qualifying=[False, False])
+        r = inv.reconciled()
+        assert r["MEDIUM"]["used"] == 0
+        assert inv.discarded.get("MEDIUM", 0) == 1
+        assert r["MEDIUM"]["new"] == 2
+
 
 class TestQualifyingNoCap:
     """Real case (NOR's Hungary 2026 Quali): Q1/Q2/Q3 run under one

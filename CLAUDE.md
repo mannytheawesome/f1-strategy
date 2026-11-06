@@ -3866,6 +3866,65 @@ new code's actual expected number (HARD deg_rate == 0.0538), not just
 you're hoping to see is not the same as confirming the code that
 produced it.
 
+### NOR/BOR/STR/ALO residual gap: the orphan-seeding fix itself double-counted two real tyre sets, 2026-11-06
+Follow-up on the four names left unexplained by the cross-session
+orphan-stint entry above. Traced all four directly against real Mexico
+City 2026 stint data (through the actual `compute_inventory`, not a
+re-implementation) instead of guessing from the chart gap alone. BOR and
+ALO's gaps turned out NOT to be this bug at all — their session-boundary
+stints are genuinely separate fresh tyres, correctly counted, and remain
+unexplained (the original "official race-morning chart" that first
+flagged them couldn't be re-obtained this pass — every source found by
+search was a pre-race preview, not the actual chart, confirmed because
+it mismatched production even on drivers already known to match exactly;
+not chased further without real ground truth to check against).
+
+NOR and STR were a real bug, and it was the 2026-11-03 fix's own doing.
+That fix seeds a cross-session orphan's group from its real
+`tyre_age_at_start` so the carryover mileage isn't dropped — but
+`compute_inventory` still classified each session's groups into
+used/discarded independently, at that session's own end. A tyre still
+short enough to count as "used" when FP2 ends gets locked in immediately;
+if the SAME physical tyre then continues into FP3 and crosses the
+discard threshold there, the old code had no way to revise the earlier
+call — it counted the FP3 continuation as a second, separately
+discarded set. One physical tyre consumed two allocation slots. Confirmed
+by hand for NOR: FP2 opens a fresh Medium, 6 laps (locked in "used" at
+FP2's end, correctly, in isolation), continues into FP3 at
+`tyre_age_at_start=7` for 6 more laps (13 total, past the 6-lap Medium
+threshold) — counted again as "discarded". STR showed the identical
+shape on Soft.
+
+Fixed by deferring classification instead of committing it per-session:
+`compute_inventory` now carries a persistent `open_laps` accumulator
+(driver -> compound -> cumulative laps of the currently-mounted,
+not-yet-classified tyre) across the whole `stints_by_session` loop, and
+only commits a tyre to used/discarded when a genuinely fresh stint
+supersedes it or once every session in scope has been processed. The one
+case this had to be checked against before writing any code: the
+existing, already-validated "ANT" test
+(`test_orphan_across_two_sessions_each_tracked_independently`), where two
+truly SEPARATE orphan tyres must stay two separate discards, not get
+folded into one continuing tyre. Hand-simulating the naive "always fold a
+non-fresh continuation into whatever's open" rule against that test
+caught it would wrongly merge them (open=24 -> folded to 34) before any
+code was written. Resolved with an age-continuity check: a non-fresh
+stint only folds into the currently open group if its own
+`tyre_age_at_start` is `>=` that group's accumulated laps so far (a
+tyre's age cannot decrease) — otherwise it commits the open group and
+starts a fresh one. This check is skipped entirely when F1's live
+declared fresh/used flag is available and says `is_fresh=False` — that's
+stronger ground truth than the age heuristic and takes precedence.
+
+Added a regression test
+(`test_a_set_that_was_still_short_when_a_session_ended_is_not_also_counted_used`)
+reconstructing the exact NOR shape. Full suite: 419 passed, 0 failed, 6
+deselected (the standing `integration` marker, same as always). Verified
+against real data: NOR's Medium `remaining` corrects 1 -> 2, STR's Soft
+`remaining` corrects 4 -> 5; BOR and ALO's inventories are unchanged, as
+expected. `PACK_VERSION` 45 -> 46 (affects `build_prerace_data`'s own
+tyre-inventory calc, same as the fixes above).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

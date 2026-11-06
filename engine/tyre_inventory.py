@@ -31,8 +31,8 @@ as available for the race, even though the regulation doesn't force it to
 be physically handed back. So each opened set is classified by how many
 laps it actually ran (`SHORT_STINT_LAPS`), not just counted as "used."
 
-A session's own tracked groups reset per session (each session gets at
-most one real group per compound outside Qualifying — see
+A session's own tracked groups used to reset per session (each session
+capped at one real group per compound outside Qualifying — see
 `compute_inventory`'s comments), but OpenF1's own `stint_number` does NOT
 reset per session: a session can open on stint_number 2+, with
 `tyre_age_at_start` already nonzero, when the car kept the same physical
@@ -42,8 +42,38 @@ that case — a non-fresh stint with no local group to fold into — as
 count," and simply dropped its mileage. Confirmed directly against the
 official Mexico City 2026 race-morning tyre chart that this undercounted
 real consumption for several drivers (Medium read a full set too high).
-Now seeded from `tyre_age_at_start` itself — real, independently-reported
-cumulative wear, not a reset-to-zero guess — so that mileage isn't lost.
+
+The first fix seeded that orphan from `tyre_age_at_start` itself so its
+mileage wasn't lost — real progress, but it classified (committed to
+`used`/`discarded`) a physical tyre's fate at the END OF EVERY SESSION,
+independently each time. That meant a set opened fresh and still short
+when SESSION A ended got locked in as "used" (still-viable) right then —
+and if the SAME physical tyre reappeared as an orphan continuation in
+SESSION B and ran long enough there to cross the discard threshold, it
+got counted AGAIN, this time as "discarded." One physical tyre then
+consumed two allocation slots instead of one. Confirmed directly against
+real Mexico City 2026 data (NOR's Medium: a fresh 6-lap stint in FP2,
+locked in as "used," continued into FP3 at tyre_age_at_start=7 and ran
+long enough there to be separately counted "discarded" too — NOR's shown
+Medium availability read a full set lower than it should have).
+
+Fixed by not classifying a set until it's actually done: each driver's
+open (not-yet-classified) physical tyre per compound now carries across
+the whole `stints_by_session` loop, not just within one session, and is
+only committed to `used`/`discarded` when either a genuinely fresh stint
+proves it's been replaced, or every session in scope has been processed.
+A non-fresh stint only folds into that carried-over total when its
+reported `tyre_age_at_start` is actually consistent with continuing it
+(>= the open total so far) — confirmed necessary against a real two-
+orphan case (ANT's Mexico City FP2→FP3 shape, now `tests/
+test_tyre_inventory.py::TestCrossSessionOrphanSeeding::
+test_orphan_across_two_sessions_each_tracked_independently`): a FP3 stint
+reporting age=4 right after a FP2 group that ended at age=24 is NOT the
+same physical rubber continuing, just a second, unrelated orphan — the
+age arithmetic is what tells the two cases apart. When live declared
+flags are available for a stint (see `live_flags_by_session` below), that
+distinction is skipped entirely: a live "not new" flag is already strong
+enough evidence of continuation on its own.
 """
 
 from __future__ import annotations
@@ -271,6 +301,22 @@ def compute_inventory(
             allocation=dict(alloc),
         )
 
+    # Per driver+compound, the lap total of whichever physical tyre is
+    # currently mounted and not yet classified — carried across session
+    # boundaries (see module docstring). None/absent means nothing open.
+    # Classified (committed to .used/.discarded) only once it's actually
+    # done: superseded by a genuinely fresh stint, or every session in
+    # scope has been processed with nothing left to learn about it.
+    open_laps: dict[int, dict[str, int]] = {}
+
+    def commit(num: int, compound: str, laps: int) -> None:
+        threshold = SHORT_STINT_LAPS.get(compound, 5)
+        inv = inventories[num]
+        if laps <= threshold:
+            inv.used[compound] = inv.used.get(compound, 0) + 1
+        else:
+            inv.discarded[compound] = inv.discarded.get(compound, 0) + 1
+
     for idx, session_stints in enumerate(stints_by_session):
         is_quali = bool(session_is_qualifying[idx]) if (
             session_is_qualifying and idx < len(session_is_qualifying)) else False
@@ -307,19 +353,21 @@ def compute_inventory(
             if live_list is not None and len(live_list) == 0:
                 live_list = None
 
-            # groups[compound] is a list of accumulated-lap totals, one per
-            # physical set opened this session for that compound. Every
-            # fresh-flagged stint starts a new group EXCEPT in a non-
-            # Qualifying session once one real group already exists for
-            # that compound — there, it's folded in as a continuation, same
-            # as a non-fresh stint would be (see comment above).
-            groups: dict[str, list[int]] = {}
+            driver_open = open_laps.setdefault(num, {})
+            # Compounds already seen THIS session -- a repeated fresh flag
+            # for one of these is a same-session pit-lane re-emission of
+            # the one physical tyre already open (see module docstring),
+            # not a second set. Resets every session; `driver_open` itself
+            # does not.
+            touched_this_session: set[str] = set()
+
             for i, stint in enumerate(driver_stints):
                 compound = stint.get("compound", "UNKNOWN")
                 if compound not in COMPOUNDS:
                     continue
                 laps = _stint_laps(stint)
-                if live_list is not None:
+                live_confirmed = live_list is not None
+                if live_confirmed:
                     if i < len(live_list):
                         is_fresh = bool(live_list[i].get("new"))
                     else:
@@ -337,43 +385,51 @@ def compute_inventory(
                         is_fresh = False
                 else:
                     is_fresh = stint.get("tyre_age_at_start", 0) == 0
-                lst = groups.setdefault(compound, [])
-                starts_new_group = is_fresh and (is_quali or not lst)
-                if starts_new_group:
-                    lst.append(laps)
-                elif lst:
-                    lst[-1] += laps
-                else:
-                    # A non-fresh stint with no local group to fold into --
-                    # OpenF1's stint_number doesn't reset per session (a
-                    # session can genuinely open on stint_number 2+, the
-                    # car having kept the same physical tyre from the
-                    # previous session), so this is real, already-worn
-                    # rubber, not nothing. Dropping its mileage entirely
-                    # (the old behaviour) undercounted real consumption --
-                    # confirmed directly against the official Mexico City
-                    # 2026 race-morning tyre chart: several drivers' Medium
-                    # count read a full set too HIGH specifically on
-                    # sessions shaped like this. tyre_age_at_start is real,
-                    # independently-reported cumulative wear (confirmed:
-                    # it's often nonzero at a session's first recorded
-                    # stint, not silently reset to 0 the way a "no history
-                    # before this session" guess would read it) -- seeding
-                    # the group with it recovers that history instead of
-                    # starting from zero, at the cost of only knowing a
-                    # floor on this set's true age if even more of its
-                    # history predates what tyre_age_at_start itself
-                    # captured.
-                    lst.append((stint.get("tyre_age_at_start") or 0) + laps)
 
-            inv = inventories[num]
-            for compound, group_laps in groups.items():
-                threshold = SHORT_STINT_LAPS.get(compound, 5)
-                for total_laps in group_laps:
-                    if total_laps <= threshold:
-                        inv.used[compound] = inv.used.get(compound, 0) + 1
+                starts_new_group = is_fresh and (is_quali or compound not in touched_this_session)
+                if starts_new_group:
+                    prior = driver_open.get(compound)
+                    if prior is not None:
+                        commit(num, compound, prior)
+                    driver_open[compound] = laps
+                elif compound in driver_open:
+                    # Folding into whatever's already open -- either a
+                    # same-session pit-lane re-emission (is_fresh True, just
+                    # not this compound's first touch this session) or a
+                    # non-fresh stint continuing it. For the latter, when
+                    # freshness came from a real declared flag rather than
+                    # the age guess, that flag is already strong enough
+                    # evidence of continuation on its own (see module
+                    # docstring). When it came from the age guess instead,
+                    # confirm the two stints are actually the same physical
+                    # tyre before folding -- a real tyre's age can't have
+                    # gone DOWN since the open total was last updated, so a
+                    # reported age that's lower than that total means this
+                    # is a second, unrelated orphan, not a continuation
+                    # (confirmed against a real two-orphan case, see
+                    # module docstring) -- commit the old one now and start
+                    # this stint as its own fresh orphan instead.
+                    if (not is_fresh and not live_confirmed
+                            and (stint.get("tyre_age_at_start") or 0) < driver_open[compound]):
+                        commit(num, compound, driver_open[compound])
+                        driver_open[compound] = (stint.get("tyre_age_at_start") or 0) + laps
                     else:
-                        inv.discarded[compound] = inv.discarded.get(compound, 0) + 1
+                        driver_open[compound] += laps
+                else:
+                    # Nothing open yet for this compound at all -- real,
+                    # already-worn rubber carried from before this driver's
+                    # data began (OpenF1's stint_number doesn't reset per
+                    # session, so this is a genuine possibility, not just a
+                    # bug), seeded from tyre_age_at_start the same way as
+                    # any other orphan (see module docstring).
+                    driver_open[compound] = (stint.get("tyre_age_at_start") or 0) + laps
+                touched_this_session.add(compound)
+
+    # Every physical tyre still open once every session in scope has been
+    # processed has nothing left to supersede it -- classify it now.
+    for num, compounds in open_laps.items():
+        for compound, laps in compounds.items():
+            commit(num, compound, laps)
 
     result = sorted(inventories.values(), key=lambda d: d.acronym)
     return result

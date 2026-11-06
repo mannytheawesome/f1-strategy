@@ -53,7 +53,16 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 45   # 45: build_deg_curves' FP-vs-race correction
+PACK_VERSION = 46   # 46: compute_inventory now defers used/discarded
+                    # classification across session boundaries instead of
+                    # committing per-session -- a tyre still short at one
+                    # session's end could get locked in as "used" and then
+                    # counted again as "discarded" once a later session
+                    # pushed it past threshold, double-charging one
+                    # physical tyre against two allocation slots. See
+                    # CLAUDE.md 2026-11-06 for the real NOR/STR cases this
+                    # fixed.
+                    # 45: build_deg_curves' FP-vs-race correction
                     # (engine/race_deg_shrink.py) is now partially pooled --
                     # each circuit's own small sample (all currently n=3-4)
                     # blended toward a global per-compound default swept
