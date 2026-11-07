@@ -3925,6 +3925,62 @@ against real data: NOR's Medium `remaining` corrects 1 -> 2, STR's Soft
 expected. `PACK_VERSION` 45 -> 46 (affects `build_prerace_data`'s own
 tyre-inventory calc, same as the fixes above).
 
+### "Why is Racing Bulls' race pace faster than Ferrari and McLaren's?" — the raw long-run boards, not the corrected chart, 2026-11-07
+User question on the Mexico City 2026 briefing page. The corrected,
+cross-session "real pace order" chart (`long_run_pace`/`team_pace`) never
+showed this — McLaren and Ferrari were always ahead of Racing Bulls there.
+The raw per-session "Long runs — FP3" board did: PIA's (McLaren) longest
+FP3 stint averaged 84.3s/lap, slower than every other car on the board
+including backmarkers.
+
+Traced it to PIA's actual stint: a 9-lap Medium run from lap 1 of FP3 —
+the start of the session, coldest track, and exactly the shape of a
+deliberate heavy-fuel race-fuel simulation. Raw averages mix fuel load,
+stint length and compound across drivers with no normalisation, so a top
+team's genuine race-sim run can read slower than a lighter tyre check from
+a smaller team, with nothing about it reflecting real pace.
+
+Digging into PIA's actual lap times to build a corrected number surfaced a
+second, independent bug in the table itself: its per-lap exclusion
+compared each lap to the STINT'S OWN median * 1.05. Of PIA's 8 candidate
+laps, 2 were genuinely clean (79.1s, 78.6s) and 6 were inflated by garage
+dwell time folded into the lap's duration (87-138s) — confirmed directly:
+20 of 22 drivers in that one FP3 session had at least one lap over 200s,
+each at a different lap number, the signature of garage time rather than
+a shared red flag or stoppage. That contamination dragged the stint's own
+median up to ~97.5, loose enough that the old filter kept 4 of the 8 laps
+(both clean ones plus the two least-bad contaminated ones) and reported
+84.304 as if it meant something.
+
+**Fixed two things in `_long_run_tables` (engine/prerace.py)**, both
+reusing work this project already validated rather than inventing new
+constants: (1) the per-lap filter now compares each lap to the STINT'S
+OWN BEST lap within `PACE_ORDER_CLEAN_RATIO` (1.10) — the exact same
+constant and rationale `_long_run_pace` already uses, chosen specifically
+because a single best lap is a far more robust anchor than a median that
+can itself be contaminated; (2) every row now also reports `corrected_avg`
+(fuel-burn and tyre-age removed, same formula as `_long_run_pace`), and
+each session's table is now ranked by that instead of the raw average —
+sorting by raw was the same bug in a different place, since it could
+still let a lighter/shorter run outrank a genuine heavy-fuel one. A driver
+whose longest stint has too few clean laps after the fix (PIA's FP3
+Medium run among them) now reports nothing for that session rather than a
+contaminated number. Frontend (`frontend/briefing.js`) gained a second
+summary row, "CORRECTED FOR FUEL & AGE", under the existing raw average.
+
+Added 5 regression tests (`TestLongRunTables`), including PIA's real
+lap-by-lap Mexico data reconstructing the exact contamination case, and a
+synthetic two-driver case proving the sort now follows `corrected_avg`
+rather than `avg`. Full suite: 424 passed, 0 failed, 6 deselected.
+`PACK_VERSION` 46 -> 47.
+
+Investigated separately in the same session and NOT a bug: 9 drivers
+showed up missing from the FP1 long-run data entirely (NOR, VER, RUS, LAW,
+STR, BOR, COL, ALB, BOT). Confirmed by the user — mandatory young-driver-
+programme FP1 sessions, so those drivers genuinely didn't drive that
+session; their seats went to rookies running under different driver
+numbers not in the lookup used for this investigation. No code change.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

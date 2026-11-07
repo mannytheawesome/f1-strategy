@@ -976,12 +976,16 @@
         }
         const avgRow = tb.drivers.map(r =>
           `<td style="color:var(--green);font-weight:700;text-align:center">${strip(r.avg)}</td>`).join('');
+        const correctedRow = tb.drivers.map(r =>
+          `<td style="text-align:center">${r.corrected_avg != null ? strip(r.corrected_avg) : '—'}</td>`).join('');
         lrCard.innerHTML = `<h2>Long runs — ${tb.session_name}</h2>
-          <div class="meta-row"><span>each driver's longest run · times shown without the ${minute}-minute prefix · X = out-lap, traffic spike (>5% over run median) or track-wide yellow — excluded from the average</span></div>
+          <div class="meta-row"><span>each driver's longest run · times shown without the ${minute}-minute prefix · X = out-lap, traffic spike (>10% over the stint's own best lap) or track-wide yellow — excluded from both averages</span></div>
           <div style="overflow-x:auto"><table class="results" style="min-width:${tb.drivers.length * 74}px">
             <tr>${head2}</tr>${body}
             <tr><td colspan="${tb.drivers.length}" style="text-align:center;color:var(--green);font-weight:700;border-top:1px solid var(--border)">AVERAGE STINT PACE</td></tr>
             <tr>${avgRow}</tr>
+            <tr><td colspan="${tb.drivers.length}" style="text-align:center;color:var(--muted);font-weight:700" title="Fuel-burn and tyre-age removed, so a heavy-fuel race-fuel run and a light tyre check read on the same scale. — for a wet stint or where the correction couldn't be computed.">CORRECTED FOR FUEL &amp; AGE</td></tr>
+            <tr>${correctedRow}</tr>
           </table></div>`;
         group.appendChild(lrCard);
       }

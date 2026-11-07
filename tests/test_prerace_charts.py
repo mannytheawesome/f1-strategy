@@ -15,6 +15,7 @@ from engine.predictor import DegCurve
 from engine.prerace import (
     PIT_WINDOW_MARGIN_S, PIT_WINDOW_MAX_SHIFT, _pit_window, _team_pace,
     _long_run_pace, _quali_sim_pace, _shift_medium_start_earlier,
+    _long_run_tables,
 )
 from engine.predictor import MIN_STINT, optimize_strategy
 from engine.undercut_shift import CIRCUIT_UNDERCUT_SHIFT, DEFAULT_UNDERCUT_SHIFT, undercut_shift_for
@@ -541,6 +542,120 @@ class TestLongRunPaceSessionWeighting:
         import statistics
         unweighted = statistics.median([95.0] * 11 + [90.0] * 11)
         assert unweighted == 92.5
+
+
+class TestLongRunTables:
+    """Found 2026-11-07 investigating a user-reported "why is Racing Bulls'
+    race pace faster than Ferrari and McLaren's" on the Mexico City 2026
+    'Long runs' boards: the per-lap exclusion filter compared each lap to
+    the STINT'S OWN median * 1.05, which a stint with several severely
+    disrupted laps (garage dwell time folded into a lap's duration -- real
+    and common in practice) can drag up enough to let other disrupted laps
+    through as 'clean'. Fixed by reusing _long_run_pace's own
+    already-validated best-lap * PACE_ORDER_CLEAN_RATIO filter instead."""
+
+    def _laps(self, driver, lap_times, start_lap=2):
+        return [{"driver_number": driver, "lap_number": start_lap + i,
+                 "lap_duration": t, "is_pit_out_lap": False}
+                for i, t in enumerate(lap_times)]
+
+    def _patch(self, monkeypatch, laps, stints, drivers=None):
+        monkeypatch.setattr(prerace, "get_laps", lambda *a, **k: laps)
+        monkeypatch.setattr(prerace, "get_stints", lambda *a, **k: stints)
+        monkeypatch.setattr(prerace, "get_drivers",
+                            lambda *a, **k: drivers or {})
+        monkeypatch.setattr("data.live.get_yellow_laps", lambda *a, **k: set())
+
+    def _sources(self):
+        return [{"session_key": 1, "session_type": "Practice", "session_name": "Practice 3"}]
+
+    def test_real_mexico_pia_case_drops_row_instead_of_a_contaminated_average(self, monkeypatch):
+        # Real Mexico City 2026 FP3 data (PIA, Medium, lap 1-9): 2 genuinely
+        # clean laps (79.072, 78.575) and 6 laps inflated by garage dwell
+        # time folded into their duration (87-138s). The stint's own median
+        # (~97.5) was already dragged up by those 6, so the old filter kept
+        # 4 of 8 laps (both clean ones plus the two LEAST-bad contaminated
+        # ones) and reported a contaminated avg of 84.304. The new filter
+        # (best-lap * 1.10 = 78.575 * 1.10 = 86.43) keeps only the 2 that
+        # are actually clean -- below the 4-lap minimum, so this stint now
+        # reports nothing rather than a wrong number.
+        laps = self._laps(81, [87.462, 79.072, 121.147, 102.871, 78.575,
+                               106.268, 137.957, 92.108], start_lap=2)
+        stints = [{"driver_number": 81, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 9}]
+        self._patch(monkeypatch, laps, stints,
+                    {81: {"name_acronym": "PIA", "team_colour": "F47600"}})
+        tables = _long_run_tables(self._sources(), {"MEDIUM": _curve("MEDIUM")})
+        assert tables == []
+
+    def test_contaminated_laps_marked_excluded_once_enough_clean_laps_remain(self, monkeypatch):
+        # Same contamination shape, but with enough genuinely clean laps
+        # that the row survives -- lets us check the per-lap x flags
+        # directly rather than just "the row disappeared".
+        clean = [80.0, 80.1, 79.9, 80.2, 80.0]        # 5 genuinely clean laps
+        bad = [95.0, 97.0]                             # 2 contaminated laps
+        # Old median-based filter: median of the 7 values is 80.1,
+        # threshold 84.1 -- already excludes both bad laps here (7 values
+        # isn't enough to drag the median up near them), so this case
+        # specifically checks the NEW filter still does the right thing on
+        # an easy sample, while the PIA case above is what exercises the
+        # old filter's real failure mode (needs ~50% contamination).
+        laps = self._laps(81, clean[:2] + bad + clean[2:], start_lap=2)
+        stints = [{"driver_number": 81, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 9}]
+        self._patch(monkeypatch, laps, stints,
+                    {81: {"name_acronym": "PIA", "team_colour": "F47600"}})
+        tables = _long_run_tables(self._sources(), {"MEDIUM": _curve("MEDIUM")})
+        assert len(tables) == 1
+        row = tables[0]["drivers"][0]
+        assert row["clean_laps"] == 5
+        excluded_times = {c["t"] for c in row["laps"] if c["x"]}
+        assert excluded_times == {95.0, 97.0}
+
+    def test_corrected_avg_applies_fuel_and_age_correction(self, monkeypatch):
+        # Flat raw laps (no real variation) isolate the correction formula:
+        # with deg_rate=0.2 and FUEL_RATE=0.035, corrected = raw - 0.165*age.
+        # ages here are 1..5 (ls=1, laps 2-6), mean age 3.
+        laps = self._laps(1, [80.0] * 5, start_lap=2)
+        stints = [{"driver_number": 1, "compound": "MEDIUM",
+                   "lap_start": 1, "lap_end": 6}]
+        self._patch(monkeypatch, laps, stints, {1: {"name_acronym": "NOR"}})
+        tables = _long_run_tables(self._sources(), {"MEDIUM": _curve("MEDIUM", deg_rate=0.2)})
+        row = tables[0]["drivers"][0]
+        assert row["avg"] == 80.0
+        assert row["corrected_avg"] == pytest.approx(80.0 - 0.165 * 3, abs=1e-6)
+
+    def test_wet_stint_gets_no_corrected_avg(self, monkeypatch):
+        laps = self._laps(1, [95.0] * 5, start_lap=2)
+        stints = [{"driver_number": 1, "compound": "INTERMEDIATE",
+                   "lap_start": 1, "lap_end": 6}]
+        self._patch(monkeypatch, laps, stints, {1: {"name_acronym": "NOR"}})
+        tables = _long_run_tables(self._sources(), {})
+        row = tables[0]["drivers"][0]
+        assert row["avg"] == 95.0
+        assert row["corrected_avg"] is None
+
+    def test_table_ranked_by_corrected_avg_not_raw_avg(self, monkeypatch):
+        # Driver A: slower raw (80.0) but a real MEDIUM deg curve removes
+        # more wear than fuel adds back -> corrected 79.505, faster.
+        # Driver B: faster raw (79.9) but SOFT's near-flat curve barely
+        # offsets fuel burn -> corrected 79.975, slower. Raw ranks B ahead
+        # of A; corrected (the fix) must rank A ahead of B.
+        laps_a = self._laps(1, [80.0] * 5, start_lap=2)
+        laps_b = self._laps(2, [79.9] * 5, start_lap=2)
+        stints = [
+            {"driver_number": 1, "compound": "MEDIUM", "lap_start": 1, "lap_end": 6},
+            {"driver_number": 2, "compound": "SOFT", "lap_start": 1, "lap_end": 6},
+        ]
+        self._patch(monkeypatch, laps_a + laps_b, stints,
+                    {1: {"name_acronym": "DRA"}, 2: {"name_acronym": "DRB"}})
+        curves = {"MEDIUM": _curve("MEDIUM", deg_rate=0.2),
+                  "SOFT": _curve("SOFT", deg_rate=0.01)}
+        tables = _long_run_tables(self._sources(), curves)
+        order = [r["acronym"] for r in tables[0]["drivers"]]
+        assert order == ["DRA", "DRB"]
+        by_avg_order = sorted(tables[0]["drivers"], key=lambda r: r["avg"])
+        assert [r["acronym"] for r in by_avg_order] == ["DRB", "DRA"]
 
 
 class TestQualiSimPace:

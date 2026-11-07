@@ -53,7 +53,18 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 46   # 46: compute_inventory now defers used/discarded
+PACK_VERSION = 47   # 47: _long_run_tables' per-lap exclusion now compares
+                    # each lap to the STINT'S OWN BEST lap (PACE_ORDER_
+                    # CLEAN_RATIO, 1.10) instead of the stint's own median
+                    # * 1.05 -- a stint with several severely disrupted
+                    # laps could drag that median up enough to let other
+                    # disrupted laps through. Also adds corrected_avg
+                    # (fuel + tyre-age corrected, same formula as
+                    # _long_run_pace) to every long-run-table row, and
+                    # ranks each table by it instead of the raw average.
+                    # See CLAUDE.md 2026-11-07 for the real Mexico City
+                    # case (PIA's FP3 Medium run) this fixed.
+                    # 46: compute_inventory now defers used/discarded
                     # classification across session boundaries instead of
                     # committing per-session -- a tyre still short at one
                     # session's end could get locked in as "used" and then
@@ -377,10 +388,41 @@ def _quali_sim_pace(source_sessions: list[dict],
     return rows
 
 
-def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
+def _long_run_tables(source_sessions: list[dict], curves: dict) -> list[dict]:
     """Lap-by-lap long-run boards, one per session — the classic 'Long Runs
     FP2' table: each driver's longest stint (>=6 laps), every lap shown,
-    outliers/out-laps marked excluded, and the clean average at the bottom."""
+    outliers/out-laps marked excluded, and the clean average at the bottom.
+
+    Also reports a fuel- and age-corrected average alongside the raw one
+    (same formula _long_run_pace uses) -- found 2026-11-07 investigating a
+    user-reported "why is Racing Bulls' race pace faster than Ferrari and
+    McLaren's" on Mexico City 2026: the raw average alone conflates fuel
+    load, stint length and tyre age across drivers who ran completely
+    different programs (PIA's genuine heavy-fuel FP3 race sim read 84.3s/
+    lap, slower than EVERY other car including backmarkers, purely because
+    his stint happened to be long and heavy -- not because McLaren was
+    actually slow).
+
+    That same investigation found the real bug worth fixing here: this
+    table's own per-lap exclusion previously compared each lap to the
+    STINT'S OWN median * 1.05. A stint with several severely disrupted
+    laps (garage dwell time folded into a lap's duration is common in
+    practice -- confirmed directly: 20 of 22 drivers at Mexico City 2026
+    had at least one lap over 200s, each at a different lap number, the
+    signature of garage time rather than a shared red flag) drags that
+    median up enough to let other disrupted laps through as "clean". PIA's
+    FP3 Medium stint is the clean example: of 8 candidate laps, 4 were
+    genuinely disrupted (87-138s) and the stint's own median (~97s) was
+    already inflated by them, so the old 1.05 filter kept 4 of 8 instead of
+    the 2 that were actually clean (79.1s, 78.6s).
+
+    Fixed by reusing _long_run_pace's own already-validated filter instead
+    of inventing a new one: compare each lap to the STINT'S OWN BEST lap
+    (not its median) within PACE_ORDER_CLEAN_RATIO (1.10), the same
+    constant and the same rationale documented on _long_run_pace -- a
+    single genuinely fast lap is a far more robust anchor than a median
+    that can itself be contaminated. Applying this to PIA's case keeps
+    exactly the 2 genuinely clean laps."""
     from data.live import get_yellow_laps
     tables = []
     for s in source_sessions:
@@ -409,28 +451,47 @@ def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
                 continue
             dl = laps_by_driver.get(num, {})
             stint_laps = [(ln, dl[ln]) for ln in range(ls + 1, le + 1) if ln in dl]  # skip out-lap
-            times = [l["lap_duration"] for _, l in stint_laps
-                     if 55 < l["lap_duration"] < 200]
-            if len(times) < 5:
+            eligible = [l["lap_duration"] for ln, l in stint_laps
+                        if 55 < l["lap_duration"] < 200
+                        and not l.get("is_pit_out_lap") and ln not in yellows]
+            if len(eligible) < 5:
                 continue
-            med = statistics.median(times)
+            ref = min(eligible)
             cells, clean = [], []
             for ln, l in stint_laps:
                 t = l["lap_duration"]
                 excluded = (not 55 < t < 200 or l.get("is_pit_out_lap")
-                            or ln in yellows or t > med * 1.05)
+                            or ln in yellows or t > ref * PACE_ORDER_CLEAN_RATIO)
                 cells.append({"t": round(t, 3), "x": bool(excluded)})
                 if not excluded:
-                    clean.append(t)
+                    clean.append((ln, t))
             if len(clean) < 4:
                 continue
+            compound = st.get("compound") or "?"
+            # Wet stints get no corrected_avg at all -- same reasoning
+            # _long_run_pace uses to skip them outright: nothing here
+            # corrects for the ~10s/lap wet-vs-dry gap, so a "corrected"
+            # number next to dry ones would misleadingly imply they're
+            # on the same scale.
+            corrected_avg = None
+            if compound in DRY:
+                curve = curves.get(compound)
+                corrected = []
+                for ln, t in clean:
+                    c = t
+                    if curve and curve.baseline > 0:
+                        c -= curve.deg_rate * (ln - ls)
+                    c += FUEL_RATE * (ln - ls)
+                    corrected.append(c)
+                corrected_avg = round(sum(corrected) / len(corrected), 3)
             rows.append({
                 "driver_number": num,
                 "acronym": drivers.get(num, {}).get("name_acronym", str(num)),
                 "team_colour": drivers.get(num, {}).get("team_colour") or "888888",
-                "compound": (st.get("compound") or "?")[0],
+                "compound": compound[0],
                 "laps": cells,
-                "avg": round(sum(clean) / len(clean), 3),
+                "avg": round(sum(t for _, t in clean) / len(clean), 3),
+                "corrected_avg": corrected_avg,
                 "clean_laps": len(clean),
             })
         if not rows:
@@ -441,7 +502,11 @@ def _long_run_tables(source_sessions: list[dict]) -> list[dict]:
             cur = best_by_driver.get(r["driver_number"])
             if cur is None or r["clean_laps"] > cur["clean_laps"]:
                 best_by_driver[r["driver_number"]] = r
-        table_rows = sorted(best_by_driver.values(), key=lambda r: r["avg"])[:10]
+        # Rank by corrected pace where available -- sorting by raw avg is
+        # exactly the bug this fix exists for: it would still let a
+        # lighter-fuel/shorter run outrank a genuine heavy-fuel race sim.
+        table_rows = sorted(best_by_driver.values(),
+                            key=lambda r: r["corrected_avg"] if r["corrected_avg"] is not None else r["avg"])[:10]
         tables.append({
             "session_key": s["session_key"],
             "session_name": name,
@@ -1996,7 +2061,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
         # sessions/stints (hotlaps, not long runs) and can fail independently.
         "quali_sim_data_incomplete": quali_sim_fetch_failures or None,
         "quali_team_pace": _team_pace(quali_sim_rows, grid, quali_sim_field_baseline),
-        "long_run_tables": _long_run_tables(sources),
+        "long_run_tables": _long_run_tables(sources, curves),
         "quali_sectors": sectors,
         "projection": projection,
         "doors": doors,
