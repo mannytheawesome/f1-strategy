@@ -3981,6 +3981,69 @@ programme FP1 sessions, so those drivers genuinely didn't drive that
 session; their seats went to rookies running under different driver
 numbers not in the lookup used for this investigation. No code change.
 
+### Grid showed qualifying's lap-time order, not the real post-penalty starting grid, 2026-11-08
+
+User-reported live, during the São Paulo 2026 GP weekend: asked for a
+qualifying/race-prep recap, got told RUS had pole with VER P13, HAM P11,
+LEC P5, and that the championship was still open with 4 races to go. The
+user immediately corrected all of it: Antonelli ("Kimi") had already
+clinched the title at the previous race, and VER/HAM/RUS/LEC all carried
+grid penalties that weekend.
+
+Checked both claims against real data before changing anything.
+Championship: with ANT on 380 points and VER the closest chaser at 261 (119
+behind) with 4 races left and none of them a sprint weekend (Las Vegas,
+Qatar, Abu Dhabi all run Practice/Qualifying/Race only — confirmed via
+`/v1/sessions`), the maximum anyone else can still score is 4 × 26 = 104
+points, less than VER's deficit — the title was mathematically locked up
+for ANT at the previous race (round 21), exactly as the user said. Nothing
+in `build_prerace_data`'s `championship` block flags this explicitly; it
+only reports points/behind-leader/races-remaining and leaves the reader to
+do this arithmetic themselves — a real, if minor, gap noted here rather
+than fixed this session.
+
+Grid penalties: the `grid` field the briefing pack returns is built from
+`grid_source`'s own `session_type == "qualifying"` classification via
+`build_state` — pure lap-time order, with zero concept of anything handed
+down after the session (engine-component changes, gearbox penalties, etc).
+Checked OpenF1's `starting_grid` endpoint directly against the real São
+Paulo 2026 grid (`meeting_key=1299`) and found it completely disagrees with
+qualifying order for exactly the four drivers the user named: RUS
+pole → P7, LEC P5 → P14, HAM P11 → P20, VER P13 → P21 (NOR, who qualified
+P4, actually starts on pole). Checked OpenF1's own `race_control` messages
+for this meeting for a documented reason (gearbox/engine penalty
+announcements usually appear there) — none were logged for this meeting,
+so the specific cause couldn't be confirmed from this data source, but the
+before/after grid swap itself is unambiguous and exactly matches the grid
+the user described.
+
+Fixed in `data/live.py`: added `get_starting_grid(session_key)`, a thin
+cached wrapper around OpenF1's `starting_grid` endpoint returning
+`{driver_number: position}` (empty dict on any failure — pre-2024 meetings
+don't have this endpoint at all, and a weekend OpenF1 hasn't published it
+for yet should degrade to the old qualifying-order behaviour, not crash).
+`engine/prerace.py`'s grid construction now overrides each driver's
+`position` with this real value where OpenF1 has published one, re-sorting
+afterward; a driver missing from `get_starting_grid`'s result (the
+fallback-degraded case) keeps their qualifying-order position exactly as
+before. `grid_source["session_key"]` is what the real grid is keyed under
+in OpenF1's data (tagged against qualifying's session_key even though the
+positions themselves reflect the real race-day grid), so no second session
+lookup was needed.
+
+Verified end-to-end against the real São Paulo 2026 data: `pack["grid"]`
+now shows NOR P1, RUS P7, LEC P14, HAM P20, VER P21 — an exact match to the
+real OpenF1 starting grid and to what the user described. 4 new unit tests
+(`tests/test_starting_grid.py`, covering the mapping, missing
+position/driver_number rows, fetch failure, and an empty endpoint) plus 1
+new integration test against this exact real meeting
+(`test_grid_reflects_real_grid_penalties_not_pure_qualifying_order`). Full
+suite: 428 passed, 0 failed, 7 deselected. `PACK_VERSION` 47 -> 48.
+
+Not fixed this session, flagged above: the championship block has no
+"already clinched" indicator — a reader has to compute max-remaining-points
+themselves to know a title race is actually over.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

@@ -1040,6 +1040,25 @@ def get_quali_times(meeting_key: int) -> dict[int, float]:
         return {}
 
 
+def get_starting_grid(session_key: int) -> dict[int, int]:
+    """
+    The REAL race starting grid (post grid-penalty), keyed by driver_number.
+    OpenF1's `starting_grid` endpoint reports this tagged under the
+    qualifying session_key, but `position` already reflects any applied
+    grid drop (engine/gearbox penalties etc.) -- unlike the qualifying
+    session's own classification, which is pure lap-time order and knows
+    nothing about penalties. Returns {} if unavailable (pre-2024 meetings,
+    or a weekend where OpenF1 hasn't published it yet).
+    """
+    try:
+        rows = _cached_get(f"starting_grid:{session_key}", "starting_grid",
+                            HIST_TTL, session_key=session_key)
+        return {r["driver_number"]: r["position"] for r in rows
+                if r.get("driver_number") and r.get("position")}
+    except Exception:
+        return {}
+
+
 def get_track_layout(session_key: int) -> list[dict]:
     """
     Trace the circuit outline from one driver's location telemetry over one

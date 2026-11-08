@@ -867,3 +867,26 @@ class TestRealMeetingIntegration:
                   if s["compound_sequence"] == ["MEDIUM", "SOFT"])
         assert sum(ms["stint_lengths"]) == pack["meeting"]["total_laps_assumed"]
         assert ms["pit_laps"] == [ms["stint_lengths"][0]]
+
+    SAO_PAULO_2026 = 1299
+
+    def test_grid_reflects_real_grid_penalties_not_pure_qualifying_order(self):
+        # User-reported 2026-11-08: the pre-race grid showed RUS on pole
+        # with VER P13, HAM P11, LEC P5 -- qualifying's own lap-time
+        # classification. The real race-day grid (OpenF1's starting_grid
+        # endpoint) drops VER, HAM, RUS and LEC on grid penalties: NOR
+        # takes pole, RUS falls to P7, LEC to P14, HAM to P20, VER all the
+        # way to P21. Qualifying order has no concept of a penalty handed
+        # down after the session, so this needed a real second source.
+        from engine.prerace import build_prerace_data
+        pack = build_prerace_data(self.SAO_PAULO_2026)
+        by_acronym = {g["acronym"]: g["position"] for g in pack["grid"]}
+        assert by_acronym["NOR"] == 1
+        assert by_acronym["RUS"] == 7
+        assert by_acronym["LEC"] == 14
+        assert by_acronym["HAM"] == 20
+        assert by_acronym["VER"] == 21
+        # grid stays sorted by the real (post-penalty) position, not the
+        # qualifying-order position it was built from.
+        positions = [g["position"] for g in pack["grid"]]
+        assert positions == sorted(positions)

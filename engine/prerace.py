@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 
 from data.live import (
     get_session, get_laps, get_stints, get_drivers, build_state,
-    get_weather_summary, get_avg_pit_loss, _get, _cached_get, HIST_TTL,
+    get_weather_summary, get_avg_pit_loss, get_starting_grid,
+    _get, _cached_get, HIST_TTL,
 )
 from engine.predictor import (
     build_deg_curves, curves_to_dict, optimize_strategy, sc_probability,
@@ -53,7 +54,14 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 47   # 47: _long_run_tables' per-lap exclusion now compares
+PACK_VERSION = 48   # 48: grid now overrides qualifying's own lap-time
+                    # classification with OpenF1's starting_grid endpoint
+                    # (get_starting_grid), which reflects grid penalties
+                    # (engine/gearbox changes etc.) -- qualifying order
+                    # knows nothing about these. See CLAUDE.md 2026-11-08
+                    # for the real São Paulo 2026 case (VER/HAM/RUS/LEC all
+                    # dropped, pole changed from RUS to NOR) this fixed.
+                    # 47: _long_run_tables' per-lap exclusion now compares
                     # each lap to the STINT'S OWN BEST lap (PACE_ORDER_
                     # CLEAN_RATIO, 1.10) instead of the stint's own median
                     # * 1.05 -- a stint with several severely disrupted
@@ -1709,14 +1717,25 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     # — not even shown as "no data", just absent with no indication why.
     # `if d.position` already bounds this to genuinely classified drivers, so
     # no separate cap is needed.
+    # Qualifying's own classification is pure lap-time order and knows
+    # nothing about grid penalties (engine/gearbox changes etc.) handed down
+    # after the session. OpenF1's `starting_grid` endpoint reports the real,
+    # post-penalty grid -- override `position` with it wherever a driver
+    # appears there, then re-sort; a driver OpenF1 hasn't published a real
+    # grid slot for yet (or on a pre-2024 meeting without the endpoint at
+    # all) keeps their qualifying-order position as the fallback it always
+    # was. See CLAUDE.md for the real São Paulo 2026 case (VER/HAM/RUS/LEC
+    # all dropped) this fixed.
+    real_grid = get_starting_grid(grid_source["session_key"])
     grid = [
-        {"position": d.position, "acronym": d.acronym, "team": d.team,
+        {"position": real_grid.get(d.driver_number, d.position),
+         "acronym": d.acronym, "team": d.team,
          "driver_number": d.driver_number,
          "team_colour": d.team_colour, "gap": d.gap_to_leader}
-        for d in sorted(grid_state.values(),
-                        key=lambda d: (d.position is None, d.position or 99))
+        for d in grid_state.values()
         if d.position
     ]
+    grid.sort(key=lambda r: (r["position"] is None, r["position"] or 99))
 
     # ── paper strategies: best plan at EACH stop count ───────────────────────
     # A single-car minimum-time optimum is a coarse integer and tends to
