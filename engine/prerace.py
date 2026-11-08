@@ -54,7 +54,15 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 48   # 48: grid now overrides qualifying's own lap-time
+PACK_VERSION = 49   # 49: get_starting_grid now retries a transient OpenF1
+                    # failure locally (4 attempts) instead of giving up
+                    # after _get's own single retry -- this is a one-shot
+                    # call baked into the cached briefing, and a transient
+                    # failure on the one rebuild right after PACK_VERSION
+                    # 48 deployed left the real grid un-applied, stuck
+                    # until this bump forces a fresh rebuild. See CLAUDE.md
+                    # 2026-11-08.
+                    # 48: grid now overrides qualifying's own lap-time
                     # classification with OpenF1's starting_grid endpoint
                     # (get_starting_grid), which reflects grid penalties
                     # (engine/gearbox changes etc.) -- qualifying order

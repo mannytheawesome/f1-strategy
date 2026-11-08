@@ -1049,14 +1049,30 @@ def get_starting_grid(session_key: int) -> dict[int, int]:
     session's own classification, which is pure lap-time order and knows
     nothing about penalties. Returns {} if unavailable (pre-2024 meetings,
     or a weekend where OpenF1 hasn't published it yet).
+
+    This is called exactly once per meeting -- the single call inside
+    `build_prerace_data`'s rebuild, whose result then gets baked into
+    `get_prerace_briefing`'s own disk cache and won't be retried again
+    until `PACK_VERSION` next changes or a new session completes. `_get`'s
+    own built-in retry (1 attempt, 1.5s gap) wasn't enough margin for that
+    -- confirmed 2026-11-08: a transient failure on the very rebuild
+    triggered by this feature's own deploy left the real São Paulo 2026
+    grid stuck un-applied in the cached briefing for the rest of the
+    pre-race window. Retries locally, independent of `_get`'s shared
+    retry, since a few extra seconds on this one-shot call is cheap
+    insurance against silently losing the whole feature for a race
+    weekend.
     """
-    try:
-        rows = _cached_get(f"starting_grid:{session_key}", "starting_grid",
-                            HIST_TTL, session_key=session_key)
-        return {r["driver_number"]: r["position"] for r in rows
-                if r.get("driver_number") and r.get("position")}
-    except Exception:
-        return {}
+    for attempt in range(4):
+        try:
+            rows = _cached_get(f"starting_grid:{session_key}", "starting_grid",
+                                HIST_TTL, session_key=session_key)
+            return {r["driver_number"]: r["position"] for r in rows
+                    if r.get("driver_number") and r.get("position")}
+        except Exception:
+            if attempt < 3:
+                time.sleep(2.0 * (attempt + 1))
+    return {}
 
 
 def get_track_layout(session_key: int) -> list[dict]:
