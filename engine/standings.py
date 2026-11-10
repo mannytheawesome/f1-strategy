@@ -99,6 +99,38 @@ def compute_standings(year: int) -> dict:
     return result
 
 
+def max_points_remaining(year: int) -> int:
+    """Highest number of points any single driver could still score across
+    every not-yet-completed Race/Sprint session this season -- 26 per Race
+    (25 for the win + 1 fastest-lap bonus), 8 per Sprint. Same
+    session_type=="race" scope and completion check as compute_standings
+    (so a sprint session counts, unlike season_race_progress's GP-round
+    count, which deliberately excludes it), just the max points instead of
+    what was actually scored.
+
+    This is the arithmetic a reader otherwise has to do by hand to tell
+    whether a title race is still mathematically open -- see CLAUDE.md
+    2026-11-08, where a (leader's points) - (closest chaser's points) gap
+    already exceeded this number entering the race, meaning the title was
+    locked up a round earlier with nothing in the briefing saying so."""
+    now = datetime.now(timezone.utc)
+    raw = get_season_sessions(year)
+    total = 0
+    for s in raw:
+        if s.get("session_type", "").lower() != "race":
+            continue
+        end = s.get("date_end")
+        if end:
+            end_dt = parse_dt(end)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            if end_dt <= now:
+                continue
+        is_sprint = "sprint" in s.get("session_name", "").lower()
+        total += 8 if is_sprint else 26
+    return total
+
+
 def season_race_progress(year: int) -> dict:
     """{completed, total, remaining} Grand Prix race count for the season
     (sprints excluded -- they don't advance the calendar's round count,

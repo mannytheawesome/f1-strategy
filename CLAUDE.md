@@ -4044,6 +4044,45 @@ Not fixed this session, flagged above: the championship block has no
 "already clinched" indicator — a reader has to compute max-remaining-points
 themselves to know a title race is actually over.
 
+### Championship block had no "already clinched" indicator, 2026-11-10
+
+Follow-up to the entry above, fixed once the race weekend was over (user:
+"lets try fix the issue we flagged during the weekend?"). `championship`
+reported each driver's points/points_behind_leader and left the reader to
+work out max-remaining-points by hand to know whether a title fight was
+still mathematically alive.
+
+Added `max_points_remaining(year)` to `engine/standings.py`: sums 26 points
+(25 for the win + 1 fastest-lap bonus) per not-yet-completed Race session
+and 8 per not-yet-completed Sprint, using the same `session_type == "race"`
+scope and completion check `compute_standings` already uses (so, unlike
+`season_race_progress`'s GP-round count, a sprint weekend counts here --
+it's real points on the table, not a round of the calendar).
+
+`_championship_context` (`engine/prerace.py`) now calls it and adds three
+things to the `championship` block: `max_points_remaining` itself,
+`title_clinched`/`clinched_by` (true once the points leader's lead over the
+*standings* runner-up — not just whoever's on this race's grid — exceeds
+what's still available, so a chaser who skips this one race via injury etc.
+doesn't wrongly read as "caught up"), and a per-driver
+`mathematically_eliminated` flag (their own points_behind_leader exceeding
+max_points_remaining). A tie (gap exactly equals max remaining) reads as
+still open, not clinched -- the chaser can draw level, just not win outright,
+and "still open" is the safer default for a boundary case. Also updated the
+`the_doors` narrative prompt to name the clinched driver explicitly and frame
+doors as a points exercise rather than title jeopardy once `title_clinched`
+is true, instead of silently ignoring the new field.
+
+Verified against the real case this was written for: by 2026-11-10 (3 races
+left, no more sprints, max 78 points on the table) `championship` now
+returns `title_clinched: True, clinched_by: "ANT"`, with VER (111 points
+behind) and every other chaser correctly flagged
+`mathematically_eliminated: True`. 8 new/updated unit tests
+(`tests/test_championship_context.py`, `tests/test_standings.py`) covering
+the sum itself, the clinched/not-clinched boundary, and the existing
+not-crashed/no-year/empty-standings cases now also stubbing the new call.
+Full suite: 434 passed, 0 failed, 7 deselected. `PACK_VERSION` 49 -> 50.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

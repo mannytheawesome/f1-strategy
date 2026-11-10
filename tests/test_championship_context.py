@@ -24,16 +24,64 @@ class TestChampionshipContext:
             ], "constructors": []})
         monkeypatch.setattr("engine.standings.season_race_progress",
                             lambda year: {"completed": 20, "total": 24, "remaining": 4})
+        monkeypatch.setattr("engine.standings.max_points_remaining", lambda year: 104)
 
         grid = [_grid_row(1, "VER"), _grid_row(4, "NOR")]
         out = _championship_context(grid, 2026)
 
         assert out["races_remaining"] == 4
         assert out["races_completed"] == 20
+        assert out["max_points_remaining"] == 104
+        # 12-point gap, well inside 104 max remaining -- still open.
+        assert out["title_clinched"] is False
+        assert out["clinched_by"] is None
         by_num = {d["driver_number"]: d for d in out["drivers"]}
         assert by_num[1]["championship_position"] == 1
         assert by_num[1]["points_behind_leader"] == 0.0
+        assert by_num[1]["mathematically_eliminated"] is False
         assert by_num[4]["points_behind_leader"] == 12.0
+        assert by_num[4]["mathematically_eliminated"] is False
+
+    def test_title_clinched_when_gap_exceeds_max_remaining_points(self, monkeypatch):
+        # Real São Paulo 2026 case (CLAUDE.md 2026-11-08): ANT led by 119
+        # with 4 non-sprint races left (max 104 available) -- the title was
+        # already locked up, but nothing in the pack said so.
+        monkeypatch.setattr(
+            "engine.standings.compute_standings",
+            lambda year: {"year": year, "drivers": [
+                {"driver_number": 12, "acronym": "ANT", "points": 380, "position": 1},
+                {"driver_number": 1, "acronym": "VER", "points": 261, "position": 2},
+            ], "constructors": []})
+        monkeypatch.setattr("engine.standings.season_race_progress",
+                            lambda year: {"completed": 21, "total": 25, "remaining": 4})
+        monkeypatch.setattr("engine.standings.max_points_remaining", lambda year: 104)
+
+        grid = [_grid_row(12, "ANT"), _grid_row(1, "VER")]
+        out = _championship_context(grid, 2026)
+
+        assert out["title_clinched"] is True
+        assert out["clinched_by"] == "ANT"
+        by_num = {d["driver_number"]: d for d in out["drivers"]}
+        assert by_num[1]["mathematically_eliminated"] is True
+        assert by_num[12]["mathematically_eliminated"] is False
+
+    def test_title_not_clinched_when_gap_exactly_equals_max_remaining(self, monkeypatch):
+        # A chaser who can score the max on every remaining race ties the
+        # leader, not beats them -- but a tie is still "not yet clinched"
+        # from the leader's side, so the boundary favors "still open".
+        monkeypatch.setattr(
+            "engine.standings.compute_standings",
+            lambda year: {"year": year, "drivers": [
+                {"driver_number": 12, "acronym": "ANT", "points": 380, "position": 1},
+                {"driver_number": 1, "acronym": "VER", "points": 276, "position": 2},
+            ], "constructors": []})
+        monkeypatch.setattr("engine.standings.season_race_progress",
+                            lambda year: {"completed": 21, "total": 25, "remaining": 4})
+        monkeypatch.setattr("engine.standings.max_points_remaining", lambda year: 104)
+
+        grid = [_grid_row(12, "ANT"), _grid_row(1, "VER")]
+        out = _championship_context(grid, 2026)
+        assert out["title_clinched"] is False
 
     def test_grid_driver_not_in_standings_is_skipped_not_crashed(self, monkeypatch):
         monkeypatch.setattr(
@@ -43,6 +91,7 @@ class TestChampionshipContext:
             ], "constructors": []})
         monkeypatch.setattr("engine.standings.season_race_progress",
                             lambda year: {"completed": 1, "total": 24, "remaining": 23})
+        monkeypatch.setattr("engine.standings.max_points_remaining", lambda year: 598)
 
         grid = [_grid_row(1, "VER"), _grid_row(99, "NEW")]
         out = _championship_context(grid, 2026)
@@ -57,6 +106,7 @@ class TestChampionshipContext:
             lambda year: {"year": year, "drivers": [], "constructors": []})
         monkeypatch.setattr("engine.standings.season_race_progress",
                             lambda year: {"completed": 0, "total": 24, "remaining": 24})
+        monkeypatch.setattr("engine.standings.max_points_remaining", lambda year: 624)
         assert _championship_context([_grid_row(1, "VER")], 2026) is None
 
     def test_underlying_failure_returns_none_not_a_crash(self, monkeypatch):

@@ -54,7 +54,12 @@ LIVE_MARGIN_S = 10.0
 # stop-count data rather than fit to hit an exact number for one circuit.
 POSITION_RISK_SCALE = 0.6
 
-PACK_VERSION = 49   # 49: get_starting_grid now retries a transient OpenF1
+PACK_VERSION = 50   # 50: championship block now computes
+                    # max_points_remaining (engine/standings.py) and flags
+                    # title_clinched/clinched_by/mathematically_eliminated
+                    # instead of leaving the reader to do that arithmetic
+                    # themselves. See CLAUDE.md 2026-11-08.
+                    # 49: get_starting_grid now retries a transient OpenF1
                     # failure locally (4 attempts) instead of giving up
                     # after _get's own single retry -- this is a one-shot
                     # call baked into the cached briefing, and a transient
@@ -178,7 +183,7 @@ PRERACE_SCHEMA = {
         "the_trade":  {"type": "string", "description": "180-280 words: the compound trade — walk the reader through the formula verdict using the measured deg rates and offsets, and state which stint lengths each compound wins"},
         "race_shape": {"type": "string", "description": "180-280 words: the stop-count call and WHY. Lead with stop_decision.optimal_stops, then decompose stop_decision.crossover — the extra_pit_cost_s of one more stop vs the fresh_rubber_saving_s it buys — to explain why that count wins. Flag any plan's laps_over_cliff. Use stop_decision.sc_flips_call / sc_favored_stops to say whether a Safety Car tips it toward more stops, and track_position_bias for how much staying out is worth here. If strategy_win_rates is present, cite it alongside the time-based case: each candidate's win_probability/podium_probability is a REAL Monte Carlo result for strategy_win_rates.acronym (not an estimate) — e.g. 'X wins the race on this plan in N% of simulations vs M% on the alternative'. This is the one place in the briefing a probability like that belongs; everywhere else stays in the deterministic time-delta language stop_decision already uses."},
         "the_undercut": {"type": "string", "description": "120-200 words on the undercut vs the overcut, using the undercut object: fresh_gain_per_lap and net_undercut_s (fresh-tyre gain over the window, net of the out-lap), judged against pit_loss_s and the verdict. Say plainly whether teams should pit early to jump rivals (undercut) or hold track position and extend (overcut), and tie it to how hard passing is here."},
-        "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door. If championship shows a grid driver within a handful of points of the lead with few races_remaining, note plainly that a title fight narrows which doors are worth opening — bounded-downside plans matter more than usual for that driver specifically."},
+        "the_doors":  {"type": "string", "description": "180-300 words: the reversible bets on the table. Use doors.cards (cost_positions of a pit-lane start vs keeping the grid slot, with win/podium odds each way) and doors.expected_movers to argue where grid position is worth defending and where it is a free option to trade for setup. Use overtaking.pass_threshold_s_per_lap as the pace edge needed to pass. Temper the dry door costs with doors.sc_refund (an early-SC discount) and weather_outlook (if rain_risk is above low, the costs shrink). Ground the recovery claims in recovery_prior (how back-half starters actually finished here in recent years, incl. best_recovery). Frame each choice as a 2-way (reversible, bounded downside) or 1-way (irreversible) door. If championship.title_clinched is true, say plainly that the title is already mathematically decided (name championship.clinched_by) and frame doors purely as a position/points exercise, not title jeopardy. Otherwise, if championship shows a grid driver within a handful of points of the lead with few races_remaining, note plainly that a title fight narrows which doors are worth opening — bounded-downside plans matter more than usual for that driver specifically."},
         "projection": {"type": "string", "description": "120-220 words: what the model projects from the grid — use long_run_pace to name who is out of position (pace rank vs grid slot) and the projection forecasts (win/podium probabilities) to frame the likely podium; flag the assumptions (start compound, grid spread)"},
         "watch_list": {"type": "string", "description": "80-160 words: the 2-4 unknowns that get filled in during the first stint, and exactly what to watch for each"},
     },
@@ -1165,9 +1170,11 @@ def _championship_context(grid: list[dict], year: int | None) -> dict | None:
     if not year:
         return None
     try:
-        from engine.standings import compute_standings, season_race_progress
+        from engine.standings import (compute_standings, season_race_progress,
+                                      max_points_remaining)
         standings = compute_standings(year)
         progress = season_race_progress(year)
+        max_remaining = max_points_remaining(year)
     except Exception:
         return None
     if not standings.get("drivers"):
@@ -1180,19 +1187,43 @@ def _championship_context(grid: list[dict], year: int | None) -> dict | None:
         d = by_driver.get(g["driver_number"])
         if not d:
             continue
+        points_behind = round(leader_points - d["points"], 1)
         drivers.append({
             "driver_number": g["driver_number"],
             "acronym": g["acronym"],
             "championship_position": d["position"],
             "points": d["points"],
-            "points_behind_leader": round(leader_points - d["points"], 1),
+            "points_behind_leader": points_behind,
+            # Can this driver still win it, even if they score the max on
+            # every remaining weekend and the leader scores zero? Always
+            # False for the leader themselves (points_behind == 0).
+            "mathematically_eliminated": points_behind > max_remaining,
         })
     if not drivers:
         return None
+
+    # The title is locked up once the leader's closest pursuer can no
+    # longer close the gap even with a perfect run to the end of the
+    # season -- i.e. the second-placed points total right now already
+    # trails what it would need. Comparing against the *second* standings
+    # entry (not just whoever's on today's grid) because a chaser can be
+    # mathematically alive without entering this specific race (injury,
+    # a one-off seat loss, etc).
+    title_clinched = False
+    clinched_by = None
+    if len(standings["drivers"]) > 1:
+        runner_up_points = standings["drivers"][1]["points"]
+        if leader_points - runner_up_points > max_remaining:
+            title_clinched = True
+            clinched_by = standings["drivers"][0]["acronym"]
+
     return {
         "year": year,
         "races_remaining": progress["remaining"],
         "races_completed": progress["completed"],
+        "max_points_remaining": max_remaining,
+        "title_clinched": title_clinched,
+        "clinched_by": clinched_by,
         "drivers": drivers,
     }
 

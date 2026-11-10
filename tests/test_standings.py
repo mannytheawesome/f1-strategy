@@ -51,3 +51,26 @@ class TestSeasonRaceProgress:
 
         assert standings_mod.season_race_progress(2026) == {
             "completed": 0, "total": 0, "remaining": 0}
+
+
+class TestMaxPointsRemaining:
+    def test_sums_26_per_remaining_race_and_8_per_remaining_sprint(self, monkeypatch):
+        sessions = [
+            _race(1, "2000-01-01T15:00:00+00:00"),              # completed, excluded
+            _race(2, "2999-01-08T15:00:00+00:00", sprint=True),   # not yet run: 8
+            _race(2, "2999-01-08T16:00:00+00:00"),              # not yet run: 26
+            _race(3, "2999-02-01T15:00:00+00:00"),              # not yet run: 26
+        ]
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", lambda endpoint, **p: sessions)
+
+        assert standings_mod.max_points_remaining(2026) == 8 + 26 + 26
+
+    def test_nothing_remaining_is_zero(self, monkeypatch):
+        sessions = [_race(1, "2000-01-01T15:00:00+00:00")]
+        monkeypatch.setattr(live, "_cache_get", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_cache_set", lambda *a, **k: None)
+        monkeypatch.setattr(live, "_get", lambda endpoint, **p: sessions)
+
+        assert standings_mod.max_points_remaining(2026) == 0
