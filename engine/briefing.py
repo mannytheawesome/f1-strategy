@@ -770,13 +770,36 @@ def generate_narrative(pack: dict) -> dict | None:
     return narrative
 
 
+# How long to keep serving a cached data-only briefing (no narrative) before
+# trying the LLM call again. Without this, a narrative failure (e.g. the
+# Anthropic account being out of credit) was never cached at all -- every
+# single request re-ran the full pipeline (every lap/stint/pit/weather fetch
+# for the whole session) AND re-attempted the doomed LLM call, turning a
+# should-be-instant cache hit into a ~15-20s wait, repeatedly, for as long as
+# the underlying failure lasted. Confirmed live 2026-11-22: the Anthropic
+# account was out of credit and the Las Vegas debrief took ~17s on every
+# single page load, days after the failure first started. Caching the
+# failure means repeat requests get the data pack fast; retrying after a
+# cooldown (rather than never) means it recovers on its own once the
+# underlying issue clears, with no manual regenerate=true call needed. Same
+# pattern as engine/prerace.py's NARRATIVE_RETRY_COOLDOWN_S.
+NARRATIVE_RETRY_COOLDOWN_S = 600
+
+
 def get_briefing(session_key: int, regenerate: bool = False) -> dict:
     path = _cache_path(session_key)
     if not regenerate and os.path.exists(path):
         with open(path) as f:
             cached = json.load(f)
         if cached.get("pack_version") == PACK_VERSION:
-            return cached
+            if cached.get("narrative"):
+                return cached
+            if cached.get("narrative_failed_at"):
+                failed_at = datetime.fromisoformat(cached["narrative_failed_at"])
+                age_s = (datetime.now(timezone.utc) - failed_at).total_seconds()
+                if age_s < NARRATIVE_RETRY_COOLDOWN_S:
+                    return cached
+            # no narrative and no (or expired) failure timestamp -- rebuild below
         # pack shape changed since this was cached — rebuild below
 
     pack = build_briefing_data(session_key)
@@ -789,9 +812,8 @@ def get_briefing(session_key: int, regenerate: bool = False) -> dict:
         "narrative": narrative,
         "data": pack,
     }
-    # Only cache complete briefings — a missing narrative (no API key yet)
-    # should retry on the next request rather than pinning the degraded copy
-    if narrative:
-        with open(path, "w") as f:
-            json.dump(briefing, f)
+    if not narrative:
+        briefing["narrative_failed_at"] = briefing["generated_at"]
+    with open(path, "w") as f:
+        json.dump(briefing, f)
     return briefing

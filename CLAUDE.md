@@ -4083,6 +4083,83 @@ the sum itself, the clinched/not-clinched boundary, and the existing
 not-crashed/no-year/empty-standings cases now also stubbing the new call.
 Full suite: 434 passed, 0 failed, 7 deselected. `PACK_VERSION` 49 -> 50.
 
+### `team_pace` vs F1.com's "Race Simulation Pace" chart, São Paulo 2026 — investigated, NOT a bug, 2026-11-11
+
+User shared F1.com's own "Race Simulation Pace" bar chart during the race
+weekend and asked whether it matched our `team_pace`. It didn't, closely —
+rankings and magnitudes disagreed for several teams. At the time (race
+imminent) the best guess offered was "our numbers draw from FP1+FP2 only
+this weekend, likely because FP3 was wet" — explicitly flagged as unaudited
+rather than confirmed.
+
+Revisited after the race with time to check it properly. The wet-FP3 guess
+was wrong: OpenF1's own `weather` endpoint shows **zero** rainfall samples
+across all of FP1 (11405), FP2 (11406), and FP3 (11407) — every practice
+session was fully dry. The rain the weekend's `weather_outlook.note` ("rain
+already fell this weekend") refers to fell during Qualifying (11408, 106 of
+160 weather samples show rainfall), not practice.
+
+The real cause: `data.long_run_pace`'s own `sessions` field shows most
+drivers' dry 6+-lap long runs came from `['Practice 1', 'Practice 2']`
+only, with FP3 barely contributing (3 drivers, low lap counts, 1 of them
+`low_confidence`). Checked FP3's raw `stints` and `pit` endpoints directly:
+every stint boundary lines up with a real, timed pit-lane visit (not an
+OpenF1 fragmentation artifact or a red-flag restart — `race_control` for
+11407 shows no red flag at all, just two track-limits deletions and the
+chequered flag) — several lasting several minutes, consistent with teams
+using FP3 for short, broken-up low-fuel running rather than an extended
+race-sim stint. NOR, for example, never ran a single continuous stint of
+6+ laps in FP3 at all (longest was 5) — `_long_run_pace`'s `>= 6 raw laps`
+threshold is correctly excluding it, not missing anything.
+
+Conclusion: `_long_run_pace` is working as designed; FP1+FP2-heavy
+coverage this weekend reflects what FP3 actually contained, not a pipeline
+bug. The gap against F1.com's chart is a methodology difference (their
+"Race Simulation Pace" almost certainly curates each team's one
+advertised long run, likely from FP2 specifically, rather than pooling
+every >=6-lap dry stint across all three practice sessions the way this
+pipeline does) rather than something to fix here. No code change; this
+entry exists so the next person who sees this chart mismatch doesn't
+re-reach for the same wrong wet-FP3 explanation.
+
+### Post-race briefing never cached a failed narrative, so every page load re-ran the full pipeline, 2026-11-22
+
+User asked for a general site health check after the Las Vegas GP. Loading
+the Vegas debrief in-browser hung on "Building briefing..." for a visibly
+long time; `/api/briefing?session_key=11420` timed out past a 25s curl and
+only resolved at ~17s on a longer timeout. Root cause: the Anthropic account
+was (still) out of credit — same billing issue flagged 2026-11-19 and once
+before on 2026-09-21 — but `engine/briefing.py`'s `get_briefing` had no
+equivalent of `engine/prerace.py`'s `NARRATIVE_RETRY_COOLDOWN_S` cache-the-
+failure mechanism: "only cache complete briefings" meant a missing
+narrative was never written to disk, so every single visitor re-ran the
+entire `build_briefing_data` pipeline (every lap/stint/pit/weather fetch for
+the whole race session) AND re-attempted the doomed LLM call, with no
+caching at all, for as long as the billing issue lasted — exactly the bug
+`NARRATIVE_RETRY_COOLDOWN_S` already exists to prevent on the pre-race side,
+just never ported to the post-race one.
+
+Fixed by porting the same pattern: `get_briefing` now caches a
+narrative-less briefing with a `narrative_failed_at` timestamp, and only
+retries the LLM call once `NARRATIVE_RETRY_COOLDOWN_S` (600s) has passed —
+otherwise it serves the cached data-only copy, same as before the narrative
+ever started failing. No `PACK_VERSION` bump: the data pack's own shape is
+unchanged, and no stale on-disk file could exist with a null narrative
+under the old code (it only ever wrote to disk on success), so there's
+nothing to invalidate for existing cache entries. 6 tests
+(`tests/test_briefing_cache.py`, mirroring
+`tests/test_prerace_briefing_cache.py`'s three cases: failure cached and
+not retried within cooldown, retried once the cooldown expires, success
+still caches normally). Full suite: 437 passed, 0 failed, 7 deselected.
+
+Separately confirmed and NOT a bug: the site's data and visuals otherwise
+checked out clean for Vegas — grid/stops/DNFs (PER, ALB, LIN) all matched
+the real result, championship points (ANT 402, VER 304 post-Vegas) were
+internally consistent, no console errors. The "Narrative unavailable (no
+API key configured)" message is still technically wrong (the key is
+configured; it's a credit/billing issue) — same cosmetic inaccuracy flagged
+2026-09-21, still unfixed, still a billing fix rather than a code fix.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
