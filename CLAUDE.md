@@ -4160,6 +4160,58 @@ API key configured)" message is still technically wrong (the key is
 configured; it's a credit/billing issue) — same cosmetic inaccuracy flagged
 2026-09-21, still unfixed, still a billing fix rather than a code fix.
 
+### Reducing narrative LLM spend: gate pre-race regeneration on real Qualifying, cache the system prompt, 2026-11-22
+
+Follow-up to the two entries above, same session. User asked directly
+whether anything could cut Anthropic credit usage. Two real, verified
+levers in the code (a third -- capping or dropping `thinking: "adaptive"`
+-- was deliberately left as something to test against narrative quality
+rather than ship blind):
+
+**1. `get_prerace_briefing` was regenerating the narrative after every
+single completed session.** `source_keys` changing (FP1 done, then FP2,
+then FP3, then Qualifying) was the only gate on a fresh
+`generate_structured_narrative` call -- up to 4 full LLM calls a weekend
+before the race even ran, each narrating whatever `grid` happened to be at
+that moment. But `grid` before Qualifying is only build_prerace_data's own
+practice-lap-time fallback order, not a real grid (same qualifying-vs-
+practice-order distinction as the 2026-11-08 grid-penalty entry above) --
+narrating it was narrating something about to change anyway. Added
+`_real_qualifying_session(sources)` (factored out of build_prerace_data's
+own grid_source pick, so both agree on exactly when "the real grid exists")
+and gated narrative generation on it: `get_prerace_briefing` now returns
+`narrative: None` with no LLM call at all while only practice has
+completed, same cache-hit-on-repeat-request behavior as before otherwise.
+The data pack itself (team_pace, long_run_pace, strategies) still rebuilds
+fresh after every session, unchanged -- only the narrative call is held
+back. Cuts pre-race narrative calls from up to 4/weekend to 1, with no
+narrative ever read as more final than it should be able to.
+
+**2. The system prompt was never cache-eligible.** `NARRATIVE_SYSTEM`/
+`PRERACE_SYSTEM` (~900 tokens) is identical on every single call -- only
+the user message's data pack changes -- but `generate_structured_narrative`
+passed it as a plain string with no `cache_control` marker, so Anthropic
+billed it at full input-token price every time, including on
+`generate_narrative`'s own automatic retry-on-tyre-claim-violation (which
+re-sends the same system prompt a second time within one request). Changed
+`system=system` to `system=[{"type": "text", "text": system,
+"cache_control": {"type": "ephemeral"}}]` -- same content, cached at
+Anthropic's standard ~90% discount on repeat calls.
+
+No `PACK_VERSION` bump in either `engine/prerace.py` or `engine/briefing.py`
+-- the data pack's own shape is unchanged in both cases, only when/how the
+narrative call is made. 8 new tests: `tests/test_prerace_briefing_cache.py`
+gained a `TestNarrativeGatedOnQualifying` class (no narrative attempted
+practice-only, repeat practice-only request is a cache hit not a rebuild,
+narrative attempted once Qualifying appears, Sprint Qualifying doesn't
+count as the real grid-setting session) plus updated its existing fixtures
+to include a real Qualifying session (they test post-qualifying narrative
+caching behavior, which now requires one to be present to reach the
+narrative-attempt code path at all); `tests/test_narrative_prompt_caching.py`
+confirms the exact `cache_control` shape sent to the Anthropic client. Full
+suite: 441 passed, 0 failed, 7 deselected. Verified against the real São
+Paulo 2026 pack post-fix: grid still correct (NOR P1, VER P21).
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).

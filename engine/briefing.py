@@ -679,7 +679,19 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
             # actual tokens used, not this ceiling).
             max_tokens=16000,
             thinking={"type": "adaptive"},
-            system=system,
+            # `system` is the same ~900-token static instructions on every
+            # single call (NARRATIVE_SYSTEM/PRERACE_SYSTEM never change
+            # per-request -- only the user message's data pack does), and
+            # this function gets called repeatedly: up to 4x/weekend on the
+            # pre-race side before this same commit cut that to 1, plus the
+            # automatic tyre-claim-violation retry in generate_narrative
+            # below re-sends it a second time within the same request. A
+            # cache_control marker here lets Anthropic serve the system
+            # block from cache (~90% cheaper) on every call after the
+            # first, instead of billing it at full input-token price every
+            # time. See CLAUDE.md 2026-11-22.
+            system=[{"type": "text", "text": system,
+                     "cache_control": {"type": "ephemeral"}}],
             output_config={"format": {"type": "json_schema", "schema": schema}},
             messages=[{
                 "role": "user",

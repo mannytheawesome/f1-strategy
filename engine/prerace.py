@@ -1697,6 +1697,18 @@ def _prerace_sources(meeting_key: int) -> list[dict]:
     return sources
 
 
+def _real_qualifying_session(sources: list[dict]) -> dict | None:
+    """The real, grid-setting Qualifying session among `sources`, if it's
+    completed yet -- excludes Sprint Qualifying (a different, Friday session
+    whose classification sets the sprint grid, not the race one). Shared by
+    build_prerace_data's own grid_source pick and get_prerace_briefing's
+    narrative-regeneration gate, so both agree on exactly when "the real
+    grid exists" becomes true."""
+    return next((s for s in reversed(sources)
+                if s.get("session_type", "").lower() == "qualifying"
+                and "sprint" not in s.get("session_name", "").lower()), None)
+
+
 def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     sessions = _meeting_sessions(meeting_key)
     sources = _prerace_sources(meeting_key)
@@ -1742,9 +1754,7 @@ def build_prerace_data(meeting_key: int, total_laps: int | None = None) -> dict:
     curves = build_deg_curves(fp_data, apply_race_shrink=True, circuit=circuit)
 
     # ── grid from qualifying (fall back to latest session order) ────────────
-    quali = next((s for s in reversed(sources)
-                  if s.get("session_type", "").lower() == "qualifying"
-                  and "sprint" not in s.get("session_name", "").lower()), None)
+    quali = _real_qualifying_session(sources)
     grid_source = quali or sources[-1]
     grid_state = build_state(grid_source["session_key"], include_locations=False,
                              session=grid_source)
@@ -2162,7 +2172,22 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
     # this meeting keyed on right now. Only if that misses do we pay for the
     # full pipeline (strategy search + Monte Carlo projection + door cards)
     # below — a cache hit used to run all of that just to throw it away.
-    source_keys = [s["session_key"] for s in _prerace_sources(meeting_key)]
+    sources = _prerace_sources(meeting_key)
+    source_keys = [s["session_key"] for s in sources]
+    # The narrative is framed as a "race-morning" briefing and leans on the
+    # real grid throughout (championship doors, who's defending what track
+    # position) -- before Qualifying completes, `grid` is only a provisional
+    # practice-lap-time order (see build_prerace_data), so a narrative
+    # written off it would be narrating a grid that's about to change. That
+    # made every one of FP1/FP2/FP3 completing trigger its own full LLM call
+    # for a narrative that was often stale again within the hour -- up to 4
+    # regenerations a weekend before the race even ran. Gating narrative
+    # generation on the real grid existing cuts that to 1 (plus 1 post-race),
+    # with no loss of quality: nothing before quali was being read as final
+    # anyway. The data pack itself (team_pace, long_run_pace, strategies)
+    # still rebuilds fresh after every session, same as before -- only the
+    # narrative call is held back. See CLAUDE.md 2026-11-22.
+    quali_done = _real_qualifying_session(sources) is not None
 
     if not regenerate and os.path.exists(path):
         with open(path) as f:
@@ -2170,18 +2195,25 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
         # regenerate when a new session completed OR the pack shape changed
         same_shape = (cached.get("source_keys") == source_keys
                       and cached.get("pack_version") == PACK_VERSION)
-        if same_shape and cached.get("narrative"):
-            return cached
-        if same_shape and cached.get("narrative_failed_at"):
-            failed_at = datetime.fromisoformat(cached["narrative_failed_at"])
-            age_s = (datetime.now(timezone.utc) - failed_at).total_seconds()
-            if age_s < NARRATIVE_RETRY_COOLDOWN_S:
+        if same_shape:
+            if cached.get("narrative"):
                 return cached
+            if not quali_done:
+                # Practice-only so far, same sessions as last time -- nothing
+                # changed that would make attempting a narrative worthwhile.
+                return cached
+            if cached.get("narrative_failed_at"):
+                failed_at = datetime.fromisoformat(cached["narrative_failed_at"])
+                age_s = (datetime.now(timezone.utc) - failed_at).total_seconds()
+                if age_s < NARRATIVE_RETRY_COOLDOWN_S:
+                    return cached
 
     pack = build_prerace_data(meeting_key, total_laps)
-    narrative = generate_structured_narrative(
-        pack, PRERACE_SYSTEM, PRERACE_SCHEMA,
-        "Write the race-morning strategy briefing for this data pack.")
+    narrative = None
+    if quali_done:
+        narrative = generate_structured_narrative(
+            pack, PRERACE_SYSTEM, PRERACE_SCHEMA,
+            "Write the race-morning strategy briefing for this data pack.")
 
     briefing = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2190,7 +2222,7 @@ def get_prerace_briefing(meeting_key: int, total_laps: int | None = None,
         "narrative": narrative,
         "data": pack,
     }
-    if not narrative:
+    if quali_done and not narrative:
         briefing["narrative_failed_at"] = briefing["generated_at"]
     with open(path, "w") as f:
         json.dump(briefing, f)
