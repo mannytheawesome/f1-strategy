@@ -692,7 +692,19 @@ def generate_structured_narrative(pack: dict, system: str, schema: dict,
             # time. See CLAUDE.md 2026-11-22.
             system=[{"type": "text", "text": system,
                      "cache_control": {"type": "ephemeral"}}],
-            output_config={"format": {"type": "json_schema", "schema": schema}},
+            # effort="low" caps how much the model spends on adaptive
+            # thinking. Measured against this exact pack/schema/task: ~70%
+            # lower latency and ~75% fewer output tokens than leaving effort
+            # unset, with no measurable loss in narrative correctness or
+            # run-to-run variety (word-overlap between repeated low-effort
+            # samples was no higher than between repeated default-effort
+            # samples) -- unset effort was also the most variable in cost,
+            # swinging 58% in output tokens between two otherwise-identical
+            # calls. See CLAUDE.md 2026-11-23. `thinking.type.enabled` +
+            # `budget_tokens` is NOT supported on this model -- effort is
+            # the only supported lever.
+            output_config={"effort": "low",
+                           "format": {"type": "json_schema", "schema": schema}},
             messages=[{
                 "role": "user",
                 "content": (task + " Remember: every number must come from the pack.\n\n"

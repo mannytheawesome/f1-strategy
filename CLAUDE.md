@@ -4212,6 +4212,62 @@ confirms the exact `cache_control` shape sent to the Anthropic client. Full
 suite: 441 passed, 0 failed, 7 deselected. Verified against the real São
 Paulo 2026 pack post-fix: grid still correct (NOR P1, VER P21).
 
+### Lever 3: `output_config.effort` on narrative generation, tested against a real pack before shipping, 2026-11-23
+
+Follow-up to the entry above, next session, once the Anthropic account's
+credit was restored (confirmed via `/api/debug/anthropic_auth` returning
+`probe: ok`). User explicitly asked for this one to be tested against real
+output before shipping, not shipped blind like levers 1/2.
+
+**First finding: the planned approach doesn't exist on this model.**
+`thinking: {"type": "enabled", "budget_tokens": N}` -- the obvious way to
+cap adaptive thinking -- returns a 400: `"thinking.type.enabled" is not
+supported for this model. Use "thinking.type.adaptive" and
+"output_config.effort" to control thinking behavior.` `effort` (values
+tried: `"low"`, `"medium"`) is the only supported lever on `claude-sonnet-5`
+with `thinking: {"type": "adaptive"}`.
+
+**Measured on the real Las Vegas 2026 pre-race pack** (same system prompt,
+schema, and task string production sends), one sample per config:
+
+| config | latency | output tokens |
+|---|---|---|
+| `adaptive`, no effort override (current prod) | 111.8s | 9,818 |
+| `adaptive` + `effort: "medium"` | 63.0s | 5,624 |
+| no `thinking` param at all | 91.3s | 7,428 |
+| `adaptive` + `effort: "low"` | 33.2s | 2,318 |
+
+All four produced the same analytical substance (same breakeven-stint-laps
+math, same pit-loss crossover numbers, same SC-probability reasoning, same
+VER door-cost figures, same correct grounding in pack data, no hallucinated
+numbers) -- just different prose length/verbosity. `effort: "low"` was the
+standout: ~70% lower latency, ~76% fewer output tokens (output tokens are
+the dominant cost driver since thinking tokens bill as output) than leaving
+effort unset.
+
+**Diversity check, run because the obvious worry about a cost cut like this
+is "does it make every narrative sound the same."** Ran 2 independent
+samples each at `effort: "low"` and at baseline (unset) on the identical
+pack, measured pairwise word-set (Jaccard) overlap per field as a crude
+lexical-diversity proxy -- lower means more varied, higher means more
+templated. Average overlap: `low` 0.359, baseline 0.345 -- essentially a
+wash, no evidence low effort collapses into boilerplate (headlines picked
+genuinely different angles in both groups: "one stop — unless the SC lands
+early" vs. "one-stop chess match with no room to pass" at low effort,
+equally distinct at baseline). The more notable asymmetry ran the other
+way: baseline's own two runs swung 58% in output tokens (8,066 vs. 12,734)
+and nearly 40s in latency against each other, while `effort: "low"`'s two
+runs were within 5% of each other on both — leaving effort unset isn't just
+slower and pricier, it's also far less predictable call-to-call. (Caveat:
+n=2 per config, a real signal but not a statistically tight one.)
+
+Shipped `output_config={"effort": "low", "format": {...}}` in
+`generate_structured_narrative` (`engine/briefing.py`). No `PACK_VERSION`
+bump -- pack shape unchanged. New test
+`test_output_config_pins_effort_to_low` in
+`tests/test_narrative_prompt_caching.py`. Full suite: 442 passed, 7
+deselected.
+
 ### Docs — where detail is still thin
 - [ ] `engine/predictor.py` internals deserve a dedicated design note (the DP in
       `optimize_strategy`, the position/pace blend math).
